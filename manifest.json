@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "custom.jira",
+  "name": "Jira",
+  "version": "0.1.0",
+  "author": "Alex Weström",
+  "license": "MIT",
+  "description": "A Jira client in your Omarchy shell: login, then board, backlog and summary in one window, kept fresh on a 30s refresh.",
+  "kinds": [
+    "panel",
+    "bar-widget"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "panel": "JiraPanel.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Jira",
+    "description": "Open the Jira client window (board, backlog, summary, docs).",
+    "category": "Development",
+    "aliases": [
+      "jira",
+      "atlassian",
+      "tickets"
+    ],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "refreshIntervalSec": 30
+    },
+    "schema": [
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Refresh interval (seconds)",
+        "min": 10,
+        "max": 600,
+        "step": 5,
+        "defaultValue": 30
+      }
+    ]
+  }
+}
