@@ -1,4 +1,4 @@
-# custom.jira
+# GodJIRA
 
 <p align="center">
   <img src="assets/godjira-logo.jpeg" alt="GodJIRA" width="320">
