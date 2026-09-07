@@ -50,6 +50,7 @@ CONFIG_DIR = os.path.join(HOME, ".config", "omarchy")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "jira.json")
 STATE_DIR = os.path.join(HOME, ".local", "state", "omarchy")
 MOCK_STATE_PATH = os.path.join(STATE_DIR, "jira-mock.json")
+WATCH_PATH = os.path.join(STATE_DIR, "jira-watch.json")
 
 DEFAULT_CONFIG = {
     "schema": 1,
@@ -154,12 +155,17 @@ def jira_request(cfg, method, path, body=None, token=None):
         raise RuntimeError("Ingen API-token i nyckelringen. Kör login först.")
     site = cfg["siteUrl"].rstrip("/")
     url = site + path
-    auth = base64.b64encode("{}:{}".format(cfg["email"], token).encode()).decode()
+    # Scoped personal access tokens (ATCTT...) authenticate as "Bearer <token>"
+    # with no account. Classic API tokens (ATATT...) use Basic <email>:<token>.
+    if token.startswith("ATCTT") or cfg.get("auth") == "bearer":
+        auth = "Bearer " + token
+    else:
+        auth = "Basic " + base64.b64encode("{}:{}".format(cfg["email"], token).encode()).decode()
     data = None
     if body is not None:
         data = json.dumps(body).encode()
     req = urllib.request.Request(url, data=data, method=method)
-    req.add_header("Authorization", "Basic " + auth)
+    req.add_header("Authorization", auth)
     req.add_header("Accept", "application/json")
     if data is not None:
         req.add_header("Content-Type", "application/json")
@@ -614,6 +620,8 @@ def save_mock_state(state):
 def mock_reset():
     if os.path.exists(MOCK_STATE_PATH):
         os.remove(MOCK_STATE_PATH)
+    if os.path.exists(WATCH_PATH):
+        os.remove(WATCH_PATH)
     mock_state()
 
 
@@ -805,6 +813,186 @@ def mock_delete(state, key):
 
 # ----------------------------------------------------------------- status
 
+# Watcher: notifies about external board changes by diffing the last known
+# state. A per-issue fingerprint (the fields we display) is stored on disk;
+# the next poll reports whatever moved/added/updated/removed since.
+
+WATCH_FIELD_LABELS = {
+    "summary": "Summary",
+    "assigneeEmail": "Assignee",
+    "priorityName": "Priority",
+    "typeName": "Type",
+}
+
+
+def watched_rows(snap, cfg):
+    """Rows (issues + backlog) of the tracked board. When the user has picked
+    a board only that board is watched; otherwise every board counts so the
+    notifier works out of the box."""
+    wanted = str(cfg.get("selectedBoardId") or "")
+    rows = []
+    for board in snap.get("boards") or []:
+        if wanted and str(board.get("id")) != wanted:
+            continue
+        for issue in (board.get("issues") or []) + (board.get("backlog") or []):
+            rows.append(issue)
+    return rows
+
+
+def row_signature(row):
+    return (
+        row.get("summary") or "",
+        row.get("statusName") or "",
+        row.get("statusId") or "",
+        row.get("assigneeEmail") or "",
+        row.get("priorityName") or "",
+        row.get("typeName") or "",
+    )
+
+
+def watched_scope(cfg):
+    """Which part of the snapshot the baseline covers: the selected board id,
+    or '' meaning all boards."""
+    return str(cfg.get("selectedBoardId") or "")
+
+
+def baseline_entries(cfg, snap):
+    entries = {}
+    for row in watched_rows(snap, cfg):
+        entries[row.get("key")] = {
+            "sig": list(row_signature(row)),
+            "summary": row.get("summary") or "",
+            "statusName": row.get("statusName") or "",
+        }
+    return entries
+
+
+def load_baseline():
+    try:
+        with open(WATCH_PATH, encoding="utf-8") as fh:
+            data = json.load(fh)
+        if isinstance(data, dict) and isinstance(data.get("issues"), dict):
+            return data["issues"], data.get("wanted")
+    except (OSError, ValueError):
+        pass
+    return None, None
+
+
+def store_baseline(entries, wanted):
+    os.makedirs(STATE_DIR, exist_ok=True)
+    with open(WATCH_PATH, "w", encoding="utf-8") as fh:
+        json.dump({"savedAt": utc_now(), "wanted": wanted, "issues": entries},
+                  fh, ensure_ascii=False, indent=2)
+    try:
+        os.chmod(WATCH_PATH, 0o600)
+    except OSError:
+        pass
+
+
+def diff_events(prev, cur):
+    events = []
+    for key in sorted(set(prev) | set(cur)):
+        old = prev.get(key)
+        new = cur.get(key)
+        if old is None:
+            events.append({"type": "added", "key": key,
+                           "summary": new["summary"], "statusName": new["statusName"],
+                           "changed": []})
+        elif new is None:
+            events.append({"type": "removed", "key": key,
+                           "summary": old["summary"], "statusName": old["statusName"],
+                           "changed": []})
+        elif old["sig"] != new["sig"]:
+            if old["sig"][1] != new["sig"][1] or old["sig"][2] != new["sig"][2]:
+                events.append({"type": "moved", "key": key,
+                               "summary": new["summary"],
+                               "fromStatus": old["statusName"],
+                               "toStatus": new["statusName"],
+                               "changed": []})
+            else:
+                changed = []
+                for idx, label in (
+                    (0, "Summary"), (3, "Assignee"), (4, "Priority"), (5, "Type")):
+                    if old["sig"][idx] != new["sig"][idx]:
+                        changed.append(label)
+                events.append({"type": "updated", "key": key,
+                               "summary": new["summary"], "statusName": new["statusName"],
+                               "changed": changed})
+    return events
+
+
+def notify_text(events):
+    if not events:
+        return None
+    if len(events) == 1:
+        e = events[0]
+        if e["type"] == "moved":
+            return ("OmaJIRA · {} moved to {}".format(e["key"], e["toStatus"]),
+                    e["summary"])
+        if e["type"] == "added":
+            return ("OmaJIRA · new issue {}".format(e["key"]),
+                    "{}  ·  {}".format(e["summary"], e["statusName"]))
+        if e["type"] == "removed":
+            return ("OmaJIRA · {} removed".format(e["key"]), e["summary"])
+        detail = " · ".join(e["changed"]) if e["changed"] else "changed"
+        return ("OmaJIRA · {} updated".format(e["key"]),
+                "{}  ·  {}".format(e["summary"], detail))
+    lines = []
+    for e in events:
+        if e["type"] == "moved":
+            lines.append("{} → {}: {}".format(e["key"], e["toStatus"], e["summary"]))
+        elif e["type"] == "added":
+            lines.append("{} + {}: {}".format(e["key"], e["statusName"], e["summary"]))
+        elif e["type"] == "removed":
+            lines.append("{} − removed: {}".format(e["key"], e["summary"]))
+        else:
+            lines.append("{} ~ {}".format(e["key"], e["summary"]))
+    return ("OmaJIRA · {} updates".format(len(events)), "\n".join(lines))
+
+
+def raise_notification(summary, body):
+    try:
+        subprocess.run(
+            ["notify-send", "-a", "OmaJIRA", "-u", "normal", "-t", "8000", summary, body],
+            check=False, timeout=10)
+    except Exception:
+        pass
+
+
+def watch_payload(cfg):
+    try:
+        snap = real_snapshot(cfg) if cfg.get("mode") == "real" else mock_snapshot(cfg)
+    except RuntimeError as exc:
+        err_payload("Kunde inte bevaka: {}".format(exc), mode=cfg.get("mode"))
+    wanted = watched_scope(cfg)
+    prev, prev_wanted = load_baseline()
+    cur = baseline_entries(cfg, snap)
+    if prev is None or prev_wanted != wanted:
+        # First run or the watched scope changed: prime quietly, so switching
+        # boards never replays the previous scope as "removed" issues.
+        store_baseline(cur, wanted)
+        payload({"events": [], "changed": 0, "watching": True,
+                 "primed": prev is not None})
+    events = diff_events(prev, cur)
+    store_baseline(cur, wanted)
+    notif = notify_text(events)
+    if notif:
+        raise_notification(*notif)
+    payload({"events": events, "changed": len(events), "watching": True,
+             "primed": True, "notification": bool(notif)})
+
+
+def capture_baseline(cfg, snap):
+    """Record the current board state silently (e.g. right after the user made
+    a change themselves), so their own edits never notify."""
+    wanted = watched_scope(cfg)
+    entries = baseline_entries(cfg, snap)
+    if entries:
+        store_baseline(entries, wanted)
+
+
+# ----------------------------------------------------------------- status
+
 def status_payload(cfg):
     mode = cfg.get("mode")
     if mode == "real":
@@ -878,7 +1066,9 @@ def main(argv):
                 mock_move(mock_state(), key, target)
         except RuntimeError as exc:
             err_payload(str(exc))
-        payload(mock_snapshot(cfg) if cfg.get("mode") != "real" else real_snapshot(cfg))
+        snap = mock_snapshot(cfg) if cfg.get("mode") != "real" else real_snapshot(cfg)
+        capture_baseline(cfg, snap)
+        payload(snap)
 
     if cmd == "create":
         cfg = load_config()
@@ -907,7 +1097,9 @@ def main(argv):
                 mock_create(mock_state(), board_id, payload_data)
         except RuntimeError as exc:
             err_payload(str(exc))
-        payload(mock_snapshot(cfg) if cfg.get("mode") != "real" else real_snapshot(cfg))
+        snap = mock_snapshot(cfg) if cfg.get("mode") != "real" else real_snapshot(cfg)
+        capture_baseline(cfg, snap)
+        payload(snap)
 
     if cmd == "delete":
         cfg = load_config()
@@ -923,7 +1115,47 @@ def main(argv):
                 mock_delete(mock_state(), key)
         except RuntimeError as exc:
             err_payload(str(exc))
-        payload(mock_snapshot(cfg) if cfg.get("mode") != "real" else real_snapshot(cfg))
+        snap = mock_snapshot(cfg) if cfg.get("mode") != "real" else real_snapshot(cfg)
+        capture_baseline(cfg, snap)
+        payload(snap)
+
+    if cmd == "mock-touch":
+        cfg = load_config()
+        key = argv[2] if len(argv) > 2 else ""
+        if not key:
+            err_payload("mock-touch kräver en issue-key")
+        state = mock_state()
+        if key not in state["issues"]:
+            err_payload("Okänd issue: {}".format(key))
+        issue = state["issues"][key]
+        changed = False
+        for arg in argv[3:]:
+            if "=" in arg:
+                field, value = arg.split("=", 1)
+                if field not in ("statusId", "summary", "priorityName",
+                                 "assigneeName", "assigneeEmail", "typeName"):
+                    err_payload("Okänt fält för mock-touch: {}".format(field))
+                if field == "statusId" and value not in MOCK_STATUSES:
+                    err_payload("Okänd status: {}".format(value))
+                issue[field] = value
+                changed = True
+            elif arg in MOCK_STATUSES:
+                issue["statusId"] = arg
+                changed = True
+            else:
+                err_payload("Okänd status: {}".format(arg))
+        if not changed:
+            # No explicit change: pretend a teammate advanced the issue one step.
+            nxt = MOCK_TRANSITIONS.get(issue["statusId"], [])
+            if not nxt:
+                err_payload("{} har inga fler övergångar.".format(key))
+            issue["statusId"] = nxt[0]
+        save_mock_state(state)
+        payload(mock_snapshot(cfg))
+
+    if cmd == "watch":
+        cfg = load_config()
+        watch_payload(cfg)
 
     if cmd == "configure":
         cfg = load_config()

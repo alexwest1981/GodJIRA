@@ -11,6 +11,11 @@ delete issues when you have the right permissions.
   move or delete it (two-click confirm for delete).
 - **Backlog / Summary** – remaining columns and sprint status.
 - **"＋ Ny"** – full page to create an issue on the current board.
+- **Change notifications** – the bar widget polls every 30 s and raises a
+  desktop notification when an issue on a tracked board was added, moved,
+  updated, or removed. Changes you make inside the app are excluded (the
+  baseline is bumped after each of your edits). Watch one board via the board
+  picker, or leave it unset to track everything.
 - Mock-first: ships with a deterministic fake dataset, no credentials needed.
   A real Jira Cloud mode uses the same UI, rendering path and bridge commands.
 
@@ -57,8 +62,16 @@ python3 bin/jira_bridge.py move WEB-41 "In Progress"      # change an issue's st
 python3 bin/jira_bridge.py create 1 '{"summary":"...", "statusId":"progress"}'
 python3 bin/jira_bridge.py delete WEB-41
 python3 bin/jira_bridge.py configure '<json>'             # e.g. {"mode":"real"}
+python3 bin/jira_bridge.py watch                          # diff vs baseline; notifies if changed
+python3 bin/jira_bridge.py mock-touch WEB-41 done         # simulate a teammate's change (mock)
+python3 bin/jira_bridge.py mock-touch MOB-24 assigneeName="Elsa W"  # ...or a field edit
 python3 bin/jira_bridge.py mock-reset                     # rebuild the mock dataset
 ```
+
+`watch` is called by the bar widget every 30 s. It keeps a baseline in
+`~/.local/state/omarchy/jira-watch.json`; the first run only primes it. Issue
+`mock-touch` (mock mode) simulates someone else editing the board so you can
+watch a notification appear without a second user.
 
 `create` needs `CREATE_ISSUES` on the board's project, `delete` needs
 `DELETE_ISSUES`; the snapshot carries per-board `canAdd`/`canDelete`, which hide
@@ -95,6 +108,7 @@ connect screen.
 | Plugin | `~/.config/omarchy/plugins/custom.jira/` |
 | Config (mode, site, email) | `~/.config/omarchy/jira.json` |
 | Mock dataset | `~/.local/state/omarchy/jira-mock.json` |
+| Watcher baseline | `~/.local/state/omarchy/jira-watch.json` |
 | API token (real mode) | system keyring, service `custom.jira` |
 
 Refresh interval: open the Jira widget's settings (default 30 s, min 10 s).
