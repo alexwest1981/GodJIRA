@@ -1,5 +1,9 @@
 # custom.jira
 
+<p align="center">
+  <img src="assets/godjira-logo.jpeg" alt="GodJIRA" width="320">
+</p>
+
 A Jira client inside your Omarchy shell. Board with drag-and-drop, backlog and
 summary views in one floating window, kept fresh by a periodic refresh. Add and
 delete issues when you have the right permissions.
