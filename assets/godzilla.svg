@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 24">
+  <!-- dorsal + tail fins (dark), covered later by body/tail so they sprout out of the back -->
+  <polygon points="18.6,11 20.6,7.9 22.6,11" fill="#2f7031"/>
+  <polygon points="22,11.2 24,8.3 26,11.2" fill="#2f7031"/>
+  <polygon points="25.2,11.6 27.2,8.9 29.2,11.6" fill="#2f7031"/>
+  <polygon points="28,12.4 30,9.9 32,12.6" fill="#2f7031"/>
+  <polygon points="14,15.8 14.6,12.2 15.4,16.1" fill="#2f7031"/>
+  <polygon points="10.6,15 11.1,11.7 11.8,15.2" fill="#2f7031"/>
+  <polygon points="7.2,14.4 7.6,11.4 8.2,14.6" fill="#2f7031"/>
+  <polygon points="4.4,14 4.6,11.2 5.2,14.3" fill="#2f7031"/>
+
+  <!-- crown horns -->
+  <polygon points="32.8,5.4 33.4,3.6 34.1,5.4" fill="#2f7031"/>
+  <polygon points="35.6,5.7 36.3,4.2 37.0,5.8" fill="#2f7031"/>
+
+  <!-- tail -->
+  <path d="M2.8,13.6 L6,14.2 L10.2,14.8 L14.8,15.6 L17.6,16.4 L17.6,19.4 L14,19 L10.2,18.4 L6,17.6 L3.2,16.9 Z" fill="#5cae4e"/>
+
+  <!-- body -->
+  <ellipse cx="24" cy="16.6" rx="8" ry="5.6" fill="#5cae4e"/>
+
+  <!-- belly -->
+  <ellipse cx="25.5" cy="19.2" rx="5.2" ry="2.6" fill="#a9d8a2"/>
+
+  <!-- feet -->
+  <rect x="16.8" y="18.6" width="3.8" height="4" rx="1" fill="#4a9441"/>
+  <rect x="26.2" y="18.2" width="4" height="4.4" rx="1" fill="#4a9441"/>
+
+  <!-- head (profile facing right) -->
+  <path d="M29.2,9.2 L29.6,6.4 L30.6,5 L33.5,4.7 L37.5,5.2 L41.5,6.4 L44.2,7.8 L45.2,9.3 L45.2,11.2 L43.4,11.6 L40,12.3 L36.6,13 L33.6,13.7 L31.6,13.4 L30,11.4 Z" fill="#5cae4e"/>
+
+  <!-- eye -->
+  <circle cx="38" cy="7.9" r="1.5" fill="#ffffff"/>
+  <circle cx="38.6" cy="8.2" r="0.7" fill="#21242b"/>
+  <path d="M36.3,5.9 L39.5,6.6" stroke="#2f7031" stroke-width="0.8" stroke-linecap="round"/>
+
+  <!-- nostril + mouth -->
+  <circle cx="43.4" cy="8.9" r="0.4" fill="#39502f"/>
+  <path d="M40.4,10.7 L43.6,10.3" stroke="#39502f" stroke-width="0.9" stroke-linecap="round"/>
+</svg>
