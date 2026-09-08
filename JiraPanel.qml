@@ -99,7 +99,7 @@ Item {
 
   property var snapshot: null
   property bool loading: false
-  property int lastUpdatedMs: 0
+  property double lastUpdatedMs: 0
   property int snapshotRev: 0
 
   property string selectedBoardId: ""
