@@ -9,6 +9,7 @@ Item {
   property var app: null
   property int rev: app ? app.snapshotRev : -1
   property string selKey: app ? app.selectedIssueKey : ""
+  property bool mineFilter: app ? app.onlyMine : false
   property string filterText: ""
   property var backlogIssues: []
   property string boardTitle: ""
@@ -30,11 +31,12 @@ Item {
     var board = app.currentBoard()
     if (!board) { backlogIssues = []; boardTitle = ""; return }
     boardTitle = (board.projectKey || "") + " · " + board.name
-    backlogIssues = filterModel(board.backlog || [])
+    backlogIssues = filterModel(app.visibleIssues(board.backlog || []))
   }
 
   onRevChanged: build()
   onFilterTextChanged: build()
+  onMineFilterChanged: build()
 
   Component.onCompleted: build()
 
@@ -75,15 +77,51 @@ Item {
         }
       }
 
-      TextField {
-        id: searchField
+      Row {
         anchors.right: parent.right
         anchors.rightMargin: 14
         anchors.verticalCenter: parent.verticalCenter
-        width: 230
-        placeholderText: "Filtrera…"
-        text: backlogView.filterText
-        onTextChanged: backlogView.filterText = text
+        height: Style.spacing.controlHeight
+        spacing: Style.space(10)
+
+        Item {
+          width: mineToggleRow.implicitWidth
+          height: parent.height
+          Row {
+            id: mineToggleRow
+            anchors.centerIn: parent
+            spacing: 2
+            Button {
+              text: "Alla"
+              fontSize: Style.font.caption
+              selected: !(app && app.onlyMine)
+              tooltipText: "Visa alla ärenden"
+              horizontalPadding: Style.space(8)
+              onClicked: if (app) app.onlyMine = false
+            }
+            Button {
+              text: "Mina"
+              fontSize: Style.font.caption
+              selected: !!(app && app.onlyMine)
+              tooltipText: "Visa endast ärenden som är tilldelade dig"
+              horizontalPadding: Style.space(8)
+              onClicked: if (app) app.onlyMine = true
+            }
+          }
+        }
+
+        Item {
+          width: 230
+          height: parent.height
+          TextField {
+            id: searchField
+            anchors.centerIn: parent
+            width: 230
+            placeholderText: "Filtrera…"
+            text: backlogView.filterText
+            onTextChanged: backlogView.filterText = text
+          }
+        }
       }
     }
 

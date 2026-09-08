@@ -10,6 +10,7 @@ Item {
   property int rev: app ? app.snapshotRev : -1
   property string selBoard: app ? app.selectedBoardId : ""
   property string selKey: app ? app.selectedIssueKey : ""
+  property bool mineFilter: app ? app.onlyMine : false
   property var cols: []
   property string boardTitle: ""
   property string boardInfo: ""
@@ -75,14 +76,15 @@ Item {
     var out = []
     var seen = {}
     var src = (board.columns || []).slice()
+    var srcIssues = app.visibleIssues(board.issues || [])
 
     for (var c = 0; c < src.length; c++) {
       var colName = src[c].name || src[c].statusName || ("Kolumn " + (c + 1))
       out.push({ title: colName, statusId: String(src[c].statusId || ""), accent: accentForName(colName), list: [] })
       seen[colName] = out.length - 1
     }
-    for (var i = 0; i < (board.issues || []).length; i++) {
-      var iss = board.issues[i]
+    for (var i = 0; i < srcIssues.length; i++) {
+      var iss = srcIssues[i]
       var nm = iss.statusName || ""
       if (seen[nm] === undefined) {
         out.push({ title: nm, statusId: String(iss.statusId || ""), accent: accentForName(nm), list: [] })
@@ -269,6 +271,7 @@ Item {
 
   onRevChanged: build()
   onSelBoardChanged: build()
+  onMineFilterChanged: build()
   onSelKeyChanged: if (app && !app.selectedIssueKey) build()
   Component.onCompleted: build()
 
@@ -309,25 +312,62 @@ Item {
         anchors.right: parent.right
         anchors.rightMargin: 14
         anchors.verticalCenter: parent.verticalCenter
+        height: Style.spacing.controlHeight
         spacing: Style.space(10)
 
-        Button {
-          id: newIssueButton
-          text: "＋ Ny"
-          fontSize: Style.font.bodySmall
-          visible: boardView.canAdd && app && app.snapshot !== null
-          tooltipText: "Skapa ett ärende på tavlan"
-          onClicked: openCreatePage()
+        Item {
+          width: newIssueButton.visible ? newIssueButton.implicitWidth : 0
+          height: parent.height
+          Button {
+            id: newIssueButton
+            anchors.centerIn: parent
+            text: "＋ Ny"
+            fontSize: Style.font.bodySmall
+            visible: boardView.canAdd && app && app.snapshot !== null
+            tooltipText: "Skapa ett ärende på tavlan"
+            onClicked: openCreatePage()
+          }
         }
 
-        Dropdown {
-          id: boardPicker
+        Item {
           width: 230
-          label: "Tavla"
-          options: app ? app.boardsList() : []
-          value: app ? String(app.selectedBoardId) : ""
-          onChanged: function(v) {
-            app.selectedBoardId = v
+          height: parent.height
+          Dropdown {
+            id: boardPicker
+            width: 230
+            anchors.centerIn: parent
+            showLabel: false
+            options: app ? app.boardsList() : []
+            value: app ? String(app.selectedBoardId) : ""
+            onChanged: function(v) {
+              app.selectedBoardId = v
+            }
+          }
+        }
+
+        Item {
+          width: mineToggleRow.implicitWidth
+          height: parent.height
+          Row {
+            id: mineToggleRow
+            anchors.centerIn: parent
+            spacing: 2
+            Button {
+              text: "Alla"
+              fontSize: Style.font.caption
+              selected: !(app && app.onlyMine)
+              tooltipText: "Visa alla ärenden"
+              horizontalPadding: Style.space(8)
+              onClicked: if (app) app.onlyMine = false
+            }
+            Button {
+              text: "Mina"
+              fontSize: Style.font.caption
+              selected: !!(app && app.onlyMine)
+              tooltipText: "Visa endast ärenden som är tilldelade dig"
+              horizontalPadding: Style.space(8)
+              onClicked: if (app) app.onlyMine = true
+            }
           }
         }
       }

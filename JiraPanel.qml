@@ -103,6 +103,7 @@ Item {
   property int snapshotRev: 0
 
   property string selectedBoardId: ""
+  property bool onlyMine: false
   property string selectedIssueKey: ""
   property var issueTransitions: []
   property string issueTransitionsFor: ""
@@ -331,6 +332,35 @@ Item {
 
   function myEmail() {
     return (root.account && root.account.email) || ""
+  }
+
+  // True when the issue is assigned to the signed-in user. Email is the unique
+  // match; the display name is a fallback for data that lacks an email.
+  function isMine(issue) {
+    if (!issue) return false
+    var aEmail = String(root.account.email || "").trim().toLowerCase()
+    var aName = String(root.account.displayName || "").trim().toLowerCase()
+    if (aEmail) {
+      var e = String(issue.assigneeEmail || "").trim().toLowerCase()
+      if (e && e === aEmail) return true
+    }
+    if (aName) {
+      var n = String(issue.assigneeName || "").trim().toLowerCase()
+      if (n && n === aName) return true
+    }
+    return false
+  }
+
+  // When the "only mine" filter is on, keep only issues assigned to me;
+  // otherwise pass the list through untouched.
+  function visibleIssues(list) {
+    var src = list || []
+    if (!root.onlyMine) return src
+    var out = []
+    for (var i = 0; i < src.length; i++) {
+      if (root.isMine(src[i])) out.push(src[i])
+    }
+    return out
   }
 
   // ------------------------------------------------------------- nav
