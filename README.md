@@ -23,6 +23,33 @@ delete issues when you have the right permissions.
 - Mock-first: ships with a deterministic fake dataset, no credentials needed.
   A real Jira Cloud mode uses the same UI, rendering path and bridge commands.
 
+## Install (Omarchy)
+
+Add the plugin from git. `manifest.json` declares the id `custom.jira`, so the
+repo is cloned into `~/.config/omarchy/plugins/custom.jira/` automatically:
+
+```
+omarchy plugin add https://github.com/alexwest1981/GodJIRA.git --enable
+```
+
+This validates the manifest, then enables the plugin and places the **Jira**
+bar widget in the right bar section by default. Click the widget in the bar to
+open the panel. A restart of the shell is not needed; plugin code hot-reloads
+on save.
+
+Managing it later:
+
+```
+omarchy bar move custom.jira --section right  # move the bar widget
+omarchy plugin disable custom.jira            # hide the widget (keeps files)
+omarchy plugin enable custom.jira             # re-enable after a disable
+omarchy plugin update custom.jira             # pull the latest version
+omarchy plugin remove custom.jira             # uninstall (removes the folder)
+```
+
+Requires `git` and `python3` on PATH (the bridge is Python stdlib-only; `secret-tool`
+is only needed for the real Jira Cloud mode, see below).
+
 ## Quick start (mock)
 
 The plugin defaults to `mode: mock`. Toggle the window from the bar widget

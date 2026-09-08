@@ -31,6 +31,10 @@ Item {
 
   function open(payloadJson) {
     root.closingFromHost = false
+    if (!root.fittedToScreen) {
+      root.fittedToScreen = true
+      Qt.callLater(function() { jiraWindow.fitToScreen() })
+    }
     jiraWindow.visible = true
     if (!root.booted) {
       root.booted = true
@@ -86,6 +90,7 @@ Item {
   readonly property string pythonPath: "python3"
 
   property bool booted: false
+  property bool fittedToScreen: false
   property bool connected: false
   property string mode: "mock"
   property var account: ({})
@@ -527,12 +532,24 @@ Item {
     id: jiraWindow
     title: "Jira"
     color: Color.background
-    implicitWidth: 1240
-    implicitHeight: 800
-    minimumSize: Qt.size(880, 560)
+    implicitWidth: 1200
+    implicitHeight: 760
+    minimumSize: Qt.size(720, 500)
     visible: false
     onVisibleChanged: {
       if (visible) autoRefreshTimer.restart()
+    }
+
+    // The board columns reflow to any width (BoardView), so the window is
+    // happy at a modest floating size. On the very first show, shrink the
+    // default size if it would not fit the screen it landed on.
+    function fitToScreen() {
+      var scr = jiraWindow.screen
+      if (!scr) return
+      if (jiraWindow.width > scr.width)
+        jiraWindow.width = Math.max(720, scr.width - 60)
+      if (jiraWindow.height > scr.height)
+        jiraWindow.height = Math.max(500, scr.height - 80)
     }
 
     Rectangle {
