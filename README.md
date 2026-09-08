@@ -13,6 +13,9 @@ delete issues when you have the right permissions.
   *"Flytta ärendet"*).
 - **Detail page** – click a card to read it (summary, meta, description) and to
   move or delete it (two-click confirm for delete).
+- **"Alla / Mina" filter** – the Board and Backlog headers switch between every
+  issue on the team board and only the ones assigned to you (matched on your
+  account email/display name). The filter is shared across the views.
 - **Backlog / Summary** – remaining columns and sprint status.
 - **"＋ Ny"** – full page to create an issue on the current board.
 - **Change notifications** – the bar widget polls every 30 s and raises a
