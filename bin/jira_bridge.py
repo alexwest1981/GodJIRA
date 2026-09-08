@@ -407,7 +407,8 @@ def real_move(cfg, key, target):
     transitions = real_transitions(cfg, key)
     chosen = None
     for tr in transitions:
-        if str(tr["id"]) == str(target) or tr["toStatusName"] == target:
+        if str(tr["id"]) == str(target) or tr["toStatusName"] == target \
+                or str(tr["toStatusId"]) == str(target):
             chosen = tr
             break
     if not chosen:
