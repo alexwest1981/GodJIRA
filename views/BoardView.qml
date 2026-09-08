@@ -24,6 +24,25 @@ Item {
   property int hoverIndex: -1
   property int dropAttempts: 0
 
+  // Columns share the visible width so the whole board fits whatever size the
+  // floating window is. Below a minimum width they hold their size and the
+  // board scrolls horizontally instead of squashing cards to nothing.
+  property int minColumnWidth: 170
+
+  function columnWidth() {
+    var n = boardView.cols.length
+    if (n === 0) return 300
+    var gapSum = colsRow.spacing * Math.max(0, n - 1)
+    return Math.max(boardView.minColumnWidth, (colsRow.width - gapSum) / n)
+  }
+
+  function boardContentWidth() {
+    var n = boardView.cols.length
+    if (n === 0) return boardScroll.width
+    return Math.max(boardScroll.width,
+      n * boardView.minColumnWidth + colsRow.spacing * Math.max(0, n - 1))
+  }
+
   function accentForName(name) {
     var n = String(name || "").toLowerCase()
     if (n.indexOf("done") !== -1 || n.indexOf("closed") !== -1) return "#4f9d69"
@@ -355,7 +374,7 @@ Item {
 
             Row {
               id: colsRow
-              width: colsRow.implicitWidth
+              width: boardView.boardContentWidth()
               height: boardScroll.height
               spacing: Style.space(10)
 
@@ -366,7 +385,7 @@ Item {
                   required property var modelData
                   property bool isColumn: true
 
-                  width: 300
+                  width: boardView.columnWidth()
                   height: colsRow.height
                   color: "transparent"
                   border.color: Util.alpha(Color.foreground, 0.07)
@@ -381,21 +400,29 @@ Item {
                     color: modelData.accent
                   }
 
-                  Row {
+                  // column header: dot, title (elided), count. Anchored rather
+                  // than a Row so narrow columns cannot push the count out.
+                  Item {
                     anchors.top: parent.top
                     anchors.topMargin: 10
                     anchors.left: parent.left
                     anchors.leftMargin: 12
                     anchors.right: parent.right
                     anchors.rightMargin: 12
-                    spacing: Style.space(6)
+                    height: 22
 
                     Rectangle {
                       width: 8; height: 8; radius: 4
+                      anchors.left: parent.left
                       anchors.verticalCenter: parent.verticalCenter
                       color: modelData.accent
                     }
                     Text {
+                      id: colTitleText
+                      anchors.left: parent.left
+                      anchors.leftMargin: 14
+                      anchors.right: colCountText.left
+                      anchors.rightMargin: 6
                       anchors.verticalCenter: parent.verticalCenter
                       text: modelData.title
                       color: Color.foreground
@@ -404,8 +431,9 @@ Item {
                       font.bold: true
                       elide: Text.ElideRight
                     }
-                    Item { width: parent.width - 200; height: 1 }
                     Text {
+                      id: colCountText
+                      anchors.right: parent.right
                       anchors.verticalCenter: parent.verticalCenter
                       text: modelData.list.length
                       color: Qt.darker(Color.foreground, 1.4)
@@ -454,7 +482,7 @@ Item {
                             item.app = boardView.app
                             item.host = boardView
                             item.issue = modelData
-                            item.colWidth = cardLoader.width
+                            item.colWidth = Qt.binding(function() { return cardLoader.width })
                           }
                         }
                       }
