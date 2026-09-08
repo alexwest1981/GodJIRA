@@ -47,6 +47,20 @@ omarchy plugin update custom.jira             # pull the latest version
 omarchy plugin remove custom.jira             # uninstall (removes the folder)
 ```
 
+### Updating
+
+When a new commit is published to the git repo, pull it into the installed copy:
+
+```
+omarchy plugin update custom.jira
+```
+
+This runs a `git pull` inside the plugin folder (same as
+`git -C ~/.config/omarchy/plugins/custom.jira pull`). QML edits are hot-reloaded
+by the shell; if the open window still looks stale after an update, restart the
+shell and reopen it (`omarchy-restart-shell`, see Development notes). Updates
+need the same prerequisites as install: `git` and `python3` on PATH.
+
 Requires `git` and `python3` on PATH (the bridge is Python stdlib-only; `secret-tool`
 is only needed for the real Jira Cloud mode, see below).
 
