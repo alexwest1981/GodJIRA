@@ -40,6 +40,21 @@ bar widget in the right bar section by default. Click the widget in the bar to
 open the panel. A restart of the shell is not needed; plugin code hot-reloads
 on save.
 
+### Floating window (Hyprland)
+
+The panel is a normal Quickshell window, so Hyprland tiles it like any other
+app unless a window rule floats it. Add the rule that ships with the plugin
+(`window-rule.lua`) once to the end of `~/.config/hypr/hyprland.lua`:
+
+```lua
+o.window({ class = "^org.quickshell$", title = "^Jira$" }, { float = true, center = true })
+```
+
+Save the file (Hyprland reloads on save) or run `hyprctl reload`. The window
+then floats and centers, and honours its own size limits (minimum 720x500,
+fitted to the screen). Without this rule the window opens tiled instead of
+floating.
+
 Managing it later:
 
 ```
@@ -91,6 +106,7 @@ custom.jira/
 ├── BarWidget.qml            bar launcher
 ├── views/                   BoardView, BacklogView, SummaryView, PlaceholderView
 ├── components/              IssueCard, IssueDetail
+├── window-rule.lua          Hyprland rule that floats the Jira window (see README)
 └── bin/jira_bridge.py       everything network/credential related (Python stdlib only)
 ```
 
