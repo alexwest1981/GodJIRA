@@ -135,6 +135,32 @@ Item {
   property bool connected: false
   property string mode: "mock"
   property var account: ({})
+  // Anslutningslåset: en fungerande anslutning (site + konto + token) får inte
+  // skrivas över av misstag. Formuläret är låst tills "Skapa ny anslutning"
+  // trycks, och bryggan nekar identitetsändringar utan --replace.
+  property bool connectionLocked: false
+  property var connectionInfo: ({})
+  property bool connectUnlocked: false
+
+  function connectionLockedView() {
+    return root.connectionLocked && !root.connectUnlocked
+  }
+
+  // "Skapa ny anslutning": lås upp formuläret med adressen förifylld så att en
+  // ny token räcker. Den gamla anslutningen rörs inte förrän en ny fungerar.
+  function beginNewConnection() {
+    connectOverlay.siteField = root.connectionInfo.siteUrl || (root.account.siteUrl || "")
+    connectOverlay.emailField = root.connectionInfo.email || (root.account.email || "")
+    connectOverlay.tokenField = ""
+    connectOverlay.connectError = ""
+    connectOverlay.disconnectConfirm = false
+    root.connectUnlocked = true
+  }
+
+  function connectionModeLabel() {
+    if (root.mode !== "real") return "Mock (testdata)"
+    return root.connectionLocked ? "Live (API, låst)" : "Live (API)"
+  }
   property string statusError: ""
   property string notice: ""
 
@@ -246,6 +272,10 @@ Item {
       root.connected = !!parsed.connected
       root.account = parsed.account || {}
       if (parsed.config) root.configStartView = parsed.config.startView || ""
+      if (parsed.connection) {
+        root.connectionLocked = parsed.connection.locked === true
+        root.connectionInfo = parsed.connection
+      }
       // Open straight on the configured view, once per shell run.
       if (!root.startViewApplied && root.configuredView() !== "") {
         root.startViewApplied = true
@@ -765,13 +795,23 @@ Item {
   // ------------------------------------------------------------- connect
   function setModeAndLoad(m) {
     root.notice = ""
-    root.callBridge(["configure", JSON.stringify({ mode: m })], {}, function(parsed) {
+    var args = ["configure", JSON.stringify({ mode: m })]
+    // "Skapa ny anslutning" är det uttalade valet: först då får läget bytas.
+    if (root.connectionLocked) args.push("--replace")
+    root.callBridge(args, {}, function(parsed) {
       root.mode = m
+      if (parsed && parsed.ok === false) {
+        root.statusError = parsed.error || "Kunde inte byta läge."
+        root.showConnect = true
+        return
+      }
       if (m === "mock") {
         root.connected = true
         root.account = (parsed && parsed.account) || root.account
         root.selectedBoardId = ""
         root.selectedIssueKey = ""
+        root.connectionLocked = false
+        root.connectUnlocked = false
         root.showConnect = false
         root.requestSnapshot()
       } else {
@@ -784,43 +824,55 @@ Item {
     root.setModeAndLoad("mock")
   }
 
+  // Ingen configure-handske här: bryggan validerar mot Jira först och skriver
+  // adressen först när kontot svarar. En felstavad site kan därför inte slå ut
+  // en anslutning som redan fungerar.
   function connectReal(siteUrl, email, token) {
+    var args = ["login", "--site", siteUrl.trim(), "--email", email.trim()]
+    if (root.connectionLocked) args.push("--replace")
     root.notice = "Ansluter…"
-    root.callBridge(["configure", JSON.stringify({
-      mode: "real",
-      siteUrl: siteUrl.trim(),
-      email: email.trim()
-    })], {}, function(parsedCfg) {
-      root.callBridge(["login"], { JIRA_TOKEN: token }, function(parsed) {
-        if (parsed && parsed.ok) {
-          root.connected = true
-          root.account = parsed.account || {}
-          root.mode = "real"
-          root.notice = ""
-          root.showConnect = false
-          root.requestSnapshot()
-        } else {
-          root.notice = ""
-          root.statusError = (parsed && parsed.error) || "Inloggningen misslyckades."
-          root.showConnect = true
-        }
-      })
+    root.callBridge(args, { JIRA_TOKEN: token }, function(parsed) {
+      if (parsed && parsed.ok) {
+        root.connected = true
+        root.account = parsed.account || {}
+        root.mode = "real"
+        root.connectionLocked = (parsed.connection || {}).locked === true
+        root.connectionInfo = parsed.connection || {}
+        root.connectUnlocked = false
+        root.notice = ""
+        root.showConnect = false
+        root.requestSnapshot()
+      } else {
+        root.notice = ""
+        root.statusError = (parsed && parsed.error) || "Inloggningen misslyckades."
+        root.showConnect = true
+      }
     })
   }
 
+  // Koppla från: UI:t frågar en gång, bryggan kräver --yes. Adressen behålls
+  // (den är inte hemlig) medan token försvinner ur nyckelringen.
   function logout() {
-    root.callBridge(["logout"], {}, function() {
-    root.connected = false
-    root.account = {}
-    root.snapshot = null
-    root.snapshotRev = root.snapshotRev + 1
-    root.selectedBoardId = ""
+    root.notice = ""
+    root.callBridge(["logout", "--yes"], {}, function(parsed) {
+      root.connected = false
+      root.account = {}
+      root.snapshot = null
+      root.snapshotRev = root.snapshotRev + 1
+      root.selectedBoardId = ""
       root.selectedIssueKey = ""
       root.issueTransitions = []
       root.mode = "mock"
-      root.callBridge(["configure", JSON.stringify({ mode: "mock", siteUrl: "", email: "" })], {}, function() {
-        root.showConnect = true
-      })
+      root.connectionLocked = false
+      root.connectUnlocked = true
+      root.connectionInfo = (parsed && parsed.connection) || {}
+      var info = root.connectionInfo
+      connectOverlay.siteField = info.siteUrl || ""
+      connectOverlay.emailField = info.email || ""
+      connectOverlay.tokenField = ""
+      connectOverlay.disconnectConfirm = false
+      root.showConnect = true
+      root.requestStatus()
     })
   }
 
@@ -1034,6 +1086,10 @@ Item {
                   anchors.fill: parent
                   hoverEnabled: true
                   onClicked: {
+                    // Att titta på anslutningen ska inte vara samma sak som att
+                    // lämna den: vyn öppnar alltid i låst läge.
+                    root.connectUnlocked = false
+                    connectOverlay.disconnectConfirm = false
                     root.showConnect = true
                   }
                 }
@@ -1069,6 +1125,7 @@ Item {
     property string emailField: ""
     property string tokenField: ""
     property string connectError: ""
+    property bool disconnectConfirm: false
 
     function show() { visible = true }
     function hide() { visible = false }
@@ -1082,12 +1139,120 @@ Item {
       width: 460
       color: "transparent"
 
+      // ---- låst läge: den sparade anslutningen, läsbar men inte ändringsbar
+      Column {
+        width: parent.width
+        spacing: Style.space(12)
+        visible: root.connectionLockedView()
+
+        Text {
+          text: "Ansluten till Jira"
+          color: Color.foreground
+          font.family: Style.font.family
+          font.pixelSize: Style.font.title
+          font.bold: true
+        }
+
+        Text {
+          width: parent.width
+          wrapMode: Text.Wrap
+          text: "Anslutningen är låst. Adressen och API-token ändras bara om du själv trycker på Skapa ny anslutning."
+          color: Qt.darker(Color.foreground, 1.35)
+          font.family: Style.font.family
+          font.pixelSize: Style.font.bodySmall
+        }
+
+        Rectangle {
+          width: parent.width
+          height: infoCol.implicitHeight + 24
+          radius: 10
+          color: Qt.darker(Color.background, 1.15)
+          border.color: Util.alpha(Color.foreground, 0.08)
+          border.width: 1
+
+          Column {
+            id: infoCol
+            width: parent.width - 24
+            x: 12
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(6)
+
+            Text {
+              text: root.account.siteUrl || root.connectionInfo.siteUrl || ""
+              color: Color.foreground
+              font.family: Style.font.family
+              font.pixelSize: Style.font.bodySmall
+              font.bold: true
+            }
+            Text {
+              text: "Konto: " + (root.account.displayName || "")
+                    + (root.account.email || root.connectionInfo.email
+                       ? "  <" + (root.account.email || root.connectionInfo.email) + ">" : "")
+              color: Qt.darker(Color.foreground, 1.3)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+            }
+            Text {
+              text: "Läge: " + root.connectionModeLabel()
+              color: Qt.darker(Color.foreground, 1.3)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+            }
+            Text {
+              text: "API-token: " + (root.connectionInfo.hasToken
+                    ? "sparad i nyckelringen (visas aldrig)" : "saknas")
+              color: Qt.darker(Color.foreground, 1.3)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+            }
+          }
+        }
+
+        Row {
+          width: parent.width
+          spacing: Style.space(8)
+
+          Button {
+            text: "Skapa ny anslutning"
+            bordered: true
+            tooltipText: "Lås upp formuläret för att byta site, konto eller token"
+            onClicked: root.beginNewConnection()
+          }
+
+          Button {
+            text: connectOverlay.disconnectConfirm ? "Säkert? Tryck igen" : "Koppla från"
+            bordered: true
+            selected: connectOverlay.disconnectConfirm
+            tooltipText: "Tar bort API-token ur nyckelringen, adressen sparas"
+            onClicked: {
+              if (!connectOverlay.disconnectConfirm) {
+                connectOverlay.disconnectConfirm = true
+                return
+              }
+              connectOverlay.disconnectConfirm = false
+              root.logout()
+            }
+          }
+        }
+
+        Text {
+          width: parent.width
+          wrapMode: Text.Wrap
+          text: "Koppla från tar bort token men behåller adressen, så du kan återansluta med bara en ny token."
+          color: Qt.darker(Color.foreground, 1.5)
+          font.family: Style.font.family
+          font.pixelSize: Style.font.caption
+        }
+      }
+
+      // ---- formuläret: först när det inte finns något att skydda
       Column {
         width: parent.width
         spacing: Style.space(14)
+        visible: !root.connectionLockedView()
 
         Text {
-          text: "Anslut till Jira"
+          text: root.connectionLocked ? "Skapa ny anslutning" : "Anslut till Jira"
           color: Color.foreground
           font.family: Style.font.family
           font.pixelSize: Style.font.title
@@ -1124,6 +1289,17 @@ Item {
           anchors.margins: Style.space(6)
         }
 
+        Text {
+          width: parent.width
+          wrapMode: Text.Wrap
+          visible: root.connectionLocked
+          text: "Den nuvarande anslutningen till " + (root.connectionInfo.siteUrl || "")
+                + " används tills den nya fungerar. Misslyckas inloggningen händer ingenting."
+          color: Qt.darker(Color.foreground, 1.45)
+          font.family: Style.font.family
+          font.pixelSize: Style.font.caption
+        }
+
         TextField {
           id: connectSiteInput
           width: parent.width
@@ -1156,11 +1332,24 @@ Item {
             bordered: true
             onClicked: {
               connectOverlay.connectError = ""
-              if (!connectOverlay.siteField || !connectOverlay.emailField || !connectOverlay.tokenField) {
-                connectOverlay.connectError = "Fyll i site, e-post och API-token."
+              if (!connectOverlay.siteField || !connectOverlay.emailField) {
+                connectOverlay.connectError = "Fyll i site och e-post."
                 return
               }
+              // Tomt tokenfält = använd den token som redan ligger i nyckelringen
               root.connectReal(connectOverlay.siteField, connectOverlay.emailField, connectOverlay.tokenField)
+            }
+          }
+
+          Button {
+            text: "Avbryt"
+            bordered: true
+            visible: root.connectionLocked
+            tooltipText: "Behåll anslutningen som den är"
+            onClicked: {
+              connectOverlay.connectError = ""
+              root.connectUnlocked = false
+              connectOverlay.disconnectConfirm = false
             }
           }
 

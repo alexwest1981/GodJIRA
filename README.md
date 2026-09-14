@@ -43,6 +43,12 @@ delete issues when you have the right permissions.
 - **Comments and editing** – the detail page lists an issue's comments and
   posts new ones, and edits summary, description, priority, assignee and story
   points. Only the fields you actually changed are sent to Jira.
+- **Connection lock** – once a site, account and token are stored, the
+  connection screen opens read-only: site, account, mode and "token in the
+  keyring", with no field to submit by accident. Changing it takes a deliberate
+  *Skapa ny anslutning* (prefills the address, so a fresh token is enough) or
+  *Koppla från* (two-step; removes the token, keeps the address). See
+  "Anslutningslåset".
 - **"＋ Ny"** – full page to create an issue on the current board.
 - **Change notifications** – the bar widget polls every 30 s and raises a
   desktop notification when an issue on a tracked board was added, moved,
@@ -183,25 +189,40 @@ watch a notification appear without a second user.
 
 1. Create an API token at
    https://id.atlassian.com/manage-profile/security/api-tokens
-2. Configure the site and account, then switch to real mode:
+2. Connect. `login` validates the credentials against `/rest/api/3/myself`
+   FIRST and only then writes the address and stores the token — a typo in the
+   site or e-mail can therefore not knock out a connection that already works.
+   The token goes to the system keyring via `secret-tool`, never into a file:
 
 ```
-python3 bin/jira_bridge.py configure '{"siteUrl":"https://your-domain.atlassian.net","email":"you@example.com"}'
-python3 bin/jira_bridge.py configure '{"mode":"real"}'
+python3 bin/jira_bridge.py login --site https://your-domain.atlassian.net --email you@example.com
+JIRA_TOKEN=... python3 bin/jira_bridge.py login --site ... --email ...   # token on stdin
+python3 bin/jira_bridge.py login --token-file /tmp/jira-token --site ... --email ...
+python3 bin/jira_bridge.py logout --yes    # remove the stored token
 ```
 
-3. Log in. The token is validated against `/rest/api/3/myself` and stored in the
-   system keyring via `secret-tool` – never in a file. Either pass it on a temp
-   path that is deleted after reading, or set it on stdin via `JIRA_TOKEN`:
+   A token that is already in the keyring can be reused: `login --site ... --email ...`
+   without a token picks it up, which is how the panel reconnects after
+   *Koppla från*.
 
-```
-JIRA_TOKEN=... python3 bin/jira_bridge.py login --token-file /tmp/jira-token
-python3 bin/jira_bridge.py login          # falls back to keyring / JIRA_TOKEN
-python3 bin/jira_bridge.py logout         # forget the credential
-```
+### Anslutningslåset
 
-The `status` command reports when credentials are missing so the UI can show the
-connect screen.
+While a working connection exists (site + account + token, mode real) the bridge
+refuses to let anything overwrite it by accident:
+
+| Command | Without the explicit flag |
+| --- | --- |
+| `configure '{"siteUrl":…}'` / `{"email":…}` / `{"mode":…}` | refused — needs `--replace` |
+| `login` to a different site or account | refused — needs `--replace` |
+| `login` for the same account with a new token | allowed (that is not a swap) |
+| `logout` | refused — needs `--yes` |
+| `configure '{"startView":…}'` and the other UI keys | unaffected |
+
+Every refusal is journaled, so `journal` shows attempts as well as actions, and
+`status` reports the lock (`connection.locked`) plus whether a token is stored
+(`connection.hasToken`) — the UI needs both to know whether to lock its form.
+`logout --yes` removes the token but keeps the address, so reconnecting needs
+only a token.
 
 ## State and configuration
 
