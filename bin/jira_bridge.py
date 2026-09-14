@@ -68,6 +68,9 @@ DEFAULT_CONFIG = {
     "email": "",
     "selectedBoardId": "",
     "selectedProjectKey": "",
+    # Which view the panel opens on ("summary", "board", "backlog",
+    # "timeline", "reports", "dev", "activity"); empty means Board.
+    "startView": "",
 }
 
 # ---------------------------------------------------------------- payloads
@@ -1734,13 +1737,14 @@ def status_payload(cfg):
                 "displayName": myself.get("displayName") or "",
                 "siteUrl": site,
                 "connected": True,
-            })
+            }, config={"startView": cfg.get("startView") or ""})
         except RuntimeError as exc:
             return ok_payload(mode=mode, connected=False, error=str(exc), account={
                 "email": email, "displayName": "", "siteUrl": site, "connected": False})
     # mock
     account = mock_snapshot(cfg)["account"]
-    return ok_payload(mode="mock", connected=True, account=account)
+    return ok_payload(mode="mock", connected=True, account=account,
+                      config={"startView": cfg.get("startView") or ""})
 
 
 # ----------------------------------------------------------------- main
