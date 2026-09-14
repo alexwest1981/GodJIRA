@@ -1233,6 +1233,17 @@ Item {
               root.logout()
             }
           }
+
+          Button {
+            text: "Tillbaka"
+            bordered: true
+            tooltipText: "Stäng anslutningsvyn — ingenting ändras"
+            onClicked: {
+              root.connectUnlocked = false
+              connectOverlay.disconnectConfirm = false
+              root.showConnect = false
+            }
+          }
         }
 
         Text {
