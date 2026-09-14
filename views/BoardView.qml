@@ -67,18 +67,16 @@ Item {
     if (!board) { cols = []; boardTitle = ""; boardInfo = ""; canAdd = false; canDelete = false; return }
 
     boardTitle = (board.projectKey || "") + " · " + board.name
-    // Team-managed boards report type "simple" but still have sprints, so key
-    // the header off the sprint, not off the board type.
-    boardInfo = board.sprint
-      ? app.sprintLabel(board)
-      : "Kanban"
+    // Jira's board shows one sprint (the running one by default); the picker
+    // below the header switches sprint or widens it to the whole board.
+    boardInfo = app.boardScopeLabel(board)
     canAdd = app.boardCanAdd()
     canDelete = app.boardCanDelete()
 
     var out = []
     var seen = {}
     var src = (board.columns || []).slice()
-    var srcIssues = app.visibleIssues(board.issues || [])
+    var srcIssues = app.visibleIssues(app.boardScopeIssues(board))
 
     for (var c = 0; c < src.length; c++) {
       var colName = src[c].name || src[c].statusName || ("Kolumn " + (c + 1))
@@ -271,7 +269,10 @@ Item {
     }
   }
 
+  property string scope: app ? app.boardSprintScope : "active"
+
   onRevChanged: build()
+  onScopeChanged: build()
   onSelBoardChanged: build()
   onMineFilterChanged: build()
   onSelKeyChanged: if (app && !app.selectedIssueKey) build()
@@ -375,10 +376,58 @@ Item {
       }
     }
 
+    // ---- sprint picker: what Jira's board scopes itself to
+    Rectangle {
+      id: sprintBar
+      width: parent.width
+      height: (app && app.boardSprints().length > 0) ? 40 : 0
+      visible: height > 0
+      color: "transparent"
+
+      Row {
+        anchors.left: parent.left
+        anchors.leftMargin: 16
+        anchors.verticalCenter: parent.verticalCenter
+        spacing: Style.space(6)
+
+        Button {
+          text: "Aktiv"
+          fontSize: Style.font.caption
+          horizontalPadding: Style.space(8)
+          selected: app && app.boardSprintScope === "active"
+          tooltipText: "Ärendena i den pågående sprinten"
+          onClicked: if (app) app.boardSprintScope = "active"
+        }
+
+        Repeater {
+          model: app ? app.boardSprints() : []
+
+          Button {
+            required property var modelData
+            text: modelData.name
+            fontSize: Style.font.caption
+            horizontalPadding: Style.space(8)
+            selected: app && app.boardSprintScope === String(modelData.id)
+            tooltipText: app ? app.sprintLabelOf(modelData) : ""
+            onClicked: if (app) app.boardSprintScope = String(modelData.id)
+          }
+        }
+
+        Button {
+          text: "Alla"
+          fontSize: Style.font.caption
+          horizontalPadding: Style.space(8)
+          selected: app && app.boardSprintScope === "all"
+          tooltipText: "Visa ärenden från alla sprintar"
+          onClicked: if (app) app.boardSprintScope = "all"
+        }
+      }
+    }
+
     // ---- body
     Item {
       width: parent.width
-      height: parent.height - 52
+      height: parent.height - 52 - sprintBar.height
 
       Row {
         anchors.fill: parent

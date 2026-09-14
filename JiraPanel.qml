@@ -144,6 +144,7 @@ Item {
   property int snapshotRev: 0
 
   property string selectedBoardId: ""
+  property string boardSprintScope: "active"
   property bool onlyMine: false
   property string selectedIssueKey: ""
   property var issueTransitions: []
@@ -334,6 +335,10 @@ Item {
     return null
   }
 
+  // A different board means a different set of sprints: go back to following
+  // the running one instead of leaving a stale sprint id pinned.
+  onSelectedBoardIdChanged: root.boardSprintScope = "active"
+
   function reconcileSelection() {
     if (!root.selectedIssueKey) return
     if (!root.issueByKey(root.selectedIssueKey)) root.selectedIssueKey = ""
@@ -387,13 +392,44 @@ Item {
   }
 
   function sprintLabel(board) {
-    var sp = board && board.sprint
+    return root.sprintLabelOf(board ? board.sprint : null)
+  }
+
+  function sprintLabelOf(sp) {
     if (!sp) return ""
     var s = sp.name || "Sprint"
     var start = sp.startMs ? Qt.formatDateTime(new Date(sp.startMs), "d MMM") : ""
     var end = sp.endMs ? Qt.formatDateTime(new Date(sp.endMs), "d MMM") : ""
-    if (start && end) return s + "  ·  " + start + " – " + end
+    if (start && end) return s + "  ·  " + start + " –  " + end
     return s
+  }
+
+  // Which sprint the Board view is scoped to, the way Jira's board is scoped
+  // to the running sprint: "active" follows it, a sprint id pins one, and
+  // "all" shows every issue on the board (what the old view always did).
+  function boardScopeIssues(board) {
+    var all = (board && board.issues) ? board.issues : []
+    var scope = root.boardSprintScope
+    if (scope === "all") return all
+    var sprint = null
+    if (scope === "active") sprint = board ? board.sprint : null
+    else sprint = root.sprintById(scope)
+    if (!sprint) return all
+    var out = []
+    for (var i = 0; i < all.length; i++) {
+      if (String(all[i].sprintId) === String(sprint.id)) out.push(all[i])
+    }
+    return out
+  }
+
+  function boardScopeLabel(board) {
+    var scope = root.boardSprintScope
+    if (scope === "all") return "Alla sprintar"
+    var sprint = null
+    if (scope === "active") sprint = board ? board.sprint : null
+    else sprint = root.sprintById(scope)
+    if (!sprint) return (board && (board.sprints || []).length === 0) ? "Kanban" : ""
+    return root.sprintLabelOf(sprint)
   }
 
   function myEmail() {
