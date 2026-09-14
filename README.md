@@ -8,15 +8,24 @@ A Jira client inside your Omarchy shell. Board with drag-and-drop, backlog and
 summary views in one floating window, kept fresh by a periodic refresh. Add and
 delete issues when you have the right permissions.
 
-- **Board view** – kanban columns per status. Drag a card between columns to
-  change its status (fallback: open the card and pick a status under
-  *"Flytta ärendet"*).
+- **Board view** – kanban columns per status, scoped to a sprint the way
+  Jira's board is. The picker under the header switches between *Aktiv* (the
+  running sprint, the default), any single sprint, and *Alla* (every issue on
+  the board). Drag a card between columns to change its status (fallback: open
+  the card and pick a status under *"Flytta ärendet"*).
 - **Detail page** – click a card to read it (summary, meta, description) and to
   move or delete it (two-click confirm for delete).
 - **"Alla / Mina" filter** – the Board and Backlog headers switch between every
   issue on the team board and only the ones assigned to you (matched on your
   account email/display name). The filter is shared across the views.
-- **Backlog / Summary** – remaining columns and sprint status.
+- **Backlog** – the shape of Jira's backlog page: one section per sprint
+  (oldest start date first) with its dates, state and count, then the unplanned
+  backlog as the last section. Sections fold with their `+`/`-` button. The
+  count reads `open kvar av total`, because Jira's own header shows only the
+  open number: a 35-issue sprint whose 6 issues were completed in an earlier
+  sprint is "29 work items" there.
+- **Summary** – counts per status, the running sprint, who is carrying what,
+  and the most recently updated issues.
 - **Timeline** – the board's sprints as lanes on a date axis, the backlog as the
   last lane. Each lane is as wide as its sprint window and fills up as the
   sprint runs. "⇄" on a card moves the issue to another sprint (or back to the
