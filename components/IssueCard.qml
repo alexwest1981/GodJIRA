@@ -8,6 +8,11 @@ Item {
   id: card
 
   property var app: null
+
+  // Texterna kommer från bryggan (samma i18n/*.json som den använder): en källa
+  // för varje mening, och språket byts i Inställningar.
+  function t(key, args) { return app ? app.t(key, args) : key }
+
   property var host: null
   property var issue: null
   property int colWidth: 292

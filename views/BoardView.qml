@@ -7,6 +7,11 @@ Item {
   anchors.fill: parent
 
   property var app: null
+
+  // Texterna kommer från bryggan (samma i18n/*.json som den använder): en källa
+  // för varje mening, och språket byts i Inställningar.
+  function t(key, args) { return app ? app.t(key, args) : key }
+
   property int rev: app ? app.snapshotRev : -1
   property string selBoard: app ? app.selectedBoardId : ""
   property string selKey: app ? app.selectedIssueKey : ""
@@ -257,15 +262,15 @@ Item {
           app.moveIssue(dropResolveKey, match.toStatusId || match.toStatusName)
           finishDrop()
         } else {
-          abortDrop("Kan inte flytta till '" + dropResolveCol.title + "' – ingen giltig statusändring.")
+          abortDrop(t("board.dropNoTransition", { column: dropResolveCol.title }))
         }
         return
       }
       if (!app.transitionsLoading && app.issueTransitionsFor === dropResolveKey && app.issueTransitions.length === 0) {
-        abortDrop("Kan inte flytta till '" + dropResolveCol.title + "' – inga statusändringar tillgängliga.")
+        abortDrop(t("board.dropNoOptions", { column: dropResolveCol.title }))
         return
       }
-      if (dropAttempts > 30) abortDrop("Statusändringarna svarade inte – försök igen.")
+      if (dropAttempts > 30) abortDrop(t("msg.actionFailed"))
     }
   }
 
@@ -327,7 +332,7 @@ Item {
             text: "＋ Ny"
             fontSize: Style.font.bodySmall
             visible: boardView.canAdd && app && app.snapshot !== null
-            tooltipText: "Skapa ett ärende på tavlan"
+            tooltipText: t("board.newTooltip")
             onClicked: openCreatePage()
           }
         }
@@ -356,18 +361,18 @@ Item {
             anchors.centerIn: parent
             spacing: 2
             Button {
-              text: "Alla"
+              text: t("common.all")
               fontSize: Style.font.caption
               selected: !(app && app.onlyMine)
-              tooltipText: "Visa alla ärenden"
+              tooltipText: t("common.allTooltip")
               horizontalPadding: Style.space(8)
               onClicked: if (app) app.onlyMine = false
             }
             Button {
-              text: "Mina"
+              text: t("common.mine")
               fontSize: Style.font.caption
               selected: !!(app && app.onlyMine)
-              tooltipText: "Visa endast ärenden som är tilldelade dig"
+              tooltipText: t("common.mineTooltip")
               horizontalPadding: Style.space(8)
               onClicked: if (app) app.onlyMine = true
             }
@@ -391,11 +396,11 @@ Item {
         spacing: Style.space(6)
 
         Button {
-          text: "Aktiv"
+          text: t("board.scopeActive")
           fontSize: Style.font.caption
           horizontalPadding: Style.space(8)
           selected: app && app.boardSprintScope === "active"
-          tooltipText: "Ärendena i den pågående sprinten"
+          tooltipText: t("board.scopeActiveTooltip")
           onClicked: if (app) app.boardSprintScope = "active"
         }
 
@@ -414,11 +419,11 @@ Item {
         }
 
         Button {
-          text: "Alla"
+          text: t("common.all")
           fontSize: Style.font.caption
           horizontalPadding: Style.space(8)
           selected: app && app.boardSprintScope === "all"
-          tooltipText: "Visa ärenden från alla sprintar"
+          tooltipText: t("board.scopeAllTooltip")
           onClicked: if (app) app.boardSprintScope = "all"
         }
       }
@@ -443,8 +448,8 @@ Item {
           Text {
             anchors.centerIn: parent
             text: app && app.snapshot
-              ? "Ingen tavla vald – välj i listan uppe till höger."
-              : "Läser in tavlor…"
+              ? t("board.noBoard")
+              : t("board.loadingBoards")
             color: Qt.darker(Color.foreground, 1.5)
             font.family: Style.font.family
             font.pixelSize: Style.font.body
@@ -580,7 +585,7 @@ Item {
 
                       Text {
                         anchors.centerIn: parent
-                        text: "Inga ärenden här"
+                        text: t("board.emptyColumn")
                         color: Qt.darker(Color.foreground, 1.6)
                         font.family: Style.font.family
                         font.pixelSize: Style.font.caption
@@ -681,7 +686,7 @@ Item {
         Text {
           id: backTxt
           anchors.centerIn: parent
-          text: "← Tillbaka"
+          text: "← " + t("common.back")
           color: createPage.backHover ? Color.foreground : Qt.darker(Color.foreground, 1.3)
           font.family: Style.font.family
           font.pixelSize: Style.font.caption
@@ -696,7 +701,7 @@ Item {
       }
 
       Text {
-        text: "Nytt ärende"
+        text: t("board.newIssueTitle")
         color: Color.foreground
         font.family: Style.font.family
         font.pixelSize: Style.font.title
@@ -704,7 +709,7 @@ Item {
       }
 
       Text {
-        text: "Tavla: " + boardTitle + (boardInfo !== "" ? "  ·  " + boardInfo : "")
+        text: t("common.boardPrefix") + boardTitle + (boardInfo !== "" ? "  ·  " + boardInfo : "")
         color: Qt.darker(Color.foreground, 1.4)
         font.family: Style.font.family
         font.pixelSize: Style.font.caption
@@ -728,7 +733,7 @@ Item {
       TextField {
         id: addSummary
         width: parent.width
-        placeholderText: "Sammanfattning"
+        placeholderText: t("board.fieldSummary")
         onAccepted: saveNewIssue()
       }
 
@@ -747,12 +752,12 @@ Item {
         spacing: Style.space(8)
 
         Button {
-          text: "Spara"
+          text: t("common.save")
           bordered: true
           onClicked: saveNewIssue()
         }
         Button {
-          text: "Avbryt"
+          text: t("conn.cancel")
           onClicked: createPage.visible = false
         }
       }

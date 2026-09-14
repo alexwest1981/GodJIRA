@@ -4,6 +4,11 @@ import qs.Ui
 
 Item {
   property var app: null
+
+  // Texterna kommer från bryggan (samma i18n/*.json som den använder): en källa
+  // för varje mening, och språket byts i Inställningar.
+  function t(key, args) { return app ? app.t(key, args) : key }
+
   property int rev: app ? app.snapshotRev : -1
 
   function refreshModel() {
@@ -25,11 +30,11 @@ Item {
     function rebuild() {
       var board = app ? app.currentBoard() : null
       myBoard = board
-      if (!board) { groupModel = []; statusText = "Ingen tavla vald."; return }
+      if (!board) { groupModel = []; statusText = t("summary.noBoard"); return }
       var groups = [
-        { name: "Att göra", cat: "new", color: "#c9a227", keys: [] },
-        { name: "Pågår", cat: "indeterminate", color: "#4a8fd6", keys: [] },
-        { name: "Klart", cat: "done", color: "#4f9d69", keys: [] }
+        { name: t("category.new"), cat: "new", color: "#c9a227", keys: [] },
+        { name: t("category.indeterminate"), cat: "indeterminate", color: "#4a8fd6", keys: [] },
+        { name: t("category.done"), cat: "done", color: "#4f9d69", keys: [] }
       ]
       var issues = (board.issues || []).concat(board.backlog || [])
       for (var i = 0; i < issues.length; i++) {
@@ -166,7 +171,7 @@ Item {
             spacing: Style.space(6)
 
             Text {
-              text: "Mina öppna ärenden"
+              text: t("summary.myOpenIssues")
               color: Color.foreground
               font.family: Style.font.family
               font.pixelSize: Style.font.body
@@ -248,7 +253,7 @@ Item {
             visible: modelView.recentModel.length > 0
 
             Text {
-              text: "Senast uppdaterade"
+              text: t("summary.recentlyUpdated")
               color: Color.foreground
               font.family: Style.font.family
               font.pixelSize: Style.font.body
@@ -322,10 +327,10 @@ Item {
           anchors.left: parent.left
           anchors.leftMargin: 20
           anchors.verticalCenter: parent.verticalCenter
-          text: modelView.statusText || ("Tavla: " + (modelView.myBoard
-            ? modelView.myBoard.issues.length + " ärenden i sprint, "
-              + modelView.myBoard.backlog.length + " i backlog"
-            : "inget valt"))
+          text: modelView.statusText || (t("common.boardPrefix") + (modelView.myBoard
+            ? t("summary.sprintAndBacklog", { sprint: modelView.myBoard.issues.length,
+                  backlog: modelView.myBoard.backlog.length })
+            : t("summary.noneSelected")))
           color: Qt.darker(Color.foreground, 1.5)
           font.family: Style.font.family
           font.pixelSize: Style.font.caption

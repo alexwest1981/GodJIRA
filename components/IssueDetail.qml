@@ -9,6 +9,11 @@ Rectangle {
   id: detail
   property var app: null
 
+
+  // Texterna kommer från bryggan (samma i18n/*.json som den använder): en källa
+  // för varje mening, och språket byts i Inställningar.
+  function t(key, args) { return app ? app.t(key, args) : key }
+
   property int rev: app ? app.snapshotRev : -1
   property string selKey: app ? app.selectedIssueKey : ""
   property var issue: null
@@ -69,10 +74,10 @@ Rectangle {
   }
 
   function statusText() {
-    if (detail.busy) return "Hämtar statusar…"
+    if (detail.busy) return t("detail.loadingTransitions")
     if (!detail.app) return ""
     return detail.app.issueTransitions.length === 0
-      ? "Inga statusändringar tillgängliga."
+      ? t("detail.noTransitions")
       : ""
   }
 
@@ -121,7 +126,7 @@ Rectangle {
       if (!found && detail.editAssignee === "") payload.assigneeAccountId = ""
     }
     if (Object.keys(payload).length === 0) {
-      detail.app.notice = "Inget har ändrats."
+      detail.app.notice = t("detail.nothingChanged")
       return
     }
     detail.saving = true
@@ -172,14 +177,14 @@ Rectangle {
         Item { width: Math.max(0, parent.width - 230); height: 1 }
 
         Button {
-          text: "Öppna"
+          text: t("common.open")
           fontSize: Style.font.caption
-          tooltipText: "Öppna i webbläsare"
+          tooltipText: t("common.openInBrowser")
           onClicked: app.openInBrowser(detail.issue.key)
         }
         Button {
           text: "x"
-          tooltipText: "Stäng detalj"
+          tooltipText: t("detail.close")
           fontSize: Style.font.caption
           onClicked: app.clearIssue()
         }
@@ -254,7 +259,7 @@ Rectangle {
           Text {
             id: chip3
             anchors.centerIn: parent
-            text: detail.issue ? (detail.issue.assigneeName || "Otilldelad") : ""
+            text: detail.issue ? (detail.issue.assigneeName || t("common.unassigned")) : ""
             color: Color.foreground
             font.family: Style.font.family
             font.pixelSize: Style.font.caption
@@ -299,7 +304,7 @@ Rectangle {
           Text {
             id: chip6
             anchors.centerIn: parent
-            text: detail.issue ? ("Del av " + (detail.issue.parentKey || "")) : ""
+            text: detail.issue && detail.issue.parentKey ? t("detail.partOf", { key: detail.issue.parentKey }) : ""
             color: Color.foreground
             font.family: Style.font.family
             font.pixelSize: Style.font.caption
@@ -318,7 +323,7 @@ Rectangle {
       // ---- description
       Text {
         width: parent.width
-        text: "Beskrivning"
+        text: t("detail.description")
         color: Color.foreground
         font.family: Style.font.family
         font.pixelSize: Style.font.body
@@ -328,7 +333,7 @@ Rectangle {
         width: parent.width
         text: detail.issue && (detail.issue.description || "").trim()
           ? detail.issue.description
-          : "Ingen beskrivning."
+          : t("detail.noDescription")
         wrapMode: Text.Wrap
         color: detail.issue && (detail.issue.description || "").trim()
           ? Qt.darker(Color.foreground, 1.25)
@@ -357,7 +362,7 @@ Rectangle {
       Text {
         width: parent.width
         visible: detail.sprints().length === 0
-        text: "Tavlan har inga sprintar."
+        text: t("detail.noSprints")
         color: Qt.darker(Color.foreground, 1.45)
         font.family: Style.font.family
         font.pixelSize: Style.font.caption
@@ -381,10 +386,10 @@ Rectangle {
           }
         }
         Button {
-          text: "Backlog"
+          text: t("nav.backlog")
           fontSize: Style.font.caption
           selected: detail.currentSprintId() === ""
-          tooltipText: "Ta ärendet ur sprinten"
+          tooltipText: t("detail.removeFromSprint")
           onClicked: detail.app.assignIssue(detail.issue.key, "backlog")
         }
       }
@@ -399,7 +404,7 @@ Rectangle {
       // ---- edit
       Text {
         width: parent.width
-        text: "Ändra"
+        text: t("detail.edit")
         color: Color.foreground
         font.family: Style.font.family
         font.pixelSize: Style.font.body
@@ -408,7 +413,7 @@ Rectangle {
 
       TextField {
         width: parent.width
-        placeholderText: "Sammanfattning"
+        placeholderText: t("board.fieldSummary")
         text: detail.editSummary
         onTextChanged: detail.editSummary = text
       }
@@ -450,7 +455,7 @@ Rectangle {
 
       Text {
         width: parent.width
-        text: "Prioritet"
+        text: t("detail.priority")
         color: Qt.darker(Color.foreground, 1.35)
         font.family: Style.font.family
         font.pixelSize: Style.font.caption
@@ -478,7 +483,7 @@ Rectangle {
 
       Text {
         width: parent.width
-        text: "Tilldelad"
+        text: t("detail.assignee")
         color: Qt.darker(Color.foreground, 1.35)
         font.family: Style.font.family
         font.pixelSize: Style.font.caption
@@ -502,11 +507,11 @@ Rectangle {
           }
         }
         Button {
-          text: "Ingen"
+          text: t("common.none")
           fontSize: Style.font.caption
           selected: detail.editAssignee === ""
           horizontalPadding: Style.space(8)
-          tooltipText: "Ta bort tilldelning"
+          tooltipText: t("detail.unassign")
           onClicked: detail.editAssignee = ""
         }
       }
@@ -519,18 +524,18 @@ Rectangle {
 
         TextField {
           width: 110
-          placeholderText: "Points"
+          placeholderText: t("detail.points")
           text: detail.editPoints
           onTextChanged: detail.editPoints = text
         }
         Button {
-          text: detail.saving ? "Sparar…" : "Spara ändringar"
+          text: detail.saving ? "Sparar…" : t("detail.saveChanges")
           fontSize: Style.font.caption
           selected: detail.dirty()
           onClicked: detail.save()
         }
         Button {
-          text: "Återställ"
+          text: t("common.reset")
           fontSize: Style.font.caption
           visible: detail.dirty()
           onClicked: detail.syncForm()
@@ -547,7 +552,7 @@ Rectangle {
       // ---- comments
       Text {
         width: parent.width
-        text: "Kommentarer" + (detail.app ? " (" + detail.app.issueComments.length + ")" : "")
+        text: t("detail.comments") + (detail.app ? " (" + detail.app.issueComments.length + ")" : "")
         color: Color.foreground
         font.family: Style.font.family
         font.pixelSize: Style.font.body
@@ -556,7 +561,7 @@ Rectangle {
       Text {
         width: parent.width
         visible: detail.app !== null && detail.app.commentsLoading
-        text: "Hämtar kommentarer…"
+        text: t("detail.loadingComments")
         color: Qt.darker(Color.foreground, 1.5)
         font.family: Style.font.family
         font.pixelSize: Style.font.caption
@@ -586,7 +591,7 @@ Rectangle {
                 width: parent.width
                 spacing: Style.space(6)
                 Text {
-                  text: modelData.authorName || "Okänd"
+                  text: modelData.authorName || t("common.unknown")
                   color: Qt.darker(Color.foreground, 1.2)
                   font.family: Style.font.family
                   font.pixelSize: Style.font.caption
@@ -617,7 +622,7 @@ Rectangle {
           width: parent.width
           visible: !(detail.app && detail.app.commentsLoading)
                    && (!detail.app || detail.app.issueComments.length === 0)
-          text: "Inga kommentarer än."
+          text: t("detail.noComments")
           color: Qt.darker(Color.foreground, 1.6)
           font.family: Style.font.family
           font.pixelSize: Style.font.caption
@@ -633,7 +638,7 @@ Rectangle {
         TextField {
           id: commentField
           width: parent.width - 90
-          placeholderText: "Skriv en kommentar…"
+          placeholderText: t("detail.commentPlaceholder")
           text: detail.draft
           onTextChanged: detail.draft = text
           Keys.onReturnPressed: {
@@ -642,7 +647,7 @@ Rectangle {
           }
         }
         Button {
-          text: "Skicka"
+          text: t("detail.send")
           fontSize: Style.font.caption
           width: 80
           onClicked: {
@@ -662,7 +667,7 @@ Rectangle {
       // ---- transitions
       Text {
         width: parent.width
-        text: "Flytta ärendet"
+        text: t("detail.moveIssue")
         color: Color.foreground
         font.family: Style.font.family
         font.pixelSize: Style.font.body
@@ -744,7 +749,7 @@ Rectangle {
           id: deleteBtn
           width: 160
           visible: !detail.deleteArmed
-          text: "Radera ärende…"
+          text: t("detail.delete")
           fontSize: Style.font.caption
           onClicked: {
             detail.deleteArmed = true
@@ -770,10 +775,9 @@ Rectangle {
 
             Text {
               width: parent.width
-              text: "Radera " + (detail.issue ? detail.issue.key : "") + " — \"" +
+              text: t("detail.deleteWithKey", { key: detail.issue ? detail.issue.key : "" }) + " — \"" +
                     (detail.issue ? detail.issue.summary : "") + "\"?\n" +
-                    "Det går inte att ångra i Jira. En kopia sparas lokalt i papperskorgen " +
-                    "och kan återställas."
+                    t("detail.deleteWarning")
               color: Color.foreground
               font.family: Style.font.family
               font.pixelSize: Style.font.caption
@@ -784,7 +788,7 @@ Rectangle {
               spacing: 8
 
               Button {
-                text: "Avbryt"
+                text: t("conn.cancel")
                 fontSize: Style.font.caption
                 onClicked: {
                   detail.deleteResetTimer.stop()

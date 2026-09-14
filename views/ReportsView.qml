@@ -10,6 +10,11 @@ Item {
   anchors.fill: parent
 
   property var app: null
+
+  // Texterna kommer från bryggan (samma i18n/*.json som den använder): en källa
+  // för varje mening, och språket byts i Inställningar.
+  function t(key, args) { return app ? app.t(key, args) : key }
+
   property int rev: app ? app.snapshotRev : -1
   property string boardId: ""
   property string boardTitle: ""
@@ -76,10 +81,10 @@ Item {
   function statCards() {
     var s = summary()
     return [
-      { label: "Klara", value: s.completed !== undefined ? s.completed : "–", color: "#4f9d69" },
-      { label: "Kvar", value: s.notCompleted !== undefined ? s.notCompleted : "–", color: "#4a8fd6" },
-      { label: "Tillagda under sprinten", value: s.added !== undefined ? s.added : "–", color: "#c9a227" },
-      { label: "Borttagna ur sprinten", value: s.punted !== undefined ? s.punted : "–", color: "#c05555" }
+      { label: t("reports.completed"), value: s.completed !== undefined ? s.completed : "–", color: "#4f9d69" },
+      { label: t("reports.remaining"), value: s.notCompleted !== undefined ? s.notCompleted : "–", color: "#4a8fd6" },
+      { label: t("reports.added"), value: s.added !== undefined ? s.added : "–", color: "#c9a227" },
+      { label: t("reports.removed"), value: s.punted !== undefined ? s.punted : "–", color: "#c05555" }
     ]
   }
 
@@ -120,7 +125,7 @@ Item {
         }
         Text {
           anchors.verticalCenter: parent.verticalCenter
-          text: "Reports"
+          text: t("nav.reports")
           color: Qt.darker(Color.foreground, 1.4)
           font.family: Style.font.family
           font.pixelSize: Style.font.caption
@@ -135,13 +140,13 @@ Item {
 
         Text {
           anchors.verticalCenter: parent.verticalCenter
-          text: reportsView.loading ? "läser…" : ""
+          text: reportsView.loading ? t("panel.loading") : ""
           color: Qt.darker(Color.foreground, 1.5)
           font.family: Style.font.family
           font.pixelSize: Style.font.caption
         }
         Button {
-          text: "Uppdatera"
+          text: t("panel.refresh")
           fontSize: Style.font.caption
           onClicked: reportsView.app.loadReport(reportsView.boardId, reportsView.sprintId, true)
         }
@@ -187,7 +192,7 @@ Item {
         width: parent.width - 80
         horizontalAlignment: Text.AlignHCenter
         wrapMode: Text.Wrap
-        text: "Den här tavlan har inga sprintar, så det finns ingen burndown att visa."
+        text: t("reports.noSprints")
         color: Qt.darker(Color.foreground, 1.5)
         font.family: Style.font.family
         font.pixelSize: Style.font.body
@@ -284,7 +289,7 @@ Item {
               }
               Text {
                 text: reportsView.points().length > 1
-                  ? "Kvarvarande ärenden per dag, med den ideala linjen för jämförelse."
+                  ? t("reports.burndownHint")
                   : ""
                 color: Qt.darker(Color.foreground, 1.5)
                 font.family: Style.font.family
@@ -389,8 +394,8 @@ Item {
                 width: parent.width
                 visible: reportsView.points().length <= 1
                 text: reportsView.sprintId === ""
-                  ? "Välj en sprint ovan."
-                  : "Ingen burndown-data för den här sprinten än (sprinten har inte börjat, eller så saknas historik)."
+                  ? t("reports.pickSprint")
+                  : t("reports.noBurndownData")
                 color: Qt.darker(Color.foreground, 1.5)
                 font.family: Style.font.family
                 font.pixelSize: Style.font.bodySmall
@@ -416,7 +421,7 @@ Item {
               spacing: 8
 
               Text {
-                text: "Velocity"
+                text: t("reports.velocity")
                 color: Color.foreground
                 font.family: Style.font.family
                 font.pixelSize: Style.font.body
@@ -426,7 +431,7 @@ Item {
                 width: parent.width
                 text: {
                   var v = (reportsView.report && reportsView.report.velocity) ? reportsView.report.velocity : []
-                  if (v.length === 0) return "Ingen velocity än - den fylls i när sprintar har avslutats."
+                  if (v.length === 0) return t("reports.noVelocity")
                   var names = []
                   for (var i = 0; i < v.length; i++) names.push(v[i].name + ": " + v[i].completed + "/" + v[i].estimates)
                   return names.join("   ·   ")
@@ -460,7 +465,7 @@ Item {
                 spacing: 5
 
                 Text {
-                  text: "Klara i sprinten"
+                  text: t("reports.completedInSprint")
                   color: Color.foreground
                   font.family: Style.font.family
                   font.pixelSize: Style.font.body
@@ -502,7 +507,7 @@ Item {
                 spacing: 5
 
                 Text {
-                  text: "Kvar i sprinten"
+                  text: t("reports.leftInSprint")
                   color: Color.foreground
                   font.family: Style.font.family
                   font.pixelSize: Style.font.body
