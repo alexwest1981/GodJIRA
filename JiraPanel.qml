@@ -135,6 +135,70 @@ Item {
   property bool connected: false
   property string mode: "mock"
   property var account: ({})
+  // ---- i18n. Texterna kommer från bryggan, som läser samma i18n/*.json som
+  // den själv använder för sina meddelanden: en källa för varje mening.
+  property var strings: ({})
+  property string language: ""
+  property bool stringsLoaded: false
+  property var languageNames: []
+
+  function t(key, args) {
+    var s = root.strings ? root.strings[key] : undefined
+    if (s === undefined || s === null || s === "") s = key
+    if (args) {
+      for (var k in args) s = String(s).replace("{" + k + "}", String(args[k]))
+    }
+    return s
+  }
+
+  // Vilket språkval som ligger i configen ("" = följ systemet), och versionen,
+  // så Inställningar kan visa och ändra dem.
+  property string languageSetting: ""
+  property string pluginVersion: ""
+
+  function setStartView(key) {
+    root.callBridge(["configure", JSON.stringify({ startView: key })], {}, function(parsed) {
+      if (parsed && parsed.ok === false) {
+        root.statusError = parsed.error || root.t("msg.actionFailed")
+        return
+      }
+      root.configStartView = key || ""
+      root.notice = root.t("settings.saved")
+    })
+  }
+
+  function loadStrings(lang) {
+    var args = ["strings"]
+    if (lang) args.push(lang)
+    root.callBridge(args, {}, function(parsed) {
+      if (!parsed || !parsed.ok) return
+      root.strings = parsed.strings || ({})
+      root.language = parsed.language || ""
+      root.languageNames = parsed.available || []
+    })
+  }
+
+  // Språkvalet skrivs till configen (ingen identitetsnyckel, så låset släpper
+  // igenom det) och hela panelen byter text direkt.
+  function setLanguage(code) {
+    root.callBridge(["configure", JSON.stringify({ language: code })], {}, function(parsed) {
+      if (parsed && parsed.ok === false) {
+        root.statusError = parsed.error || ""
+        return
+      }
+      root.notice = root.t("settings.saved")
+      root.loadStrings()
+      root.requestStatus()
+    })
+  }
+
+  // Anslutningsformuläret öppnas bara medvetet: härifrån, eller när inget är
+  // anslutet. Låset sitter i bryggan.
+  function openConnectForm() {
+    root.connectUnlocked = true
+    root.showConnect = true
+  }
+
   // Anslutningslåset: en fungerande anslutning (site + konto + token) får inte
   // skrivas över av misstag. Formuläret är låst tills "Skapa ny anslutning"
   // trycks, och bryggan nekar identitetsändringar utan --replace.
@@ -158,8 +222,8 @@ Item {
   }
 
   function connectionModeLabel() {
-    if (root.mode !== "real") return "Mock (testdata)"
-    return root.connectionLocked ? "Live (API, låst)" : "Live (API)"
+    if (root.mode !== "real") return root.t("conn.modeMock")
+    return root.connectionLocked ? root.t("conn.modeLiveLocked") : root.t("conn.modeLive")
   }
   property string statusError: ""
   property string notice: ""
@@ -261,7 +325,7 @@ Item {
     root.callBridge(["status"], {}, function(parsed) {
       root.loading = false
       if (!parsed) {
-        root.statusError = "Bryggan svarade inte korrekt."
+        root.statusError = root.t("panel.bridgeError")
         root.showConnect = true
         return
       }
@@ -275,6 +339,14 @@ Item {
       if (parsed.connection) {
         root.connectionLocked = parsed.connection.locked === true
         root.connectionInfo = parsed.connection
+      }
+      // Texttabellen hämtas en gång, och på nytt när språket har ändrats.
+      root.languageSetting = parsed.languageSetting || ""
+      root.pluginVersion = parsed.version || ""
+      var lang = parsed.language || ""
+      if (!root.stringsLoaded || (root.language !== "" && lang !== root.language)) {
+        root.stringsLoaded = true
+        root.loadStrings(lang)
       }
       // Open straight on the configured view, once per shell run.
       if (!root.startViewApplied && root.configuredView() !== "") {
@@ -396,9 +468,9 @@ Item {
   }
 
   function categoryLabel(cat) {
-    if (cat === "new") return "Att göra"
-    if (cat === "done") return "Klart"
-    return "Pågår"
+    if (cat === "new") return root.t("category.new")
+    if (cat === "done") return root.t("category.done")
+    return root.t("category.indeterminate")
   }
 
   function initials(name) {
@@ -454,7 +526,7 @@ Item {
 
   function boardScopeLabel(board) {
     var scope = root.boardSprintScope
-    if (scope === "all") return "Alla sprintar"
+    if (scope === "all") return t("board.allSprints")
     var sprint = null
     if (scope === "active") sprint = board ? board.sprint : null
     else sprint = root.sprintById(scope)
@@ -496,15 +568,29 @@ Item {
   }
 
   // ------------------------------------------------------------- nav
+  // label is an i18n key, resolved through t() so the nav follows the language.
   property var navModel: [
-    { key: "summary", label: "Summary", file: "views/SummaryView.qml" },
-    { key: "board", label: "Board", file: "views/BoardView.qml" },
-    { key: "backlog", label: "Backlog", file: "views/BacklogView.qml" },
-    { key: "timeline", label: "Timeline", file: "views/TimelineView.qml" },
-    { key: "reports", label: "Reports", file: "views/ReportsView.qml" },
-    { key: "dev", label: "Development", file: "views/DevelopmentView.qml" },
-    { key: "activity", label: "Activity", file: "views/ActivityView.qml" }
+    { key: "summary", label: "nav.summary", file: "views/SummaryView.qml" },
+    { key: "board", label: "nav.board", file: "views/BoardView.qml" },
+    { key: "backlog", label: "nav.backlog", file: "views/BacklogView.qml" },
+    { key: "timeline", label: "nav.timeline", file: "views/TimelineView.qml" },
+    { key: "reports", label: "nav.reports", file: "views/ReportsView.qml" },
+    { key: "dev", label: "nav.development", file: "views/DevelopmentView.qml" },
+    { key: "activity", label: "nav.activity", file: "views/ActivityView.qml" },
+    { key: "settings", label: "nav.settings", file: "views/SettingsView.qml" }
   ]
+
+  function settingsIndex() {
+    for (var i = 0; i < root.navModel.length; i++) {
+      if (root.navModel[i].key === "settings") return i
+    }
+    return -1
+  }
+
+  function openSettings() {
+    var i = root.settingsIndex()
+    if (i >= 0) root.tabIndex = i
+  }
 
   function openIssue(key) {
     if (!key) return
@@ -532,7 +618,7 @@ Item {
       return
     }
     root.notice = root.mode === "mock"
-      ? "Mock-läge: ingen webbläsare att öppna. "
+      ? root.t("msg.noBrowserMock")
       : ""
   }
 
@@ -549,7 +635,7 @@ Item {
         root.issueTransitions = parsed.transitions || []
       } else {
         root.issueTransitions = []
-        root.statusError = (parsed && parsed.error) || "Kunde inte läsa statusar."
+        root.statusError = (parsed && parsed.error) || root.t("msg.actionFailed")
       }
     })
   }
@@ -582,7 +668,7 @@ Item {
   }
 
   function sprintNameOf(id) {
-    if (!id) return "Backlog"
+    if (!id) return root.t("nav.backlog")
     var sp = root.sprintById(id)
     return sp ? sp.name : id
   }
@@ -610,7 +696,7 @@ Item {
         root.applySnapshot(parsed)
         root.notice = key + " → " + root.sprintNameOf(target === "backlog" ? "" : target)
       } else {
-        root.statusError = (parsed && parsed.error) || "Kunde inte flytta ärendet."
+        root.statusError = (parsed && parsed.error) || root.t("msg.actionFailed")
       }
     })
   }
@@ -627,23 +713,23 @@ Item {
         root.issueComments = parsed.comments || []
       } else {
         root.issueComments = []
-        root.statusError = (parsed && parsed.error) || "Kunde inte läsa kommentarerna."
+        root.statusError = (parsed && parsed.error) || root.t("msg.actionFailed")
       }
     })
   }
 
   function addComment(key, text) {
     var body = String(text || "").trim()
-    if (!body) { root.statusError = "Kommentaren är tom."; return }
+    if (!body) { root.statusError = root.t("msg.commentEmpty"); return }
     root.commentsLoading = true
     root.callBridge(["comment", key, body], {}, function(parsed) {
       root.commentsLoading = false
       if (parsed && parsed.ok) {
         root.issueComments = parsed.comments || []
         root.commentsDraft = ""
-        root.notice = "Kommentar skickad."
+        root.notice = root.t("msg.commentSent")
       } else {
-        root.statusError = (parsed && parsed.error) || "Kunde inte skicka kommentaren."
+        root.statusError = (parsed && parsed.error) || root.t("msg.actionFailed")
       }
     })
   }
@@ -662,10 +748,10 @@ Item {
     root.callBridge(["update", key, JSON.stringify(payload || {})], {}, function(parsed) {
       if (parsed && parsed.ok) {
         root.applySnapshot(parsed)
-        root.notice = key + " uppdaterad."
+        root.notice = root.t("msg.updated", { key: key })
         if (onDone) onDone(true)
       } else {
-        root.statusError = (parsed && parsed.error) || "Kunde inte spara ärendet."
+        root.statusError = (parsed && parsed.error) || root.t("msg.actionFailed")
         if (onDone) onDone(false)
       }
     })
@@ -684,7 +770,7 @@ Item {
         root.activityRows = parsed.activity || []
       } else {
         root.activityRows = []
-        root.statusError = (parsed && parsed.error) || "Kunde inte läsa aktiviteten."
+        root.statusError = (parsed && parsed.error) || root.t("msg.actionFailed")
       }
     })
   }
@@ -701,7 +787,7 @@ Item {
         root.reportData = parsed.report || null
       } else {
         root.reportData = null
-        root.statusError = (parsed && parsed.error) || "Kunde inte läsa rapporten."
+        root.statusError = (parsed && parsed.error) || root.t("msg.actionFailed")
       }
     })
   }
@@ -717,7 +803,7 @@ Item {
         root.devData = parsed.dev || null
       } else {
         root.devData = null
-        root.statusError = (parsed && parsed.error) || "Kunde inte läsa utvecklarstatus."
+        root.statusError = (parsed && parsed.error) || root.t("msg.actionFailed")
       }
     })
   }
@@ -748,7 +834,7 @@ Item {
     var trimmed = String(summary || "").trim()
     root.statusError = ""
     if (!trimmed) {
-      root.statusError = "Sammanfattning saknas."
+      root.statusError = root.t("msg.summaryMissing")
       return
     }
     var before = root.snapshotKeysOf(root.snapshot)
@@ -764,10 +850,10 @@ Item {
         for (var i = 0; i < after.length; i++) {
           if (before.indexOf(after[i]) === -1) { added = after[i]; break }
         }
-        root.notice = added ? "Skapade " + added + "." : "Skapade ärendet."
+        root.notice = root.t("msg.created", { key: added || "" })
         if (added) root.openIssue(added)
       } else {
-        root.statusError = (parsed && parsed.error) || "Kunde inte skapa ärendet."
+        root.statusError = (parsed && parsed.error) || root.t("msg.actionFailed")
       }
     })
   }
@@ -785,9 +871,9 @@ Item {
           root.issueTransitionsFor = ""
         }
         root.applySnapshot(parsed)
-        root.notice = "Raderade " + key + " — en kopia ligger i papperskorgen."
+        root.notice = root.t("msg.deletedTrash", { key: key })
       } else {
-        root.statusError = (parsed && parsed.error) || "Kunde inte radera ärendet."
+        root.statusError = (parsed && parsed.error) || root.t("msg.actionFailed")
       }
     })
   }
@@ -801,7 +887,7 @@ Item {
     root.callBridge(args, {}, function(parsed) {
       root.mode = m
       if (parsed && parsed.ok === false) {
-        root.statusError = parsed.error || "Kunde inte byta läge."
+        root.statusError = parsed.error || root.t("msg.actionFailed")
         root.showConnect = true
         return
       }
@@ -844,7 +930,7 @@ Item {
         root.requestSnapshot()
       } else {
         root.notice = ""
-        root.statusError = (parsed && parsed.error) || "Inloggningen misslyckades."
+        root.statusError = (parsed && parsed.error) || root.t("msg.loginFailed")
         root.showConnect = true
       }
     })
@@ -946,7 +1032,7 @@ Item {
             }
             Text {
               anchors.verticalCenter: parent.verticalCenter
-              text: (root.mode === "mock" ? "Mock-läge" : "")
+              text: (root.mode === "mock" ? root.t("conn.mock") : "")
                   + (root.mode === "mock" && root.account.displayName ? " · " : "")
                   + (root.account.displayName || root.account.email || "")
               color: Qt.darker(Color.bar.text, 1.35)
@@ -963,25 +1049,33 @@ Item {
 
             Text {
               anchors.verticalCenter: parent.verticalCenter
-              text: root.loading ? "läser…" : (root.lastUpdatedMs ? "uppdaterad " + root.ago(root.lastUpdatedMs) : "")
+              text: root.loading ? root.t("panel.loading")
+                              : (root.lastUpdatedMs ? root.t("panel.updatedAgo", { ago: root.ago(root.lastUpdatedMs) }) : "")
               color: Qt.darker(Color.bar.text, 1.5)
               font.family: Style.font.family
               font.pixelSize: Style.font.caption
             }
 
             Button {
-              text: "Uppdatera"
+              // Kugghjulet: samma dörr som posten i sidomenyn.
+              text: String.fromCodePoint(0xF013)
+              tooltipText: root.t("panel.settingsTooltip")
+              selected: root.tabIndex === root.settingsIndex()
+              onClicked: root.openSettings()
+            }
+            Button {
+              text: root.t("panel.refresh")
               fontSize: Style.font.caption
               onClicked: root.requestSnapshot()
             }
             Button {
               text: "—"
-              tooltipText: "Minimera"
+              tooltipText: root.t("panel.minimize")
               onClicked: jiraWindow.minimized = true
             }
             Button {
               text: "x"
-              tooltipText: "Stäng"
+              tooltipText: root.t("panel.close")
               onClicked: root.requestClose()
             }
           }
@@ -1048,7 +1142,7 @@ Item {
                     anchors.left: parent.left
                     anchors.leftMargin: 12
                     anchors.verticalCenter: parent.verticalCenter
-                    text: modelData.label
+                    text: root.t(modelData.label)
                     color: root.tabIndex === index ? Color.foreground : Qt.darker(Color.foreground, 1.5)
                     font.family: Style.font.family
                     font.pixelSize: Style.font.body
@@ -1063,37 +1157,8 @@ Item {
                 }
               }
 
-              Item { width: 10; height: 6 }
-
-              // connection entry
-              Rectangle {
-                width: sideBar.width - 12
-                height: 32
-                x: 6
-                radius: 6
-                color: "transparent"
-
-                Text {
-                  anchors.left: parent.left
-                  anchors.leftMargin: 12
-                  anchors.verticalCenter: parent.verticalCenter
-                  text: "Anslutning"
-                  color: Qt.darker(Color.foreground, 1.5)
-                  font.family: Style.font.family
-                  font.pixelSize: Style.font.body
-                }
-                MouseArea {
-                  anchors.fill: parent
-                  hoverEnabled: true
-                  onClicked: {
-                    // Att titta på anslutningen ska inte vara samma sak som att
-                    // lämna den: vyn öppnar alltid i låst läge.
-                    root.connectUnlocked = false
-                    connectOverlay.disconnectConfirm = false
-                    root.showConnect = true
-                  }
-                }
-              }
+              // Inställningar ligger som en vanlig post i listan (se navModel):
+              // en dörr, inte två. Klicket ändrar ingenting med anslutningen.
             }
           }
 
@@ -1139,123 +1204,6 @@ Item {
       width: 460
       color: "transparent"
 
-      // ---- låst läge: den sparade anslutningen, läsbar men inte ändringsbar
-      Column {
-        width: parent.width
-        spacing: Style.space(12)
-        visible: root.connectionLockedView()
-
-        Text {
-          text: "Ansluten till Jira"
-          color: Color.foreground
-          font.family: Style.font.family
-          font.pixelSize: Style.font.title
-          font.bold: true
-        }
-
-        Text {
-          width: parent.width
-          wrapMode: Text.Wrap
-          text: "Anslutningen är låst. Adressen och API-token ändras bara om du själv trycker på Skapa ny anslutning."
-          color: Qt.darker(Color.foreground, 1.35)
-          font.family: Style.font.family
-          font.pixelSize: Style.font.bodySmall
-        }
-
-        Rectangle {
-          width: parent.width
-          height: infoCol.implicitHeight + 24
-          radius: 10
-          color: Qt.darker(Color.background, 1.15)
-          border.color: Util.alpha(Color.foreground, 0.08)
-          border.width: 1
-
-          Column {
-            id: infoCol
-            width: parent.width - 24
-            x: 12
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: Style.space(6)
-
-            Text {
-              text: root.account.siteUrl || root.connectionInfo.siteUrl || ""
-              color: Color.foreground
-              font.family: Style.font.family
-              font.pixelSize: Style.font.bodySmall
-              font.bold: true
-            }
-            Text {
-              text: "Konto: " + (root.account.displayName || "")
-                    + (root.account.email || root.connectionInfo.email
-                       ? "  <" + (root.account.email || root.connectionInfo.email) + ">" : "")
-              color: Qt.darker(Color.foreground, 1.3)
-              font.family: Style.font.family
-              font.pixelSize: Style.font.caption
-            }
-            Text {
-              text: "Läge: " + root.connectionModeLabel()
-              color: Qt.darker(Color.foreground, 1.3)
-              font.family: Style.font.family
-              font.pixelSize: Style.font.caption
-            }
-            Text {
-              text: "API-token: " + (root.connectionInfo.hasToken
-                    ? "sparad i nyckelringen (visas aldrig)" : "saknas")
-              color: Qt.darker(Color.foreground, 1.3)
-              font.family: Style.font.family
-              font.pixelSize: Style.font.caption
-            }
-          }
-        }
-
-        Row {
-          width: parent.width
-          spacing: Style.space(8)
-
-          Button {
-            text: "Skapa ny anslutning"
-            bordered: true
-            tooltipText: "Lås upp formuläret för att byta site, konto eller token"
-            onClicked: root.beginNewConnection()
-          }
-
-          Button {
-            text: connectOverlay.disconnectConfirm ? "Säkert? Tryck igen" : "Koppla från"
-            bordered: true
-            selected: connectOverlay.disconnectConfirm
-            tooltipText: "Tar bort API-token ur nyckelringen, adressen sparas"
-            onClicked: {
-              if (!connectOverlay.disconnectConfirm) {
-                connectOverlay.disconnectConfirm = true
-                return
-              }
-              connectOverlay.disconnectConfirm = false
-              root.logout()
-            }
-          }
-
-          Button {
-            text: "Tillbaka"
-            bordered: true
-            tooltipText: "Stäng anslutningsvyn — ingenting ändras"
-            onClicked: {
-              root.connectUnlocked = false
-              connectOverlay.disconnectConfirm = false
-              root.showConnect = false
-            }
-          }
-        }
-
-        Text {
-          width: parent.width
-          wrapMode: Text.Wrap
-          text: "Koppla från tar bort token men behåller adressen, så du kan återansluta med bara en ny token."
-          color: Qt.darker(Color.foreground, 1.5)
-          font.family: Style.font.family
-          font.pixelSize: Style.font.caption
-        }
-      }
-
       // ---- formuläret: först när det inte finns något att skydda
       Column {
         width: parent.width
@@ -1263,7 +1211,7 @@ Item {
         visible: !root.connectionLockedView()
 
         Text {
-          text: root.connectionLocked ? "Skapa ny anslutning" : "Anslut till Jira"
+          text: root.connectionLocked ? root.t("conn.create") : root.t("conn.formTitle")
           color: Color.foreground
           font.family: Style.font.family
           font.pixelSize: Style.font.title
@@ -1273,7 +1221,7 @@ Item {
         Text {
           width: parent.width
           wrapMode: Text.Wrap
-          text: "Kör mot det inbyggda mock-API:et för att testa utan konto, eller anslut din Jira Cloud-site med en API-token."
+          text: root.t("conn.formHint")
           color: Qt.darker(Color.foreground, 1.35)
           font.family: Style.font.family
           font.pixelSize: Style.font.bodySmall
@@ -1284,7 +1232,7 @@ Item {
           spacing: Style.space(8)
 
           Button {
-            text: "Mock-läge"
+            text: root.t("conn.mock")
             bordered: true
             onClicked: {
               connectOverlay.connectError = ""
@@ -1304,8 +1252,7 @@ Item {
           width: parent.width
           wrapMode: Text.Wrap
           visible: root.connectionLocked
-          text: "Den nuvarande anslutningen till " + (root.connectionInfo.siteUrl || "")
-                + " används tills den nya fungerar. Misslyckas inloggningen händer ingenting."
+          text: root.t("conn.replaceHint", { site: root.connectionInfo.siteUrl || "" })
           color: Qt.darker(Color.foreground, 1.45)
           font.family: Style.font.family
           font.pixelSize: Style.font.caption
@@ -1314,14 +1261,14 @@ Item {
         TextField {
           id: connectSiteInput
           width: parent.width
-          placeholderText: "site.atlassian.net"
+          placeholderText: root.t("conn.sitePlaceholder")
           text: connectOverlay.siteField
           onTextChanged: connectOverlay.siteField = text
         }
 
         TextField {
           width: parent.width
-          placeholderText: "din@epost.se"
+          placeholderText: root.t("conn.emailPlaceholder")
           text: connectOverlay.emailField
           onTextChanged: connectOverlay.emailField = text
         }
@@ -1329,7 +1276,7 @@ Item {
         TextField {
           width: parent.width
           password: true
-          placeholderText: "API-token (id.atlassian.com/manage-profile/security/api-tokens)"
+          placeholderText: root.t("conn.tokenPlaceholder")
           text: connectOverlay.tokenField
           onTextChanged: connectOverlay.tokenField = text
         }
@@ -1339,12 +1286,12 @@ Item {
           spacing: Style.space(8)
 
           Button {
-            text: "Anslut"
+            text: root.t("conn.connect")
             bordered: true
             onClicked: {
               connectOverlay.connectError = ""
               if (!connectOverlay.siteField || !connectOverlay.emailField) {
-                connectOverlay.connectError = "Fyll i site och e-post."
+                connectOverlay.connectError = root.t("conn.fillSiteEmail")
                 return
               }
               // Tomt tokenfält = använd den token som redan ligger i nyckelringen
@@ -1353,10 +1300,10 @@ Item {
           }
 
           Button {
-            text: "Avbryt"
+            text: root.t("conn.cancel")
             bordered: true
             visible: root.connectionLocked
-            tooltipText: "Behåll anslutningen som den är"
+            tooltipText: root.t("conn.cancelTooltip")
             onClicked: {
               connectOverlay.connectError = ""
               root.connectUnlocked = false

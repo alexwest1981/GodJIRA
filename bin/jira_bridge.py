@@ -18,6 +18,7 @@ Commands (all print one JSON document on stdout, exit 0 for every state the
 user can encounter):
 
   status                          Config + who is connected (or why not)
+  strings [lang]                  The UI text table for a language (i18n/*.json)
   snapshot                        The whole neutral model for the UI
   transitions <issueKey>          Statuses the issue can move to
   move <issueKey> <target>        Move issue to a status/transition
@@ -223,6 +224,108 @@ def flag_value(argv, name):
     return None
 
 
+# ------------------------------------------------------------------ i18n
+
+# Texterna bor i i18n/*.json och delas med QML-sidan (kommandot `strings`), så
+# det finns EN källa för varje mening. Journalens tekniska detaljer översätts
+# inte: loggar ska vara läsbara likadant år 2029.
+I18N_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "i18n")
+SOURCE_LANG = "en"
+_string_cache = {}
+
+
+def _read_lang_file(code):
+    path = os.path.join(I18N_DIR, code + ".json")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    return {k: v for k, v in data.items() if not k.startswith("_")}
+
+
+def language_catalog():
+    """Språken som finns, med sina egna namn, för inställningsvyn."""
+    out = []
+    try:
+        names = sorted(f[:-5] for f in os.listdir(I18N_DIR) if f.endswith(".json"))
+    except OSError:
+        names = [SOURCE_LANG]
+    for code in names:
+        path = os.path.join(I18N_DIR, code + ".json")
+        native = code
+        try:
+            with open(path, encoding="utf-8") as fh:
+                meta = (json.load(fh) or {}).get("_meta") or {}
+            native = meta.get("native") or meta.get("name") or code
+        except (OSError, ValueError):
+            pass
+        out.append({"code": code, "native": native})
+    return out
+
+
+def system_language():
+    """sv_SE.UTF-8 -> 'sv'. Tom sträng när inget vettigt finns."""
+    for var in ("LC_ALL", "LC_MESSAGES", "LANG"):
+        raw = os.environ.get(var) or ""
+        if not raw:
+            continue
+        code = raw.split(".")[0].split("_")[0].strip().lower()
+        if code and code not in ("c", "posix"):
+            return code
+    return ""
+
+
+def active_language(cfg):
+    want = ((cfg or {}).get("language") or "").strip().lower()
+    if want in ("", "auto", "system"):
+        want = system_language()
+    have = [item["code"] for item in language_catalog()]
+    return want if want in have else SOURCE_LANG
+
+
+def _strings_for(lang):
+    if lang in _string_cache:
+        return _string_cache[lang]
+    table = dict(_read_lang_file(SOURCE_LANG))
+    if lang and lang != SOURCE_LANG:
+        for key, value in _read_lang_file(lang).items():
+            if value:
+                table[key] = value
+    _string_cache[lang] = table
+    return table
+
+
+# Varje kommando är en egen process, så språket avgörs en gång vid start och
+# gäller alla meddelanden i den körningen — även i mock-funktioner som inte får
+# någon cfg. Aktiv språkkod, eller None = inte avgjord än.
+_ACTIVE_LANG = {"code": None}
+
+
+def set_language(cfg):
+    _ACTIVE_LANG["code"] = active_language(cfg)
+    return _ACTIVE_LANG["code"]
+
+
+def t(key, **kw):
+    """En mening på användarens språk. Saknad nyckel syns som sin egen nyckel."""
+    try:
+        code = _ACTIVE_LANG["code"]
+        if code is None:
+            code = set_language(load_config())
+        value = _strings_for(code).get(key)
+    except Exception:  # en trasig ordlista får aldrig fälla ett kommando
+        value = None
+    if not value:
+        return key
+    if kw:
+        try:
+            return value.format(**kw)
+        except (KeyError, IndexError, ValueError):
+            return value
+    return value
+
+
 # ---------------------------------------------------------------- http
 
 def jira_get(cfg, path, token=None):
@@ -237,7 +340,7 @@ def jira_request(cfg, method, path, body=None, token=None):
     if token is None:
         token = load_secret(account_for(cfg))
     if not token:
-        raise RuntimeError("Ingen API-token i nyckelringen. Kör login först.")
+        raise RuntimeError(t("err.noTokenKeyring"))
     site = cfg["siteUrl"].rstrip("/")
     url = site + path
     # Scoped personal access tokens (ATCTT...) authenticate as "Bearer <token>"
@@ -541,8 +644,8 @@ def real_move(cfg, key, target):
             break
     if not chosen:
         available = ", ".join(t["toStatusName"] for t in transitions)
-        raise RuntimeError("Kan inte flytta {} till '{}'. Tillgängliga: {}".format(
-            key, target, available or "inga"))
+        raise RuntimeError(t("err.moveImpossible", key=key, target=target,
+                                   available=available or "inga"))
     jira_post(cfg, "/rest/api/3/issue/{}/transitions".format(key),
               {"transition": {"id": chosen["id"]}})
     return chosen
@@ -605,7 +708,7 @@ def real_create(cfg, board, payload):
     dict (has projectKey). Returns nothing; caller re-snapshots."""
     pkey = (board or {}).get("projectKey")
     if not pkey:
-        raise RuntimeError("Tavlan saknar projekt – kan inte skapa ärende.")
+        raise RuntimeError(t("err.boardNoProject"))
     summary = (payload.get("summary") or "").strip()
     if not summary:
         raise RuntimeError("Sammanfattning saknas.")
@@ -621,7 +724,7 @@ def real_create(cfg, board, payload):
         if chosen is None:
             chosen = row
     if chosen is None:
-        raise RuntimeError("Kunde inte lista ärendetyper för projektet {}.".format(pkey))
+        raise RuntimeError(t("err.issueTypesFailed", project=pkey))
 
     body = {
         "fields": {
@@ -633,7 +736,7 @@ def real_create(cfg, board, payload):
     created = jira_post(cfg, "/rest/api/3/issue", body)
     key = created.get("key") or ""
     if not key:
-        raise RuntimeError("Jira svarade utan ärendenyckel vid skapande.")
+        raise RuntimeError(t("err.noKeyFromJira"))
 
     if target_status:
         # New issues land in the project's default status; move on if the
@@ -694,7 +797,7 @@ def real_comments(cfg, key):
 def real_add_comment(cfg, key, text):
     body = str(text or "").strip()
     if not body:
-        raise RuntimeError("Kommentaren är tom.")
+        raise RuntimeError(t("msg.commentEmpty"))
     jira_post(cfg, "/rest/api/3/issue/{}/comment".format(key), {"body": text_to_adf(body)})
     return real_comments(cfg, key)
 
@@ -736,7 +839,7 @@ def real_update(cfg, key, payload):
     if "summary" in payload:
         summary = str(payload.get("summary") or "").strip()
         if not summary:
-            raise RuntimeError("Sammanfattningen får inte vara tom.")
+            raise RuntimeError(t("err.summaryEmpty"))
         fields["summary"] = summary
     if "description" in payload:
         fields["description"] = text_to_adf(payload.get("description"))
@@ -754,7 +857,7 @@ def real_update(cfg, key, payload):
             try:
                 fields[STORY_POINTS_FIELD] = float(raw)
             except (TypeError, ValueError):
-                raise RuntimeError("Story points måste vara ett tal.")
+                raise RuntimeError(t("err.pointsNumber"))
     if "dueDate" in payload:
         due = str(payload.get("dueDate") or "").strip()
         fields["duedate"] = due or None
@@ -1302,7 +1405,7 @@ def mock_snapshot(cfg):
 def mock_transitions(state, key):
     issue = state["issues"].get(key)
     if not issue:
-        raise RuntimeError("Okänt ärende {}".format(key))
+        raise RuntimeError(t("err.unknownIssue", key=key))
     out = []
     for target_id in MOCK_TRANSITIONS[issue["statusId"]]:
         status_name, category = MOCK_STATUSES[target_id]
@@ -1317,7 +1420,7 @@ def mock_transitions(state, key):
 
 def mock_move(state, key, target):
     if key not in state["issues"]:
-        raise RuntimeError("Okänt ärende {}".format(key))
+        raise RuntimeError(t("err.unknownIssue", key=key))
     issue = state["issues"][key]
     targets = [t["toStatusId"] for t in mock_transitions(state, key)]
     # Accept either a status id ("progress") or a status name ("In Progress").
@@ -1331,9 +1434,8 @@ def mock_move(state, key, target):
                 break
     if resolved is None:
         raise RuntimeError(
-            "Kan inte flytta {} från {} vidare till '{}'. Tillgängliga: {}".format(
-                key, MOCK_STATUSES[issue["statusId"]][0], target,
-                ", ".join(MOCK_STATUSES[t][0] for t in targets) or "inga"))
+            t("err.moveImpossible", key=key, target=target,
+                                   available=", ".join(MOCK_STATUSES[t][0] for t in targets) or "inga"))
     issue["statusId"] = resolved
     save_mock_state(state)
     return resolved
@@ -1361,7 +1463,7 @@ def mock_create(state, board_id, payload):
             board = candidate
             break
     if not board:
-        raise RuntimeError("Okänd tavla {} i mock-läget.".format(board_id))
+        raise RuntimeError(t("err.unknownBoard", board=board_id))
     project = board["projectKey"]
     statuses = board.get("statuses") or []
     status_id = str(payload.get("statusId") or "").strip() or statuses[0]
@@ -1396,7 +1498,7 @@ def mock_create(state, board_id, payload):
 
 def mock_delete(state, key):
     if key not in state["issues"]:
-        raise RuntimeError("Okänt ärende {}".format(key))
+        raise RuntimeError(t("err.unknownIssue", key=key))
     del state["issues"][key]
     save_mock_state(state)
 
@@ -1405,13 +1507,13 @@ def mock_assign_sprint(state, key, sprint_id):
     """Sprint planning in the mock: an id moves the issue into that sprint,
     anything else (or 'backlog') puts it back on the backlog."""
     if key not in state["issues"]:
-        raise RuntimeError("Okänt ärende {}".format(key))
+        raise RuntimeError(t("err.unknownIssue", key=key))
     target = str(sprint_id or "").strip()
     if target and target.lower() != "backlog":
         known = [str(s["id"]) for board in MOCK_BOARDS for s in board.get("sprints") or []]
         if target not in known:
-            raise RuntimeError("Okänd sprint {}. Tillgängliga: {}".format(
-                target, ", ".join(known) or "inga"))
+            raise RuntimeError(t("err.unknownSprint", sprint=target,
+                                          available=", ".join(known) or "inga"))
     state["issues"][key]["sprintId"] = "" if target.lower() in ("", "backlog") else target
     save_mock_state(state)
     return state["issues"][key]["sprintId"]
@@ -1419,16 +1521,16 @@ def mock_assign_sprint(state, key, sprint_id):
 
 def mock_comments(state, key):
     if key not in state["issues"]:
-        raise RuntimeError("Okänt ärende {}".format(key))
+        raise RuntimeError(t("err.unknownIssue", key=key))
     return list((state.get("comments") or {}).get(key) or [])
 
 
 def mock_add_comment(state, key, text):
     if key not in state["issues"]:
-        raise RuntimeError("Okänt ärende {}".format(key))
+        raise RuntimeError(t("err.unknownIssue", key=key))
     body = str(text or "").strip()
     if not body:
-        raise RuntimeError("Kommentaren är tom.")
+        raise RuntimeError(t("msg.commentEmpty"))
     comments = state.setdefault("comments", {}).setdefault(key, [])
     now = int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000)
     cfg = load_config()
@@ -1470,11 +1572,11 @@ def mock_options(pkey):
 def mock_update(state, key, payload):
     issue = state["issues"].get(key)
     if not issue:
-        raise RuntimeError("Okänt ärende {}".format(key))
+        raise RuntimeError(t("err.unknownIssue", key=key))
     if "summary" in payload:
         summary = str(payload.get("summary") or "").strip()
         if not summary:
-            raise RuntimeError("Sammanfattningen får inte vara tom.")
+            raise RuntimeError(t("err.summaryEmpty"))
         issue["summary"] = summary
     if "description" in payload:
         issue["description"] = str(payload.get("description") or "")
@@ -1541,7 +1643,7 @@ def mock_dev_status(state, key):
     issue's (mock) history - so both the populated and the empty state render."""
     issue = state["issues"].get(key)
     if not issue:
-        raise RuntimeError("Okänt ärende {}".format(key))
+        raise RuntimeError(t("err.unknownIssue", key=key))
     seeded = MOCK_DEV.get(key) or {}
     out = {"configured": bool(seeded), "counts": {}, "pullRequests": [], "branches": [],
            "commits": [], "builds": [], "applications": ["GitHub"],
@@ -1760,7 +1862,7 @@ def watch_payload(cfg):
     try:
         snap = real_snapshot(cfg) if cfg.get("mode") == "real" else mock_snapshot(cfg)
     except RuntimeError as exc:
-        err_payload("Kunde inte bevaka: {}".format(exc), mode=cfg.get("mode"))
+        err_payload(t("err.watchFailed", error=exc), mode=cfg.get("mode"))
     wanted = watched_scope(cfg)
     prev, prev_wanted = load_baseline()
     cur = baseline_entries(cfg, snap)
@@ -1925,8 +2027,7 @@ def snapshot_issue(cfg, key, why="radering"):
             json.dump(blob, fh, ensure_ascii=False, indent=2)
         os.chmod(path, 0o600)
     except OSError as exc:
-        raise RuntimeError("Kunde inte spara en kopia av {} ({}); raderar därför inget.".format(
-            key, exc))
+        raise RuntimeError(t("err.copyFailed", key=key, error=exc))
     return path
 
 
@@ -2012,11 +2113,11 @@ def restore_from_trash(cfg, path):
         with open(path, encoding="utf-8") as fh:
             blob = json.load(fh)
     except (OSError, ValueError) as exc:
-        raise RuntimeError("Kunde inte läsa kopian {}: {}".format(path, exc))
+        raise RuntimeError(t("err.copyUnreadable", path=path, error=exc))
     fields = ((blob.get("issue") or {}).get("fields") or {})
     project = ((fields.get("project") or {}).get("key") or "")
     if not project:
-        raise RuntimeError("Kopian saknar projekt – kan inte återskapa ärendet.")
+        raise RuntimeError(t("err.copyNoProject"))
     body = {"fields": {"project": {"key": project},
                        "summary": fields.get("summary") or "Återställt ärende"}}
     itype = fields.get("issuetype") or {}
@@ -2036,7 +2137,7 @@ def restore_from_trash(cfg, path):
     created = jira_post(cfg, "/rest/api/3/issue", body)
     new_key = (created or {}).get("key") or ""
     if not new_key:
-        raise RuntimeError("Jira svarade utan nyckel – inget återskapat.")
+        raise RuntimeError(t("err.noKeyFromJira"))
     gaps = []
     restored_comments = 0
     for row in blob.get("comments") or []:
@@ -2094,48 +2195,68 @@ def verify_write(cfg, action, key, expect):
 
 # ----------------------------------------------------------------- status
 
+def plugin_version():
+    """Versionen ur manifest.json, så Inställningar kan visa den."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "manifest.json")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return (json.load(fh) or {}).get("version") or ""
+    except (OSError, ValueError):
+        return ""
+
+
 def status_payload(cfg):
+    """Ett svar för status: vem som är ansluten, vilket språk och vilken version."""
     mode = cfg.get("mode")
-    summary = connection_summary(cfg)
+    common = {
+        "connection": connection_summary(cfg),
+        "language": active_language(cfg),
+        "languageSetting": (cfg.get("language") or "").strip(),
+        "version": plugin_version(),
+        "config": {"startView": cfg.get("startView") or ""},
+    }
     if mode == "real":
         email = cfg.get("email") or ""
-        token = load_secret(account_for(cfg))
         site = cfg.get("siteUrl") or ""
-        if not site or not email:
-            return ok_payload(mode=mode, connected=False, connection=summary,
-                account={
-                "email": email, "displayName": "", "siteUrl": site, "connected": False},
-                projects=[])
-        if not token:
-            return ok_payload(mode=mode, connected=False, connection=summary,
-                account={
-                "email": email, "displayName": "", "siteUrl": site, "connected": False},
-                projects=[])
+        account = {"email": email, "displayName": "", "siteUrl": site, "connected": False}
+        if not site or not email or not load_secret(account_for(cfg)):
+            return ok_payload(mode=mode, connected=False, account=account,
+                              projects=[], **common)
         try:
             myself = jira_get(cfg, "/rest/api/3/myself")
-            return ok_payload(mode=mode, connected=True, connection=summary, account={
-                "email": myself.get("emailAddress") or email,
-                "displayName": myself.get("displayName") or "",
-                "siteUrl": site,
-                "connected": True,
-            }, config={"startView": cfg.get("startView") or ""})
         except RuntimeError as exc:
-            return ok_payload(mode=mode, connected=False, connection=summary,
-                error=str(exc), account={
-                "email": email, "displayName": "", "siteUrl": site, "connected": False})
+            return ok_payload(mode=mode, connected=False, account=account,
+                              error=str(exc), **common)
+        account["email"] = myself.get("emailAddress") or email
+        account["displayName"] = myself.get("displayName") or ""
+        account["connected"] = True
+        return ok_payload(mode=mode, connected=True, account=account, **common)
     # mock
-    account = mock_snapshot(cfg)["account"]
-    return ok_payload(mode="mock", connected=True, connection=summary, account=account,
-                      config={"startView": cfg.get("startView") or ""})
+    return ok_payload(mode="mock", connected=True,
+                      account=mock_snapshot(cfg)["account"], **common)
 
 
 # ----------------------------------------------------------------- main
 
 def main(argv):
     cmd = argv[1] if len(argv) > 1 else "status"
+    set_language(load_config())
 
     if cmd == "status":
         status_payload(load_config())
+
+    if cmd == "strings":
+        cfg = load_config()
+        want = (argv[2] if len(argv) > 2 else "") or active_language(cfg)
+        codes = [item["code"] for item in language_catalog()]
+        if want not in codes:
+            want = SOURCE_LANG
+        return payload({
+            "schema": SCHEMA, "ok": True, "error": None, "generatedAt": utc_now(),
+            "language": want, "source": SOURCE_LANG,
+            "available": language_catalog(),
+            "strings": _strings_for(want),
+        })
 
     if cmd == "snapshot":
         cfg = load_config()
@@ -2149,7 +2270,7 @@ def main(argv):
         cfg = load_config()
         key = argv[2] if len(argv) > 2 else ""
         if not key:
-            err_payload("transitions kräver en issue-key")
+            err_payload(t("err.transitionsArgs"))
         try:
             if cfg.get("mode") == "real":
                 rows = real_transitions(cfg, key)
@@ -2164,7 +2285,7 @@ def main(argv):
         key = argv[2] if len(argv) > 2 else ""
         target = argv[3] if len(argv) > 3 else ""
         if not key or not target:
-            err_payload("move kräver key och målstatus")
+            err_payload(t("err.moveArgs"))
         try:
             if cfg.get("mode") == "real":
                 before = issue_status(cfg, key)
@@ -2176,7 +2297,7 @@ def main(argv):
                            before=before, after=(chosen or {}).get("toStatusName") or "",
                            ok=ok, reason="" if ok else msg)
                 if not ok:
-                    err_payload("Flytten av {} kunde inte bekräftas: {}".format(key, msg))
+                    err_payload(t("err.moveUnconfirmed", key=key, error=msg))
             else:
                 mock_move(mock_state(), key, target)
                 log_action(cfg, "move", key, detail="till '{}' (mock)".format(target))
@@ -2192,11 +2313,11 @@ def main(argv):
         board_id = argv[2] if len(argv) > 2 else ""
         raw = argv[3] if len(argv) > 3 else ""
         if not board_id or not raw:
-            err_payload("create kräver boardId och ett JSON-payload")
+            err_payload(t("err.createArgs"))
         try:
             payload_data = json.loads(raw)
         except ValueError as exc:
-            err_payload("create fick ogiltig JSON: {}".format(exc))
+            err_payload(t("err.createJson", error=exc))
         try:
             if cfg.get("mode") == "real":
                 board = None
@@ -2205,10 +2326,10 @@ def main(argv):
                         board = candidate
                         break
                 if board is None:
-                    raise RuntimeError("Okänd tavla {}.".format(board_id))
+                    raise RuntimeError(t("err.unknownBoard", board=board_id))
                 if not board.get("canAdd"):
-                    raise RuntimeError("Du saknar rättighet att skapa ärenden i {}.".format(
-                        board.get("projectKey")))
+                    raise RuntimeError(t("err.noPermissions",
+                                        project=board.get("projectKey")))
                 known = set()
                 for row in (board.get("issues") or []) + (board.get("backlog") or []):
                     known.add(row.get("key"))
@@ -2225,7 +2346,7 @@ def main(argv):
                 # Kvitto: ett skapat ärende som inte syns i tavlan efteråt är ett fel,
                 # inte en framgång.
                 if not new_key:
-                    err_payload("Ärendet skapades men syns inte i tavlan efteråt — kontrollera i Jira.")
+                    err_payload(t("err.createUnconfirmed"))
             else:
                 mock_create(mock_state(), board_id, payload_data)
                 snap = mock_snapshot(cfg)
@@ -2243,21 +2364,20 @@ def main(argv):
         confirmed = "--yes" in flags
         forced = "--force" in flags
         if not key:
-            err_payload("delete kräver en issue-key")
+            err_payload(t("err.deleteArgs"))
         # Nät 1: ingen radering utan ett uttalat ja. Gränssnittet frågar först i en
         # ruta som namnger ärendet; kommandoraden måste säga --yes.
         if not confirmed:
             err_payload(refuse(cfg, "delete", key,
-                               "Radering av {} kräver ett bekräftat val (--yes).".format(key),
+                               t("err.deleteConfirm", key=key),
                                detail="obekräftad"))
         # Nät 2: kvotvakten. En skur av raderingar stoppas och syns i svaret, i
         # stället för att 15 ärenden försvinner tyst.
         recent = deletes_in_window()
         if len(recent) >= DELETE_QUOTA and not forced:
             err_payload(refuse(cfg, "delete", key,
-                               "{} raderingar de senaste {} minuterna. Stanna och kontrollera "
-                               "vad som händer — --force om fler verkligen ska bort.".format(
-                                   len(recent), DELETE_WINDOW_SECS // 60),
+                               t("err.deleteQuota", count=len(recent),
+                                 minutes=DELETE_WINDOW_SECS // 60),
                                detail="kvotvakt"))
         try:
             if cfg.get("mode") == "real":
@@ -2272,7 +2392,7 @@ def main(argv):
                 raise_notification("OmaJIRA · {} raderad".format(key),
                                    "En kopia ligger i papperskorgen ({}) och kan återställas.".format(base))
                 if not ok:
-                    err_payload("{} raderades men kunde inte bekräftas: {}".format(key, msg))
+                    err_payload(t("err.deleteUnconfirmed", key=key, error=msg))
             else:
                 mock_delete(mock_state(), key)
                 log_action(cfg, "delete", key, detail="mock-radering")
@@ -2287,10 +2407,10 @@ def main(argv):
         cfg = load_config()
         key = argv[2] if len(argv) > 2 else ""
         if not key:
-            err_payload("mock-touch kräver en issue-key")
+            err_payload(t("err.mockTouchArgs"))
         state = mock_state()
         if key not in state["issues"]:
-            err_payload("Okänd issue: {}".format(key))
+            err_payload(t("err.unknownIssue", key=key))
         issue = state["issues"][key]
         changed = False
         for arg in argv[3:]:
@@ -2298,21 +2418,21 @@ def main(argv):
                 field, value = arg.split("=", 1)
                 if field not in ("statusId", "summary", "priorityName",
                                  "assigneeName", "assigneeEmail", "typeName"):
-                    err_payload("Okänt fält för mock-touch: {}".format(field))
+                    err_payload(t("err.unknownField", field=field))
                 if field == "statusId" and value not in MOCK_STATUSES:
-                    err_payload("Okänd status: {}".format(value))
+                    err_payload(t("err.unknownStatus", status=value))
                 issue[field] = value
                 changed = True
             elif arg in MOCK_STATUSES:
                 issue["statusId"] = arg
                 changed = True
             else:
-                err_payload("Okänd status: {}".format(arg))
+                err_payload(t("err.unknownStatus", status=arg))
         if not changed:
             # No explicit change: pretend a teammate advanced the issue one step.
             nxt = MOCK_TRANSITIONS.get(issue["statusId"], [])
             if not nxt:
-                err_payload("{} har inga fler övergångar.".format(key))
+                err_payload(t("err.noTransitions", key=key))
             issue["statusId"] = nxt[0]
         save_mock_state(state)
         payload(mock_snapshot(cfg))
@@ -2322,7 +2442,7 @@ def main(argv):
         key = argv[2] if len(argv) > 2 else ""
         target = argv[3] if len(argv) > 3 else ""
         if not key or not target:
-            err_payload("assign kräver en issue-key och ett sprintId (eller 'backlog')")
+            err_payload(t("err.assignArgs"))
         try:
             if cfg.get("mode") == "real":
                 real_assign_sprint(cfg, key, target)
@@ -2340,15 +2460,15 @@ def main(argv):
                    reason="" if ok else "ligger i sprint '{}', beställde '{}'".format(got, want))
         capture_baseline(cfg, snap)
         if not ok:
-            err_payload("{} ligger i sprint '{}', beställde '{}' — kontrollera i Jira.".format(
-                key, got or "backloggen", want or "backloggen"))
+            err_payload(t("err.assignMismatch", key=key, actual=got or "backloggen",
+                           asked=want or "backloggen"))
         payload(snap)
 
     if cmd == "comments":
         cfg = load_config()
         key = argv[2] if len(argv) > 2 else ""
         if not key:
-            err_payload("comments kräver en issue-key")
+            err_payload(t("err.commentsArgs"))
         try:
             rows = real_comments(cfg, key) if cfg.get("mode") == "real" \
                 else mock_comments(mock_state(), key)
@@ -2361,7 +2481,7 @@ def main(argv):
         key = argv[2] if len(argv) > 2 else ""
         text = argv[3] if len(argv) > 3 else ""
         if not key or not text:
-            err_payload("comment kräver en issue-key och en text")
+            err_payload(t("err.commentArgs"))
         try:
             if cfg.get("mode") == "real":
                 rows = real_add_comment(cfg, key, text)
@@ -2370,7 +2490,7 @@ def main(argv):
                 log_action(cfg, "comment", key, detail=text[:80], ok=ok,
                            reason="" if ok else "kommentaren syns inte i ärendet efteråt")
                 if not ok:
-                    err_payload("Kommentaren på {} kunde inte bekräftas.".format(key))
+                    err_payload(t("err.commentUnconfirmed", key=key))
             else:
                 rows = mock_add_comment(mock_state(), key, text)
                 log_action(cfg, "comment", key, detail=text[:80])
@@ -2384,13 +2504,13 @@ def main(argv):
         key = argv[2] if len(argv) > 2 else ""
         raw = argv[3] if len(argv) > 3 else ""
         if not key or not raw:
-            err_payload("update kräver en issue-key och ett JSON-payload")
+            err_payload(t("err.updateArgs"))
         try:
             payload_data = json.loads(raw)
         except ValueError as exc:
-            err_payload("update fick ogiltig JSON: {}".format(exc))
+            err_payload(t("err.updateJson", error=exc))
         if not payload_data:
-            err_payload(refuse(cfg, "update", key, "Ändringen innehåller inga fält.", detail="tomt payload"))
+            err_payload(refuse(cfg, "update", key, t("err.updateEmpty"), detail="tomt payload"))
         try:
             if cfg.get("mode") == "real":
                 # En ändring av text kan skriva över något som bara fanns där. Kopian
@@ -2405,7 +2525,7 @@ def main(argv):
                            ok=ok, reason="" if ok else msg,
                            extra={"trash": base} if base else None)
                 if not ok:
-                    err_payload("Ändringen av {} kunde inte bekräftas: {}".format(key, msg))
+                    err_payload(t("err.updateUnconfirmed", key=key, error=msg))
             else:
                 mock_update(mock_state(), key, payload_data)
                 log_action(cfg, "update", key,
@@ -2433,10 +2553,10 @@ def main(argv):
         cfg = load_config()
         key = argv[2] if len(argv) > 2 else ""
         if not key:
-            err_payload("restore kräver nyckeln på det raderade ärendet")
+            err_payload(t("err.restoreArgs"))
         rows = trash_entries(key)
         if not rows:
-            err_payload("Ingen kopia av {} i papperskorgen ({})".format(key, TRASH_DIR))
+            err_payload(t("err.noTrash", key=key, dir=TRASH_DIR))
         try:
             new_key, report = restore_from_trash(cfg, os.path.join(TRASH_DIR, rows[0]["file"]))
         except RuntimeError as exc:
@@ -2456,7 +2576,7 @@ def main(argv):
             pkey = cfg.get("selectedProjectKey") or ""
         if cfg.get("mode") == "real":
             if not pkey:
-                err_payload("options kräver en projektnyckel")
+                err_payload(t("err.optionsArgs"))
             rows = real_options(cfg, pkey)
         else:
             rows = mock_options(pkey or "WEB")
@@ -2472,7 +2592,7 @@ def main(argv):
             limit = 25
         if cfg.get("mode") == "real":
             if not pkey:
-                err_payload("activity kräver en projektnyckel")
+                err_payload(t("err.activityArgs"))
             rows = real_activity(cfg, pkey, limit)
         else:
             rows = mock_activity(mock_state(), pkey or "WEB", limit)
@@ -2483,7 +2603,7 @@ def main(argv):
         bid = argv[2] if len(argv) > 2 else ""
         sid = argv[3] if len(argv) > 3 else ""
         if not bid or not sid:
-            err_payload("report kräver boardId och sprintId")
+            err_payload(t("err.reportArgs"))
         if cfg.get("mode") == "real":
             rows = real_report(cfg, bid, sid)
         else:
@@ -2494,7 +2614,7 @@ def main(argv):
         cfg = load_config()
         key = argv[2] if len(argv) > 2 else ""
         if not key:
-            err_payload("dev kräver en issue-key")
+            err_payload(t("err.devArgs"))
         try:
             rows = real_dev_status(cfg, key) if cfg.get("mode") == "real" \
                 else mock_dev_status(mock_state(), key)
@@ -2513,7 +2633,7 @@ def main(argv):
         try:
             updates = json.loads(raw) if raw else {}
         except ValueError as exc:
-            err_payload("configure fick ogiltig JSON: {}".format(exc))
+            err_payload(t("err.configureJson", error=exc))
         # Anslutningslåset: en fungerande anslutning (site + konto + token) får
         # inte skrivas över av misstag. Identitetsnycklarna kräver --replace;
         # vanliga UI-nycklar (startView, vald tavla, vald sprint) går som förut.
@@ -2521,8 +2641,7 @@ def main(argv):
         summary = connection_summary(cfg)
         if touched and "--replace" not in flags and summary["locked"]:
             err_payload(refuse(cfg, "configure", "",
-                               "Anslutningen är låst: {} ändras bara via 'Skapa ny "
-                               "anslutning' eller --replace.".format(", ".join(touched)),
+                               t("err.locked", keys=", ".join(touched)),
                                detail="anslutningslås"),
                         refused=True, connection=summary)
         for key, value in updates.items():
@@ -2537,16 +2656,14 @@ def main(argv):
         site = (flag_value(argv, "--site") or cfg.get("siteUrl") or "").strip()
         email = (flag_value(argv, "--email") or cfg.get("email") or "").strip()
         if not site or not email:
-            err_payload("siteUrl och email krävs (--site/--email eller i config).")
+            err_payload(t("err.siteEmailRequired"))
         summary = connection_summary(cfg)
         same_account = (site == summary["siteUrl"] and email == summary["email"])
         # Att byta anslutning är ett uttalat val. Samma konto igen (ny token) är
         # inte ett byte och ska inte kräva --replace.
         if summary["locked"] and not same_account and "--replace" not in flags:
             err_payload(refuse(cfg, "login", "",
-                               "Det finns redan en fungerande anslutning till {}. "
-                               "Tryck 'Skapa ny anslutning' för att byta.".format(
-                                   summary["siteUrl"] or "Jira"),
+                               t("err.alreadyConnected", site=summary["siteUrl"] or "Jira"),
                                detail="anslutningslås"),
                         refused=True, connection=summary)
         token = None
@@ -2560,7 +2677,7 @@ def main(argv):
         if not token:
             token = os.environ.get("JIRA_TOKEN") or stored_token({"email": email})
         if not token:
-            err_payload("Ingen token angiven och ingen finns i nyckelringen.")
+            err_payload(t("err.noToken"))
         # Validera mot Jira FÖRST. Först när kontot svarar skrivs adressen in, så
         # en felstavad site eller e-post kan inte slå ut en anslutning som
         # redan fungerar.
@@ -2572,7 +2689,7 @@ def main(argv):
             myself = jira_get(probe, "/rest/api/3/myself", token=token)
         except Exception as exc:  # DNS, timeout, HTTP: allt blir ett tydligt svar
             err_payload(refuse(cfg, "login", "",
-                               "Kunde inte ansluta till {}: {}".format(site, exc),
+                               t("err.loginFailed", site=site, error=exc),
                                detail="inloggningen misslyckades"),
                         refused=True, connection=summary)
         store_secret(token, email)
@@ -2599,7 +2716,7 @@ def main(argv):
         summary = connection_summary(cfg)
         if "--yes" not in flags:
             err_payload(refuse(cfg, "logout", "",
-                               "Frånkoppling kräver ett bekräftat val (--yes).",
+                               t("err.logoutConfirm"),
                                detail="obekräftad"),
                         refused=True, connection=summary)
         forget_stored_token(summary["email"] or cfg.get("email"))
@@ -2616,7 +2733,7 @@ def main(argv):
         mock_reset()
         return ok_payload()
 
-    err_payload("Okänt kommando: {}".format(cmd), usage="see --help")
+    err_payload(t("err.unknownCommand", cmd=cmd), usage="see --help")
 
 
 def run():

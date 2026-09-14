@@ -10,6 +10,11 @@ Item {
   anchors.fill: parent
 
   property var app: null
+
+  // Texterna kommer från bryggan (samma i18n/*.json som den använder): en källa
+  // för varje mening, och språket byts i Inställningar.
+  function t(key, args) { return app ? app.t(key, args) : key }
+
   property int rev: app ? app.snapshotRev : -1
   property string selKey: app ? app.selectedIssueKey : ""
   property string boardTitle: ""
@@ -22,12 +27,12 @@ Item {
   property int limit: 40
 
   function dayLabel(ms) {
-    if (!ms) return "Okänt datum"
+    if (!ms) return t("activity.unknownDate")
     var d = new Date(ms)
     var today = new Date()
     var startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()
     if (ms >= startOfToday) return "Idag"
-    if (ms >= startOfToday - 86400000) return "Igår"
+    if (ms >= startOfToday - 86400000) return t("activity.yesterday")
     return Qt.formatDateTime(d, "d MMM")
   }
 
@@ -91,7 +96,7 @@ Item {
         }
         Text {
           anchors.verticalCenter: parent.verticalCenter
-          text: "Activity"
+          text: t("nav.activity")
           color: Qt.darker(Color.foreground, 1.4)
           font.family: Style.font.family
           font.pixelSize: Style.font.caption
@@ -107,14 +112,14 @@ Item {
         Text {
           anchors.verticalCenter: parent.verticalCenter
           text: activityView.loading
-            ? "läser…"
-            : (activityView.app && activityView.app.activityRows ? activityView.app.activityRows.length + " senaste ändringar" : "")
+            ? t("panel.loading")
+            : (activityView.app && activityView.app.activityRows ? activityView.t("activity.recentChanges", { count: activityView.app.activityRows.length }) : "")
           color: Qt.darker(Color.foreground, 1.5)
           font.family: Style.font.family
           font.pixelSize: Style.font.caption
         }
         Button {
-          text: "Uppdatera"
+          text: t("panel.refresh")
           fontSize: Style.font.caption
           onClicked: activityView.reload()
         }
@@ -143,8 +148,8 @@ Item {
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.Wrap
             text: activityView.app && activityView.app.activityRows && activityView.app.activityRows.length === 0
-              ? "Ingen aktivitet att visa för projektet."
-              : "Läser in…"
+              ? t("activity.empty")
+              : t("activity.loading")
             color: Qt.darker(Color.foreground, 1.5)
             font.family: Style.font.family
             font.pixelSize: Style.font.body
@@ -235,7 +240,7 @@ Item {
                     }
                     Text {
                       anchors.verticalCenter: parent.verticalCenter
-                      text: modelData.assigneeName || "Otilldelad"
+                      text: modelData.assigneeName || t("common.unassigned")
                       width: 110
                       elide: Text.ElideRight
                       color: Qt.darker(Color.foreground, 1.4)

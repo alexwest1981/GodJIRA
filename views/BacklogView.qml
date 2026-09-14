@@ -7,6 +7,11 @@ Item {
   anchors.fill: parent
 
   property var app: null
+
+  // Texterna kommer från bryggan (samma i18n/*.json som den använder): en källa
+  // för varje mening, och språket byts i Inställningar.
+  function t(key, args) { return app ? app.t(key, args) : key }
+
   property int rev: app ? app.snapshotRev : -1
   property string selKey: app ? app.selectedIssueKey : ""
   property bool mineFilter: app ? app.onlyMine : false
@@ -64,7 +69,7 @@ Item {
     for (var j = 0; j < all.length; j++) if (!all[j].sprintId) rest.push(all[j])
     var restDone = countDone(rest)
     out.push({
-      id: "backlog", name: "Backlog", range: (board.sprints || []).length > 0 ? "utan sprint" : "",
+      id: "backlog", name: t("nav.backlog"), range: (board.sprints || []).length > 0 ? t("backlog.withoutSprint") : "",
       state: "backlog", backlog: true,
       issues: filterModel(rest), total: rest.length, done: restDone, open: rest.length - restDone
     })
@@ -73,10 +78,10 @@ Item {
   }
 
   function stateLabel(g) {
-    if (g.backlog) return "oplanerat"
-    if (g.state === "active") return "aktiv"
-    if (g.state === "closed") return "avslutad"
-    return "kommande"
+    if (g.backlog) return t("backlog.sprintState.backlog")
+    if (g.state === "active") return t("backlog.sprintState.active")
+    if (g.state === "closed") return t("backlog.sprintState.closed")
+    return t("backlog.sprintState.future")
   }
 
   function stateColor(g) {
@@ -87,9 +92,10 @@ Item {
   }
 
   function countLabel(g) {
-    if (g.total === 0) return "tom"
-    if (g.backlog) return g.total + (g.total === 1 ? " ärende" : " ärenden")
-    return g.open + " kvar av " + g.total
+    if (g.total === 0) return t("backlog.isEmpty")
+    if (g.backlog) return t(g.total === 1 ? "backlog.countBacklogOne" : "backlog.countBacklog",
+                            { count: g.total })
+    return t("backlog.countSprint", { open: g.open, total: g.total })
   }
 
   function isCollapsed(id) { return !!collapsed[id] }
@@ -138,7 +144,7 @@ Item {
         }
         Text {
           anchors.verticalCenter: parent.verticalCenter
-          text: "Backlog"
+          text: t("nav.backlog")
           color: Qt.darker(Color.foreground, 1.4)
           font.family: Style.font.family
           font.pixelSize: Style.font.caption
@@ -160,18 +166,18 @@ Item {
             anchors.centerIn: parent
             spacing: 2
             Button {
-              text: "Alla"
+              text: t("common.all")
               fontSize: Style.font.caption
               selected: !(app && app.onlyMine)
-              tooltipText: "Visa alla ärenden"
+              tooltipText: t("common.allTooltip")
               horizontalPadding: Style.space(8)
               onClicked: if (app) app.onlyMine = false
             }
             Button {
-              text: "Mina"
+              text: t("common.mine")
               fontSize: Style.font.caption
               selected: !!(app && app.onlyMine)
-              tooltipText: "Visa endast ärenden som är tilldelade dig"
+              tooltipText: t("common.mineTooltip")
               horizontalPadding: Style.space(8)
               onClicked: if (app) app.onlyMine = true
             }
@@ -185,7 +191,7 @@ Item {
             id: searchField
             anchors.centerIn: parent
             width: 230
-            placeholderText: "Filtrera…"
+            placeholderText: t("common.filter")
             text: backlogView.filterText
             onTextChanged: backlogView.filterText = text
           }
@@ -212,8 +218,8 @@ Item {
           Text {
             anchors.centerIn: parent
             text: app && app.snapshot && app.snapshot.boards.length > 0
-              ? "Ingen backlog och inga sprintar på den valda tavlan."
-              : "Läser in…"
+              ? t("backlog.empty")
+              : t("backlog.loading")
             color: Qt.darker(Color.foreground, 1.5)
             font.family: Style.font.family
             font.pixelSize: Style.font.body
@@ -274,8 +280,8 @@ Item {
                         fontSize: Style.font.caption
                         horizontalPadding: 0
                         tooltipText: backlogView.isCollapsed(modelData.id)
-                          ? "Visa ärendena i " + modelData.name
-                          : "Fäll ihop " + modelData.name
+                          ? t("backlog.expandTooltip", { name: modelData.name })
+                          : t("backlog.collapseTooltip", { name: modelData.name })
                         onClicked: backlogView.toggle(modelData.id)
                       }
 

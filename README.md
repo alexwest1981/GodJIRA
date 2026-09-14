@@ -24,10 +24,15 @@ delete issues when you have the right permissions.
   count reads `open kvar av total`, because Jira's own header shows only the
   open number: a 35-issue sprint whose 6 issues were completed in an earlier
   sprint is "29 work items" there.
+- **Settings** – its own view instead of a connection page you could stumble
+  into: language (nine languages, or follow the system), the locked connection
+  card, start view and version. Opening it changes nothing.
 - **Summary** – counts per status, the running sprint, who is carrying what,
   and the most recently updated issues.
 - **Timeline** – the board's sprints as lanes on a date axis, the backlog as the
-  last lane. Each lane is as wide as its sprint window and fills up as the
+  last lane. The lanes share the width the window actually has (a long sprint
+  gets a wider lane than a short one, and the row never runs past the edge), so
+  nothing has to be scrolled sideways. Each lane is as wide as its sprint window and fills up as the
   sprint runs. "⇄" on a card moves the issue to another sprint (or back to the
   backlog); the same choice sits on the detail page.
 - **Reports** – per sprint: burndown against the ideal line, completed / left /
@@ -137,10 +142,13 @@ custom.jira/
 ├── JiraPanel.qml            root: bridge process, connection, routing
 ├── BarWidget.qml            bar launcher
 ├── views/                   SummaryView, BoardView, BacklogView, TimelineView,
-│                            ReportsView, DevelopmentView, ActivityView
+│                            ReportsView, DevelopmentView, ActivityView,
+│                            SettingsView (language, connection, start view)
 ├── components/              IssueCard, IssueDetail
+├── i18n/                    en.json (source) + sv, de, fr, es, it, pt, nl, pl
 ├── window-rule.lua          Hyprland rule that floats the Jira window (see README)
 └── bin/jira_bridge.py       everything network/credential related (Python stdlib only)
+    bin/i18n_check.py        translation check: same keys, same placeholders
 ```
 
 The QML never talks HTTP and never holds credentials: it shells out to
@@ -169,7 +177,8 @@ python3 bin/jira_bridge.py options WEB                  # assignable people, pri
 python3 bin/jira_bridge.py activity WEB 25              # recently changed issues
 python3 bin/jira_bridge.py report 1 7                   # burndown + sprint report + velocity
 python3 bin/jira_bridge.py dev WEB-41                   # git/PR/build status + issue history
-python3 bin/jira_bridge.py configure '<json>'             # e.g. {"mode":"real"}
+python3 bin/jira_bridge.py configure '<json>'             # e.g. {"mode":"real","language":"de"}
+python3 bin/jira_bridge.py strings [lang]                 # the text table the UI renders (see Languages)
 python3 bin/jira_bridge.py watch                          # diff vs baseline; notifies if changed
 python3 bin/jira_bridge.py mock-touch WEB-41 done         # simulate a teammate's change (mock)
 python3 bin/jira_bridge.py mock-touch MOB-24 assigneeName="Elsa W"  # ...or a field edit
@@ -229,7 +238,7 @@ only a token.
 | Thing | Location |
 | --- | --- |
 | Plugin | `~/.config/omarchy/plugins/custom.jira/` |
-| Config (mode, site, email, startView) | `~/.config/omarchy/jira.json` |
+| Config (mode, site, email, startView, language) | `~/.config/omarchy/jira.json` |
 | Mock dataset | `~/.local/state/omarchy/jira-mock.json` |
 | Watcher baseline | `~/.local/state/omarchy/jira-watch.json` |
 | API token (real mode) | system keyring, service `custom.jira` |
@@ -238,8 +247,9 @@ only a token.
 
 Refresh interval: open the Jira widget's settings (default 30 s, min 10 s).
 
-Which view the window opens on is a config value (it takes effect the next time
-the shell loads the plugin, since a loaded plugin's code is kept):
+Which view the window opens on is a config value — pick it under
+**Inställningar → Startvy**, or from the command line (it takes effect the next
+time the shell loads the plugin, since a loaded plugin's code is kept):
 
 ```
 python3 ~/.config/omarchy/plugins/custom.jira/bin/jira_bridge.py \
@@ -247,7 +257,49 @@ python3 ~/.config/omarchy/plugins/custom.jira/bin/jira_bridge.py \
 ```
 
 Accepted values: `summary`, `board` (default), `backlog`, `timeline`, `reports`,
-`dev`, `activity`.
+`dev`, `activity`, `settings`.
+
+The language is a config value too, and changing it writes nothing else:
+
+```
+python3 ~/.config/omarchy/plugins/custom.jira/bin/jira_bridge.py \
+    configure '{"language":"sv"}'
+```
+
+`""` (or `"auto"`) follows the system locale; anything unknown falls back to
+English. Only `siteUrl`, `email` and `mode` are protected by the connection
+lock — `language` and `startView` change freely.
+
+## Languages
+
+The interface speaks English, Swedish, German, French, Spanish, Italian,
+Portuguese, Dutch and Polish. Switch language under **Inställningar → Språk**,
+or leave it on *Follow the system* and the panel takes the language from
+`LANG`.
+
+One source of truth: `i18n/en.json` is the source text, and every other file is
+a translation of it. Both the panel and the Python bridge read the same files —
+the bridge serves them to the QML through the `strings` command, so there is no
+second copy of any sentence in the QML, and the bridge's own error messages
+speak the same language as the window.
+
+```bash
+python3 bin/i18n_check.py     # key set and {placeholders} must match en.json
+```
+
+The check exits non-zero on a missing key, an extra key, a mismatched
+placeholder, or an empty value, and it lists the keys a language happens to
+spell exactly like English (allowed, but worth a look). Add a language by
+dropping `i18n/<code>.json` next to the others; the picker finds it by itself.
+
+Two things are deliberately not translated: the issue text itself (titles,
+statuses, descriptions, names are Jira's data and are shown as Jira writes
+them), and the journal's technical `detail` fields, which stay stable so a log
+line means the same thing in every language.
+
+Only Jira's own vocabulary stays in English inside the panel where it is a
+product term rather than a label — the view names are translated, the statuses
+and board names are Jira's.
 
 ## Skrivskydd (safety nets)
 

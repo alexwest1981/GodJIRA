@@ -14,6 +14,11 @@ Item {
   anchors.fill: parent
 
   property var app: null
+
+  // Texterna kommer från bryggan (samma i18n/*.json som den använder): en källa
+  // för varje mening, och språket byts i Inställningar.
+  function t(key, args) { return app ? app.t(key, args) : key }
+
   property int rev: app ? app.snapshotRev : -1
   property string selKey: app ? app.selectedIssueKey : ""
 
@@ -75,7 +80,7 @@ Item {
           anchors.verticalCenter: parent.verticalCenter
           width: parent.width - 340
           elide: Text.ElideRight
-          text: devView.issue ? devView.issue.summary : "Välj ett ärende för att se kodstatus och historik."
+          text: devView.issue ? devView.issue.summary : t("dev.pickIssue")
           color: Qt.darker(Color.foreground, 1.35)
           font.family: Style.font.family
           font.pixelSize: Style.font.bodySmall
@@ -90,22 +95,22 @@ Item {
 
         Text {
           anchors.verticalCenter: parent.verticalCenter
-          text: devView.loading ? "läser…" : ""
+          text: devView.loading ? t("panel.loading") : ""
           color: Qt.darker(Color.foreground, 1.5)
           font.family: Style.font.family
           font.pixelSize: Style.font.caption
         }
         Button {
-          text: "Uppdatera"
+          text: t("panel.refresh")
           fontSize: Style.font.caption
           visible: devView.selKey !== ""
           onClicked: devView.refresh()
         }
         Button {
-          text: "Öppna"
+          text: t("common.open")
           fontSize: Style.font.caption
           visible: devView.selKey !== ""
-          tooltipText: "Öppna i webbläsare"
+          tooltipText: t("common.openInBrowser")
           onClicked: devView.app.openInBrowser(devView.selKey)
         }
       }
@@ -124,7 +129,7 @@ Item {
         visible: devView.selKey === ""
 
         Text {
-          text: "Välj ett ärende"
+          text: t("common.selectIssue")
           color: Color.foreground
           font.family: Style.font.family
           font.pixelSize: Style.font.body
@@ -132,7 +137,7 @@ Item {
         }
         Text {
           width: parent.width
-          text: "Utvecklingsvyn visar kodstatus och historik för ett ärende. Senast uppdaterade:"
+          text: t("dev.hint")
           color: Qt.darker(Color.foreground, 1.45)
           font.family: Style.font.family
           font.pixelSize: Style.font.bodySmall
@@ -230,8 +235,8 @@ Item {
                 Text {
                   anchors.verticalCenter: parent.verticalCenter
                   text: (devView.dev && devView.dev.configured)
-                    ? "Git-integration kopplad"
-                    : "Ingen Git-integration kopplad till sajten"
+                    ? t("dev.gitIntegration")
+                    : t("dev.noIntegrationSite")
                   color: Color.foreground
                   font.family: Style.font.family
                   font.pixelSize: Style.font.body
@@ -242,10 +247,9 @@ Item {
                 width: parent.width
                 wrapMode: Text.Wrap
                 text: (devView.dev && devView.dev.configured)
-                  ? "Jira rapporterar kodstatus för det här ärendet: " + devView.counts()["pullrequest"] + " pull requests, "
-                    + devView.counts()["branch"] + " grenar, " + devView.counts()["commit"] + " commits, "
-                    + devView.counts()["build"] + " byggen."
-                  : "Jira har ingen GitHub/Bitbucket/GitLab-app kopplad för det här projektet, så det finns inga grenar, PR:er eller byggen att visa. Koppla en sådan app i Atlassian Marketplace om du vill ha den här panelen fylld. Historiken nedan kommer från ärendet självt och visas alltid."
+                  ? t("dev.codeStatus", { pr: devView.counts()["pullrequest"], br: devView.counts()["branch"],
+                                          co: devView.counts()["commit"], bu: devView.counts()["build"] })
+                  : t("dev.noIntegration")
                 color: Qt.darker(Color.foreground, 1.45)
                 font.family: Style.font.family
                 font.pixelSize: Style.font.bodySmall
@@ -271,7 +275,7 @@ Item {
               spacing: 5
 
               Text {
-                text: "Pull requests"
+                text: t("dev.pullRequests")
                 color: Color.foreground
                 font.family: Style.font.family
                 font.pixelSize: Style.font.body
@@ -311,7 +315,7 @@ Item {
               spacing: 5
 
               Text {
-                text: "Grenar, commits och byggen"
+                text: t("dev.branchesCommitsBuilds")
                 color: Color.foreground
                 font.family: Style.font.family
                 font.pixelSize: Style.font.body
@@ -373,7 +377,7 @@ Item {
               spacing: 5
 
               Text {
-                text: "Historik"
+                text: t("dev.history")
                 color: Color.foreground
                 font.family: Style.font.family
                 font.pixelSize: Style.font.body
@@ -382,7 +386,7 @@ Item {
               Text {
                 width: parent.width
                 visible: devView.sectionRows("history").length === 0
-                text: "Inga ändringar loggade på det här ärendet."
+                text: t("dev.noChanges")
                 color: Qt.darker(Color.foreground, 1.55)
                 font.family: Style.font.family
                 font.pixelSize: Style.font.caption

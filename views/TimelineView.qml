@@ -14,6 +14,11 @@ Item {
   anchors.fill: parent
 
   property var app: null
+
+  // Texterna kommer från bryggan (samma i18n/*.json som den använder): en källa
+  // för varje mening, och språket byts i Inställningar.
+  function t(key, args) { return app ? app.t(key, args) : key }
+
   property int rev: app ? app.snapshotRev : -1
   property bool mineFilter: app ? app.onlyMine : false
 
@@ -59,11 +64,12 @@ Item {
     for (var k = 0; k < all.length; k++) if (!all[k].sprintId) backlog.push(all[k])
     out.push({
       id: "backlog",
-      name: "Backlog",
+      name: t("nav.backlog"),
       state: "backlog",
       startMs: 0,
       endMs: 0,
-      range: count(backlog.length, "ärende utan sprint", "ärenden utan sprint"),
+      range: t(backlog.length === 1 ? "timeline.noSprintRangeOne" : "timeline.noSprintRange",
+           { count: backlog.length }),
       progress: 0,
       issues: backlog,
       backlog: true
@@ -72,8 +78,8 @@ Item {
   }
 
   // A lane is as wide as its sprint window, bounded so a 3-day and a 3-month
-  // sprint both stay readable - and narrow enough that the backlog lane is
-  // still on screen next to a couple of two-week sprints.
+  // sprint both stay readable. These are ideal widths; what is actually drawn
+  // is fittedLaneWidth() below, which shares the width the window has.
   function laneWidth(lane) {
     if (lane.backlog) return 300
     var span = (lane.endMs || 0) - (lane.startMs || 0)
@@ -82,15 +88,48 @@ Item {
     return Math.max(260, Math.min(560, 60 + days * 18))
   }
 
-  function count(n, one, many) {
-    return n + " " + (n === 1 ? one : many)
+  function laneGap() { return Style.space(10) }
+
+  // Räknare i rätt form: svenska (och flera andra språk) har egna singularformer.
+  function issueCount(n) {
+    return t(n === 1 ? "timeline.countIssueOne" : "timeline.countIssues", { count: n })
+  }
+
+  function sprintCount(n) {
+    return t(n === 1 ? "timeline.countSprintOne" : "timeline.countSprints", { count: n })
+  }
+
+  function backlogCount(n) {
+    return t(n === 1 ? "timeline.noSprintRangeOne" : "timeline.noSprintRange", { count: n })
+  }
+
+  // Allt ska rymmas i fönstret: banornas idealbredder skalas om så att summan
+  // blir exakt den bredd som finns. En lång sprint blir bredare än en kort,
+  // men raden går aldrig utanför kanten och inget behöver skrollas i sidled.
+  // Sista banan får resten, så summan stämmer på pixeln.
+  function fittedLaneWidth(lane, index, available) {
+    var lanes = timelineView.lanes || []
+    var n = lanes.length
+    if (n === 0) return laneWidth(lane)
+    var budget = available - laneGap() * Math.max(0, n - 1)
+    if (!(budget > 0)) return 1
+    var idealTotal = 0
+    for (var i = 0; i < n; i++) idealTotal += laneWidth(lanes[i])
+    if (!(idealTotal > 0)) return Math.floor(budget / n)
+    var scale = budget / idealTotal
+    if (index >= n - 1) {
+      var used = 0
+      for (var j = 0; j < n - 1; j++) used += Math.floor(laneWidth(lanes[j]) * scale)
+      return Math.max(1, Math.floor(budget - used))
+    }
+    return Math.max(1, Math.floor(laneWidth(lane) * scale))
   }
 
   function laneStateLabel(lane) {
-    if (lane.backlog) return "oplanerat"
-    if (lane.state === "active") return "aktiv"
-    if (lane.state === "closed") return "avslutad"
-    return "kommande"
+    if (lane.backlog) return t("backlog.sprintState.backlog")
+    if (lane.state === "active") return t("backlog.sprintState.active")
+    if (lane.state === "closed") return t("backlog.sprintState.closed")
+    return t("backlog.sprintState.future")
   }
 
   function laneStateColor(lane) {
@@ -137,7 +176,7 @@ Item {
         }
         Text {
           anchors.verticalCenter: parent.verticalCenter
-          text: "Timeline"
+          text: t("nav.timeline")
           color: Qt.darker(Color.foreground, 1.4)
           font.family: Style.font.family
           font.pixelSize: Style.font.caption
@@ -149,8 +188,8 @@ Item {
         anchors.rightMargin: 16
         anchors.verticalCenter: parent.verticalCenter
         text: timelineView.hasSprints
-          ? timelineView.count(timelineView.lanes.length - 1, "sprint", "sprintar")
-            + " · flytta ett ärende mellan banorna via menyn på kortet"
+          ? timelineView.sprintCount(timelineView.lanes.length - 1)
+            + t("timeline.hint")
           : ""
         color: Qt.darker(Color.foreground, 1.5)
         font.family: Style.font.family
@@ -169,8 +208,8 @@ Item {
         horizontalAlignment: Text.AlignHCenter
         wrapMode: Text.Wrap
         text: timelineView.hasSprints
-          ? "Inga ärenden att visa."
-          : "Den här tavlan har inga sprintar. Skapa sprintar i Jira så visas de här som banor."
+          ? t("timeline.empty")
+          : t("timeline.noSprints")
         color: Qt.darker(Color.foreground, 1.5)
         font.family: Style.font.family
         font.pixelSize: Style.font.body
@@ -191,16 +230,18 @@ Item {
 
         Row {
           id: laneRow
-          spacing: Style.space(10)
-
+          spacing: timelineView.laneGap()
           Repeater {
             model: timelineView.lanes
 
             Rectangle {
               required property var modelData
+              // Med required-properties injicerar QML inte index automatiskt —
+              // den måste deklareras för att kunna användas i breddberäkningen.
+              required property int index
 
               id: laneCard
-              width: timelineView.laneWidth(modelData)
+              width: timelineView.fittedLaneWidth(modelData, index, laneScroll.width)
               height: Math.max(laneBody.height + 76, 200)
               radius: 10
               color: Qt.darker(Color.background, 1.12)
@@ -244,7 +285,8 @@ Item {
                 Text {
                   width: parent.width
                   text: modelData.range + "   ·   "
-                        + timelineView.count(modelData.issues.length, "ärende", "ärenden")
+                        + timelineView.issueCount(modelData.issues.length)
+                  elide: Text.ElideRight
                   color: Qt.darker(Color.foreground, 1.45)
                   font.family: Style.font.family
                   font.pixelSize: Style.font.caption
@@ -333,7 +375,7 @@ Item {
                       horizontalPadding: 2
                       text: "⇄"
                       fontSize: Style.font.caption
-                      tooltipText: "Flytta till en annan sprint"
+                      tooltipText: t("timeline.moveToSprint")
                       onClicked: timelineView.openMenu(laneCard.modelData.id, modelData.key, moveBtn)
                     }
 
@@ -349,7 +391,7 @@ Item {
                 Text {
                   width: parent.width
                   visible: modelData.issues.length === 0
-                  text: modelData.backlog ? "Backloggen är tom." : "Inga ärenden i sprinten."
+                  text: modelData.backlog ? t("timeline.backlogEmpty") : t("timeline.sprintEmpty")
                   color: Qt.darker(Color.foreground, 1.6)
                   font.family: Style.font.family
                   font.pixelSize: Style.font.caption
@@ -390,7 +432,7 @@ Item {
           spacing: 4
 
           Text {
-            text: "Flytta " + moveMenu.movingKey
+            text: t("timeline.moveKey", { key: moveMenu.movingKey })
             color: Qt.darker(Color.foreground, 1.4)
             font.family: Style.font.family
             font.pixelSize: Style.font.caption

@@ -15,7 +15,7 @@ BarWidget {
     bar: root.bar
     text: " "
     labelVisible: false
-    tooltipText: "GodJIRA – öppna Jira"
+    tooltipText: root.t("bar.openTooltip")
     fixedWidth: Math.max(46, root.bar ? root.bar.barSize : 46)
     fixedHeight: Math.max(26, root.bar ? root.bar.barSize : 26)
 
@@ -50,6 +50,33 @@ BarWidget {
     var url = Qt.resolvedUrl("./bin/jira_bridge.py").toString()
     return url.replace(/^file:\/\//, "")
   }
+
+  // Baren har ingen panel att fråga, så den hämtar samma texttabell själv —
+  // en gång, och på nytt om shellen laddas om.
+  property var strings: ({})
+
+  function t(key) {
+    var s = root.strings ? root.strings[key] : undefined
+    return (s === undefined || s === null || s === "") ? key : s
+  }
+
+  Process {
+    id: stringsProc
+    command: ["python3", root.bridgePath, "strings"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        try {
+          var parsed = JSON.parse(text)
+          if (parsed && parsed.ok) root.strings = parsed.strings || ({})
+        } catch (e) {
+          // tooltip faller tillbaka på nyckeln; inget att göra här
+        }
+      }
+    }
+  }
+
+  Component.onCompleted: stringsProc.running = true
 
   Process {
     id: watchProc
