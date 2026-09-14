@@ -67,7 +67,9 @@ Item {
     if (!board) { cols = []; boardTitle = ""; boardInfo = ""; canAdd = false; canDelete = false; return }
 
     boardTitle = (board.projectKey || "") + " · " + board.name
-    boardInfo = board.type === "scrum" && board.sprint
+    // Team-managed boards report type "simple" but still have sprints, so key
+    // the header off the sprint, not off the board type.
+    boardInfo = board.sprint
       ? app.sprintLabel(board)
       : "Kanban"
     canAdd = app.boardCanAdd()
