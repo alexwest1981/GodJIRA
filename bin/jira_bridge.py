@@ -23,6 +23,14 @@ user can encounter):
   move <issueKey> <target>        Move issue to a status/transition
   create <boardId> <json>         Add an issue to a board (admin/create perms)
   delete <issueKey>               Delete an issue (admin perms)
+  assign <issueKey> <sprint|backlog>  Put an issue in a sprint, or on the backlog
+  comments <issueKey>             Comments on an issue
+  comment <issueKey> <text>       Add a comment to an issue
+  update <issueKey> <json>        Edit summary/description/assignee/priority/points
+  options <projectKey>            Assignable people, priorities, issue types
+  activity <projectKey> [limit]   Recently changed issues, newest first
+  dev <issueKey>                  Git/PR/build status + the issue's history
+  report <boardId> <sprintId>     Burndown series + sprint report + velocity
   login --token-file <path>       Validate creds, store token in the keyring
   logout                          Forget the stored credential
   mock-reset                      Rebuild the mock dataset
@@ -38,6 +46,7 @@ import subprocess
 import sys
 import tempfile
 import urllib.error
+import urllib.parse
 import urllib.request
 
 SCHEMA = 1
@@ -207,9 +216,16 @@ def paginate(cfg, path):
 
 # ------------------------------------------------------- real (Jira Cloud)
 
+# Custom field ids differ per Jira site; this site's are the defaults below.
+# Keep them in one place so another site only has to change these three lines.
+STORY_POINTS_FIELD = "customfield_10016"   # Story point estimate
+SPRINT_FIELD = "customfield_10020"         # Sprint (array, empty on the backlog)
+START_DATE_FIELD = "customfield_10015"     # Start date
+
 FIELD_SUBSET = (
-    "summary,status,assignee,issuetype,priority,updated,description,"
-    "customfield_10016,parent,subtasks,creator"
+    "summary,status,assignee,issuetype,priority,updated,description,parent,"
+    "subtasks,creator,duedate,{},{},{}".format(
+        STORY_POINTS_FIELD, SPRINT_FIELD, START_DATE_FIELD)
 )
 
 
@@ -228,6 +244,16 @@ def issue_fields(raw):
         updated_ms = int(dt.timestamp() * 1000)
     except (ValueError, AttributeError):
         pass
+    # The sprint field is an array (a team-managed issue can sit in several);
+    # the last entry is the current one. Parent is how team-managed issues hang
+    # off an epic or a subtask off its parent.
+    sprints = fields.get(SPRINT_FIELD)
+    sprint = {}
+    if isinstance(sprints, list) and sprints:
+        sprint = sprints[-1] if isinstance(sprints[-1], dict) else {}
+    elif isinstance(sprints, dict):
+        sprint = sprints
+    parent = fields.get("parent") or {}
     return {
         "key": raw.get("key") or "",
         "summary": fields.get("summary") or "",
@@ -239,11 +265,17 @@ def issue_fields(raw):
         "assigneeEmail": assignee.get("emailAddress") or "",
         "assigneeName": assignee.get("displayName") or "",
         "priorityName": priority.get("name") or "",
-        "storyPoints": fields.get("customfield_10016"),
+        "storyPoints": fields.get(STORY_POINTS_FIELD),
         "updatedMs": updated_ms,
         "description": (adf_to_text(fields.get("description")) or "")[:20000],
         "url": "",
         "projectKey": (raw.get("fields") or {}).get("project", {}).get("key", ""),
+        "sprintId": str(sprint.get("id") or ""),
+        "sprintName": sprint.get("name") or "",
+        "startMs": parse_iso(fields.get(START_DATE_FIELD)),
+        "dueMs": parse_iso(fields.get("duedate")),
+        "parentKey": parent.get("key") or "",
+        "parentSummary": ((parent.get("fields") or {}).get("summary") or ""),
     }
 
 
@@ -282,18 +314,22 @@ def real_snapshot(cfg):
                     "statusName": st.get("name") or "",
                 })
 
+        # Every sprint on the board - the timeline and the report view need the
+        # whole list, not only the one that happens to be running right now.
+        sprints = []
         sprint = None
-        sprint_rows = paginate(cfg, "/rest/agile/1.0/board/{}/sprint".format(bid))
-        for row in sprint_rows:
-            if row.get("state") == "active":
-                sprint = {
-                    "id": row.get("id"),
-                    "name": row.get("name") or "",
-                    "state": "active",
-                    "startMs": parse_iso(row.get("startDate")),
-                    "endMs": parse_iso(row.get("endDate")),
-                }
-                break
+        for row in paginate(cfg, "/rest/agile/1.0/board/{}/sprint".format(bid)):
+            state = (row.get("state") or "").lower()
+            entry = {
+                "id": str(row.get("id") or ""),
+                "name": row.get("name") or "",
+                "state": state,
+                "startMs": parse_iso(row.get("startDate")),
+                "endMs": parse_iso(row.get("endDate")),
+            }
+            sprints.append(entry)
+            if state == "active" and sprint is None:
+                sprint = entry
 
         def load_issues(path):
             out = []
@@ -334,6 +370,7 @@ def real_snapshot(cfg):
             "projectKey": pkey,
             "columns": columns,
             "sprint": sprint,
+            "sprints": sprints,
             "issues": board_issues,
             "backlog": backlog,
             "canAdd": perms["canAdd"],
@@ -458,6 +495,34 @@ def real_project_permissions(cfg, cache, pkey):
     return flags
 
 
+def real_issue_types(cfg, pkey):
+    """Creatable issue types for a project (subtasks excluded).
+
+    The createmeta endpoint is deprecated on Jira Cloud and returns an empty
+    list on some sites, which used to make `create` fail there; the project
+    endpoint carries the same information and is the primary source now."""
+    types = []
+    try:
+        project = jira_get(cfg, "/rest/api/3/project/{}".format(pkey))
+        for row in project.get("issueTypes") or []:
+            if not row.get("subtask"):
+                types.append({"id": str(row.get("id") or ""),
+                              "name": row.get("name") or ""})
+    except RuntimeError:
+        types = []
+    if types:
+        return types
+    try:
+        data = jira_get(cfg, "/rest/api/3/issue/createmeta/{}/issuetypes".format(pkey))
+        for row in data.get("values") or []:
+            if not row.get("subtask"):
+                types.append({"id": str(row.get("id") or ""),
+                              "name": row.get("name") or ""})
+    except RuntimeError:
+        pass
+    return types
+
+
 def real_create(cfg, board, payload):
     """Create an issue on the board's project. `board` is a neutral board
     dict (has projectKey). Returns nothing; caller re-snapshots."""
@@ -470,21 +535,14 @@ def real_create(cfg, board, payload):
     target_status = (payload.get("statusName") or "").strip()
     type_name = (payload.get("typeName") or "Task").strip()
 
-    types = []
-    try:
-        data = jira_get(cfg,
-            "/rest/api/3/issue/createmeta/{}/issuetypes".format(pkey))
-        types = data.get("values") or []
-    except RuntimeError:
-        pass
+    types = real_issue_types(cfg, pkey)
     chosen = None
     for row in types:
-        if not row.get("subtask"):
-            if row.get("name") == type_name:
-                chosen = row
-                break
-            if chosen is None:
-                chosen = row
+        if row.get("name") == type_name:
+            chosen = row
+            break
+        if chosen is None:
+            chosen = row
     if chosen is None:
         raise RuntimeError("Kunde inte lista ärendetyper för projektet {}.".format(pkey))
 
@@ -514,6 +572,332 @@ def real_delete(cfg, key):
     jira_request(cfg, "DELETE", "/rest/api/3/issue/{}".format(key))
 
 
+def real_assign_sprint(cfg, key, sprint_id):
+    """Put an issue in a sprint, or back on the backlog."""
+    target = str(sprint_id or "").strip()
+    if not target or target.lower() == "backlog":
+        jira_post(cfg, "/rest/agile/1.0/backlog/issue", {"issues": [key]})
+        return ""
+    jira_post(cfg, "/rest/agile/1.0/sprint/{}/issue".format(target), {"issues": [key]})
+    return target
+
+
+def text_to_adf(text):
+    """Wrap plain text in the minimal Atlassian Document Format document that
+    the v3 API wants for descriptions and comment bodies."""
+    paragraphs = []
+    for block in str(text or "").split("\n"):
+        paragraphs.append({
+            "type": "paragraph",
+            "content": [{"type": "text", "text": block}] if block else [],
+        })
+    if not paragraphs:
+        paragraphs = [{"type": "paragraph", "content": []}]
+    return {"type": "doc", "version": 1, "content": paragraphs}
+
+
+def real_comments(cfg, key):
+    data = jira_get(cfg,
+        "/rest/api/3/issue/{}/comment?maxResults=50&orderBy=created".format(key))
+    out = []
+    for row in data.get("comments") or []:
+        author = row.get("author") or {}
+        body = row.get("body")
+        out.append({
+            "id": str(row.get("id") or ""),
+            "authorName": author.get("displayName") or "",
+            "authorEmail": author.get("emailAddress") or "",
+            "createdMs": parse_iso(row.get("created")),
+            "updatedMs": parse_iso(row.get("updated")),
+            "body": body if isinstance(body, str) else adf_to_text(body),
+        })
+    return out
+
+
+def real_add_comment(cfg, key, text):
+    body = str(text or "").strip()
+    if not body:
+        raise RuntimeError("Kommentaren är tom.")
+    jira_post(cfg, "/rest/api/3/issue/{}/comment".format(key), {"body": text_to_adf(body)})
+    return real_comments(cfg, key)
+
+
+def real_options(cfg, pkey):
+    """What the edit form can offer: people the issue can be assigned to, plus
+    the project's priorities and issue types. Each part is best-effort - a
+    project may not expose any of them."""
+    people = []
+    try:
+        rows = jira_get(cfg, "/rest/api/3/user/assignable/search?project={}&maxResults=50"
+                             .format(pkey))
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            people.append({
+                "accountId": row.get("accountId") or "",
+                "displayName": row.get("displayName") or "",
+                "email": row.get("emailAddress") or "",
+                "active": bool(row.get("active", True)),
+            })
+    except RuntimeError:
+        people = []
+    priorities = []
+    try:
+        for row in jira_get(cfg, "/rest/api/3/priority") or []:
+            if isinstance(row, dict) and row.get("name"):
+                priorities.append(row["name"])
+    except RuntimeError:
+        priorities = []
+    types = real_issue_types(cfg, pkey)
+    return {"people": people, "priorities": priorities, "types": types}
+
+
+def real_update(cfg, key, payload):
+    """Edit the fields the UI can change. Only the keys present in the payload
+    are touched, so a form that edits one field cannot wipe the rest."""
+    fields = {}
+    if "summary" in payload:
+        summary = str(payload.get("summary") or "").strip()
+        if not summary:
+            raise RuntimeError("Sammanfattningen får inte vara tom.")
+        fields["summary"] = summary
+    if "description" in payload:
+        fields["description"] = text_to_adf(payload.get("description"))
+    if "assigneeAccountId" in payload:
+        account = str(payload.get("assigneeAccountId") or "").strip()
+        fields["assignee"] = {"accountId": account} if account else None
+    if "priorityName" in payload:
+        name = str(payload.get("priorityName") or "").strip()
+        fields["priority"] = {"name": name} if name else None
+    if "storyPoints" in payload:
+        raw = payload.get("storyPoints")
+        if raw in (None, ""):
+            fields[STORY_POINTS_FIELD] = None
+        else:
+            try:
+                fields[STORY_POINTS_FIELD] = float(raw)
+            except (TypeError, ValueError):
+                raise RuntimeError("Story points måste vara ett tal.")
+    if "dueDate" in payload:
+        due = str(payload.get("dueDate") or "").strip()
+        fields["duedate"] = due or None
+    if not fields:
+        raise RuntimeError("Inget att uppdatera.")
+    jira_request(cfg, "PUT", "/rest/api/3/issue/{}".format(key), {"fields": fields})
+
+
+def real_activity(cfg, pkey, limit=25):
+    """The most recently updated issues in the project, newest first. The top
+    few also carry their last real changelog entry, so the feed can say what
+    changed and not just when."""
+    jql = "project = {} ORDER BY updated DESC".format(pkey)
+    data = jira_get(cfg, "/rest/api/3/search/jql?jql={}&maxResults={}&fields={}".format(
+        urllib.parse.quote(jql), int(limit), FIELD_SUBSET))
+    rows = []
+    for raw in data.get("issues") or []:
+        issue = issue_fields(raw)
+        issue["url"] = "{}/browse/{}".format(cfg["siteUrl"].rstrip("/"), issue["key"])
+        if not issue["projectKey"]:
+            issue["projectKey"] = pkey
+        rows.append(issue)
+    for issue in rows[:5]:
+        try:
+            hist = jira_get(cfg, "/rest/api/3/issue/{}/changelog?maxResults=5"
+                                 .format(issue["key"]))
+        except RuntimeError:
+            continue
+        values = hist.get("values") or []
+        if not values:
+            continue
+        last = values[-1]
+        parts = []
+        for item in last.get("items") or []:
+            field = item.get("field") or ""
+            if item.get("fromString") or item.get("toString"):
+                parts.append("{}: {} -> {}".format(
+                    field, item.get("fromString") or "–", item.get("toString") or "–"))
+            elif field:
+                parts.append(field)
+        if parts:
+            issue["lastChange"] = " · ".join(parts[:3])
+            issue["lastChangeMs"] = parse_iso(last.get("created"))
+    return rows
+
+
+def real_history(cfg, key, limit=20):
+    """The issue's changelog, oldest last, as {authorName, createdMs, items}."""
+    out = []
+    try:
+        data = jira_get(cfg, "/rest/api/3/issue/{}/changelog?maxResults={}".format(key, limit))
+    except RuntimeError:
+        return out
+    for row in data.get("values") or []:
+        parts = []
+        for item in row.get("items") or []:
+            field = item.get("field") or ""
+            if item.get("fromString") or item.get("toString"):
+                parts.append("{}: {} -> {}".format(field, item.get("fromString") or "–",
+                                                   item.get("toString") or "–"))
+            elif field:
+                parts.append(field)
+        if not parts:
+            continue
+        out.append({
+            "authorName": (row.get("author") or {}).get("displayName") or "",
+            "createdMs": parse_iso(row.get("created")),
+            "text": " · ".join(parts[:3]),
+        })
+    return out
+
+
+def real_dev_status(cfg, key):
+    """Git/CI panel for an issue, plus its history.
+
+    The dev-status API only answers for applications the site has connected
+    (GitHub, Bitbucket, GitLab...). The summary endpoint always answers, so it
+    decides whether asking for details is worth anything - on a site with no
+    integration the view says so instead of showing four empty lists."""
+    out = {"configured": False, "counts": {}, "pullRequests": [], "branches": [],
+           "commits": [], "builds": [], "history": [], "applications": []}
+    issue_id = ""
+    try:
+        issue_id = jira_get(cfg, "/rest/api/3/issue/{}?fields=id".format(key)).get("id") or ""
+    except RuntimeError:
+        issue_id = ""
+    if issue_id:
+        summary = {}
+        try:
+            summary = jira_get(cfg, "/rest/dev-status/1.0/issue/summary?issueId={}"
+                                    .format(issue_id))
+        except RuntimeError:
+            summary = {}
+        counts = {}
+        for data_type, row in (summary.get("summary") or {}).items():
+            overall = (row or {}).get("overall") or {}
+            counts[data_type] = int(overall.get("count") or 0)
+            for app in (overall.get("byInstanceType") or {}).keys():
+                if app not in out["applications"]:
+                    out["applications"].append(app)
+        out["counts"] = counts
+        out["configured"] = any(counts.values())
+        if out["configured"]:
+            for app in (out["applications"] or ["GitHub", "Bitbucket", "GitLab"]):
+                for data_type in ("pullrequest", "branch", "commit", "build"):
+                    try:
+                        detail = jira_get(cfg,
+                            "/rest/dev-status/1.0/issue/detail?issueId={}&applicationType={}"
+                            "&dataType={}".format(issue_id, urllib.parse.quote(app), data_type))
+                    except RuntimeError:
+                        continue
+                    for block in detail.get("detail") or []:
+                        for row in block.get("pullRequests") or []:
+                            out["pullRequests"].append({
+                                "id": str(row.get("id") or ""),
+                                "title": row.get("title") or row.get("name") or "",
+                                "status": row.get("status") or "",
+                                "url": row.get("url") or "",
+                                "author": row.get("author") or "",
+                                "updatedMs": parse_iso(row.get("lastUpdate")),
+                            })
+                        for row in block.get("branches") or []:
+                            out["branches"].append({
+                                "name": row.get("name") or "",
+                                "url": row.get("url") or "",
+                                "lastCommit": (row.get("lastCommit") or {}).get("message") or "",
+                            })
+                        for row in block.get("commits") or []:
+                            out["commits"].append({
+                                "id": str(row.get("id") or ""),
+                                "message": row.get("message") or "",
+                                "url": row.get("url") or "",
+                                "author": row.get("author") or "",
+                                "updatedMs": parse_iso(row.get("timestamp")),
+                            })
+                        for row in block.get("builds") or []:
+                            out["builds"].append({
+                                "name": row.get("name") or row.get("displayName") or "",
+                                "status": row.get("status") or "",
+                                "url": row.get("url") or "",
+                            })
+    out["history"] = real_history(cfg, key)
+    return out
+
+
+def real_report(cfg, bid, sprint_id):
+    """Burndown series + sprint report + velocity for one sprint.
+
+    Jira's chart endpoint (greenhopper) is the only source for the day-by-day
+    series; the sprint report supplies the end state. Both are best-effort, so
+    a sprint without data still renders its summary."""
+    sid = str(sprint_id or "").strip()
+    out = {"sprintId": sid, "points": [], "summary": {}, "velocity": []}
+    if not sid:
+        return out
+
+    series_start = 0
+    series_end = 0
+    try:
+        chart = jira_get(cfg, "/rest/greenhopper/1.0/rapid/charts/scopechangeburndownchart"
+                              "?rapidViewId={}&sprintId={}".format(bid, sid))
+        series_start = int(chart.get("startTime") or 0)
+        series_end = int(chart.get("endTime") or 0)
+        changes = chart.get("changes") or {}
+        state = {}
+        for stamp in sorted(changes, key=lambda s: int(s)):
+            for event in changes[stamp] or []:
+                key = event.get("key") or ""
+                if not key:
+                    continue
+                column = event.get("column") or {}
+                state[key] = bool(column.get("notDone", True))
+            remaining = 0
+            for not_done in state.values():
+                if not_done:
+                    remaining += 1
+            out["points"].append({"atMs": int(stamp), "remaining": remaining,
+                                  "total": len(state)})
+    except RuntimeError:
+        out["points"] = []
+
+    try:
+        report = jira_get(cfg, "/rest/greenhopper/1.0/rapid/charts/sprintreport"
+                               "?rapidViewId={}&sprintId={}".format(bid, sid))
+        contents = report.get("contents") or {}
+        meta = report.get("sprint") or {}
+        out["summary"] = {
+            "name": meta.get("name") or "",
+            "state": (meta.get("state") or "").lower(),
+            "startMs": series_start,
+            "endMs": series_end,
+            "completed": len(contents.get("completedIssues") or []),
+            "notCompleted": len(contents.get("issuesNotCompletedInCurrentSprint") or []),
+            "punted": len(contents.get("puntedIssues") or []),
+            "added": len(contents.get("issueKeysAddedDuringSprint") or {}),
+            "completedKeys": [i.get("key") for i in (contents.get("completedIssues") or [])],
+            "notCompletedKeys": [i.get("key") for i in
+                                 (contents.get("issuesNotCompletedInCurrentSprint") or [])],
+        }
+    except RuntimeError:
+        pass
+
+    try:
+        vel = jira_get(cfg, "/rest/greenhopper/1.0/rapid/charts/velocity?rapidViewId={}"
+                            .format(bid))
+        entries = vel.get("velocityStatEntries") or {}
+        for sprint in vel.get("sprints") or []:
+            sid_key = str(sprint.get("id") or "")
+            entry = entries.get(sid_key) or {}
+            out["velocity"].append({
+                "id": sid_key,
+                "name": sprint.get("name") or "",
+                "estimates": int((entry.get("estimated") or {}).get("value") or 0),
+                "completed": int((entry.get("completed") or {}).get("value") or 0),
+            })
+    except RuntimeError:
+        pass
+    return out
+
+
 # ----------------------------------------------------------------- mock
 
 MOCK_PROJECTS = [
@@ -522,6 +906,8 @@ MOCK_PROJECTS = [
 ]
 
 # statuses: id -> (name, category)
+MOCK_PRIORITIES = ["Highest", "High", "Medium", "Low"]
+
 MOCK_STATUSES = {
     "todo": ("To Do", "new"),
     "progress": ("In Progress", "indeterminate"),
@@ -570,6 +956,8 @@ MOCK_DESCRIPTIONS = {
     "MOB-22": "Search results should survive going offline. Cache the last query and its results, and mark them stale when the network returns.",
 }
 
+# Sprint windows are cosmetic and relative to today, so the mock timeline and
+# the mock report always have something to draw.
 MOCK_BOARDS = [
     {
         "id": "1",
@@ -577,6 +965,8 @@ MOCK_BOARDS = [
         "type": "kanban",
         "projectKey": "WEB",
         "statuses": ["todo", "progress", "review", "done"],
+        "sprints": [],
+        "backlogKeys": [],
     },
     {
         "id": "2",
@@ -584,25 +974,105 @@ MOCK_BOARDS = [
         "type": "scrum",
         "projectKey": "MOB",
         "statuses": ["todo", "progress", "review", "done"],
-        "sprint": {
-            "id": "7",
-            "name": "Sprint 7",
-            "startMs": 0,
-            "endMs": 0,
+        "sprints": [
+            {"id": "7", "name": "Sprint 7", "state": "active",
+             "startDaysAgo": 7, "lengthDays": 14},
+            {"id": "8", "name": "Sprint 8", "state": "future",
+             "startDaysAgo": -7, "lengthDays": 14},
+        ],
+        "sprintAssignments": {
+            "7": ["MOB-21", "MOB-22", "MOB-23", "MOB-24", "MOB-25", "MOB-26"],
+            "8": ["MOB-31", "MOB-32"],
         },
-        "sprintKeys": ["MOB-21", "MOB-22", "MOB-23", "MOB-24", "MOB-25", "MOB-26"],
-        "backlogKeys": ["MOB-31", "MOB-32", "MOB-33", "MOB-34", "MOB-35"],
+        "backlogKeys": ["MOB-33", "MOB-34", "MOB-35"],
     },
 ]
 
+# Comments the mock starts with, so the detail page has something to show.
+MOCK_COMMENTS = {
+    "MOB-22": [
+        ("Elin Åkerman", "elin@westrom.dev", "Ska cachen tömmas när kontot byter?"),
+        ("Alex Weström", "alex@westrom.dev", "Ja - töm listan vid utloggning."),
+    ],
+    "MOB-24": [
+        ("Noah Berg", "noah@westrom.dev", "Repro: tomt konto + flygplansläge."),
+    ],
+}
+
+MOCK_STATE_VERSION = 2
+
+
+def mock_sprint_row(sprint):
+    """A sprint the way the UI sees it: absolute bounds derived from the
+    cosmetic offsets, so the mock looks alive whatever the date is."""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    start = now - datetime.timedelta(days=sprint.get("startDaysAgo", 0))
+    end = start + datetime.timedelta(days=sprint.get("lengthDays", 14))
+    return {
+        "id": str(sprint.get("id") or ""),
+        "name": sprint.get("name") or "",
+        "state": sprint.get("state") or "future",
+        "startMs": int(start.timestamp() * 1000),
+        "endMs": int(end.timestamp() * 1000),
+    }
+
+
+def mock_seed_sprint_map():
+    """key -> sprint id for the seeded dataset ('' means the backlog)."""
+    out = {}
+    for board in MOCK_BOARDS:
+        for sprint_id, keys in (board.get("sprintAssignments") or {}).items():
+            for key in keys:
+                out[key] = str(sprint_id)
+        for key in board.get("backlogKeys") or []:
+            out[key] = ""
+    return out
+
+
+def mock_seed_comments():
+    now = datetime.datetime.now(datetime.timezone.utc)
+    out = {}
+    for key, rows in MOCK_COMMENTS.items():
+        comments = []
+        for idx, (name, email, body) in enumerate(rows):
+            created = int((now - datetime.timedelta(hours=(len(rows) - idx) * 5)).timestamp() * 1000)
+            comments.append({
+                "id": "c-{}-{}".format(key, idx + 1),
+                "authorName": name,
+                "authorEmail": email,
+                "body": body,
+                "createdMs": created,
+                "updatedMs": created,
+            })
+        out[key] = comments
+    return out
+
+
+def mock_migrate(state):
+    """State from before sprints were per-issue has no sprintId; seed it from
+    the board definitions instead of throwing the user's mock edits away."""
+    seeds = mock_seed_sprint_map()
+    for key, issue in state.get("issues", {}).items():
+        if "sprintId" not in issue:
+            issue["sprintId"] = seeds.get(key, "")
+    state["version"] = MOCK_STATE_VERSION
+    state.setdefault("comments", mock_seed_comments())
+    save_mock_state(state)
+
 
 def mock_state():
-    """Load the persisted mock state, creating it from the seeds on first run."""
+    """Load the persisted mock state, creating it from the seeds on first run.
+
+    Older state has no per-issue sprint and no comments; it is migrated rather
+    than discarded, so a mock board keeps whatever the user changed in it."""
     if os.path.exists(MOCK_STATE_PATH):
         try:
             with open(MOCK_STATE_PATH, encoding="utf-8") as fh:
                 state = json.load(fh)
             if isinstance(state, dict) and isinstance(state.get("issues"), dict):
+                if int(state.get("version") or 1) < MOCK_STATE_VERSION:
+                    mock_migrate(state)
+                state.setdefault("comments", {})
                 return state
         except (OSError, ValueError):
             pass
@@ -622,7 +1092,11 @@ def mock_state():
             "storyPoints": points,
             "description": MOCK_DESCRIPTIONS.get(key, ""),
         }
-    state = {"issues": issues}
+    seeds = mock_seed_sprint_map()
+    for key, issue in issues.items():
+        issue["sprintId"] = seeds.get(key, "")
+    state = {"version": MOCK_STATE_VERSION, "issues": issues,
+             "comments": mock_seed_comments()}
     save_mock_state(state)
     return state
 
@@ -636,7 +1110,9 @@ def save_mock_state(state):
 def mock_reset():
     if os.path.exists(MOCK_STATE_PATH):
         os.remove(MOCK_STATE_PATH)
-    if os.path.exists(WATCH_PATH):
+    # The watcher baseline is shared with real mode; only drop it when the mock
+    # board is what is being watched, or a reset would re-notify the real one.
+    if load_config().get("mode") != "real" and os.path.exists(WATCH_PATH):
         os.remove(WATCH_PATH)
     mock_state()
 
@@ -645,6 +1121,19 @@ def mock_issue(key, state):
     raw = state["issues"][key]
     status_id = raw["statusId"]
     status_name, category = MOCK_STATUSES[status_id]
+    sprint_id = str(raw.get("sprintId") or "")
+    sprint_name = ""
+    for board in MOCK_BOARDS:
+        if board["projectKey"] != raw["projectKey"]:
+            continue
+        for sprint in board.get("sprints") or []:
+            if str(sprint.get("id")) == sprint_id:
+                sprint_name = sprint.get("name") or ""
+    # Deterministic pseudo-timestamp per key: the mock activity feed needs an
+    # order, and it must be the same on every run.
+    age_hours = sum(ord(ch) for ch in key) % 36
+    now = datetime.datetime.now(datetime.timezone.utc)
+    updated_ms = int((now - datetime.timedelta(hours=age_hours)).timestamp() * 1000)
     return {
         "key": key,
         "summary": raw["summary"],
@@ -657,10 +1146,16 @@ def mock_issue(key, state):
         "assigneeName": raw["assigneeName"],
         "priorityName": raw["priorityName"],
         "storyPoints": raw["storyPoints"],
-        "updatedMs": 0,
+        "updatedMs": updated_ms,
         "description": raw["description"],
         "url": "https://example.atlassian.net/browse/{}".format(key),
         "projectKey": raw["projectKey"],
+        "sprintId": sprint_id,
+        "sprintName": sprint_name,
+        "startMs": 0,
+        "dueMs": 0,
+        "parentKey": "",
+        "parentSummary": "",
     }
 
 
@@ -674,34 +1169,32 @@ def mock_snapshot(cfg):
     }
     boards = []
     for board in MOCK_BOARDS:
-        sprint = board.get("sprint")
-        if sprint:
-            # Cosmetic sprint bounds ~ today +/- 7 days.
-            now = datetime.datetime.now(datetime.timezone.utc)
-            sprint = dict(sprint)
-            sprint["startMs"] = int((now - datetime.timedelta(days=7)).timestamp() * 1000)
-            sprint["endMs"] = int((now + datetime.timedelta(days=7)).timestamp() * 1000)
+        sprints = [mock_sprint_row(s) for s in board.get("sprints") or []]
+        sprint = None
+        for row in sprints:
+            if row["state"] == "active":
+                sprint = row
+                break
         columns = [{
             "name": MOCK_STATUSES[sid][0],
             "statusId": sid,
             "statusName": MOCK_STATUSES[sid][0],
         } for sid in board["statuses"]]
 
-        # A project's issues belong to a scrum board's sprint unless they are
-        # seeded as backlog; kanban boards show every issue of the project.
-        # New issues (mock_create) therefore appear on the board immediately.
-        backlog_keys = set(board.get("backlogKeys") or [])
-
+        # A scrum board splits the project's issues into sprint(s) and the
+        # backlog; a kanban board has no sprints, so everything sits on the
+        # board. mock_assign_sprint moves an issue between the two.
         issues = []
         backlog = []
         for key in state["issues"]:
             issue = state["issues"][key]
             if issue["projectKey"] != board["projectKey"]:
                 continue
-            if key in backlog_keys:
-                backlog.append(mock_issue(key, state))
+            row = mock_issue(key, state)
+            if board["type"] == "kanban" or row["sprintId"]:
+                issues.append(row)
             else:
-                issues.append(mock_issue(key, state))
+                backlog.append(row)
 
         boards.append({
             "id": board["id"],
@@ -710,6 +1203,7 @@ def mock_snapshot(cfg):
             "projectKey": board["projectKey"],
             "columns": columns,
             "sprint": sprint,
+            "sprints": sprints,
             "issues": issues,
             "backlog": backlog,
             "canAdd": True,
@@ -814,6 +1308,9 @@ def mock_create(state, board_id, payload):
         "priorityName": (payload.get("priorityName") or "Medium").strip() or "Medium",
         "storyPoints": payload.get("storyPoints"),
         "description": (payload.get("description") or "").strip(),
+        # A new issue starts on the backlog; move it into a sprint from the
+        # timeline (or the detail page) when it is planned.
+        "sprintId": "",
     }
     state["issues"][key] = issue
     save_mock_state(state)
@@ -825,6 +1322,213 @@ def mock_delete(state, key):
         raise RuntimeError("Okänt ärende {}".format(key))
     del state["issues"][key]
     save_mock_state(state)
+
+
+def mock_assign_sprint(state, key, sprint_id):
+    """Sprint planning in the mock: an id moves the issue into that sprint,
+    anything else (or 'backlog') puts it back on the backlog."""
+    if key not in state["issues"]:
+        raise RuntimeError("Okänt ärende {}".format(key))
+    target = str(sprint_id or "").strip()
+    if target and target.lower() != "backlog":
+        known = [str(s["id"]) for board in MOCK_BOARDS for s in board.get("sprints") or []]
+        if target not in known:
+            raise RuntimeError("Okänd sprint {}. Tillgängliga: {}".format(
+                target, ", ".join(known) or "inga"))
+    state["issues"][key]["sprintId"] = "" if target.lower() in ("", "backlog") else target
+    save_mock_state(state)
+    return state["issues"][key]["sprintId"]
+
+
+def mock_comments(state, key):
+    if key not in state["issues"]:
+        raise RuntimeError("Okänt ärende {}".format(key))
+    return list((state.get("comments") or {}).get(key) or [])
+
+
+def mock_add_comment(state, key, text):
+    if key not in state["issues"]:
+        raise RuntimeError("Okänt ärende {}".format(key))
+    body = str(text or "").strip()
+    if not body:
+        raise RuntimeError("Kommentaren är tom.")
+    comments = state.setdefault("comments", {}).setdefault(key, [])
+    now = int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000)
+    cfg = load_config()
+    comments.append({
+        "id": "c-{}-{}".format(key, len(comments) + 1),
+        "authorName": "Alex Weström",
+        "authorEmail": cfg.get("email") or "alex@westrom.dev",
+        "body": body,
+        "createdMs": now,
+        "updatedMs": now,
+    })
+    save_mock_state(state)
+    return comments
+
+
+def mock_options(pkey):
+    """Mock counterpart of real_options: the people already in the dataset."""
+    people = []
+    for seed in MOCK_ISSUES:
+        key, project, _sid, _summary, _type, name, email, _prio, _points = seed
+        if pkey and project != pkey:
+            continue
+        if not any(p["displayName"] == name for p in people):
+            people.append({
+                "accountId": "mock-" + email.split("@")[0],
+                "displayName": name,
+                "email": email,
+                "active": True,
+            })
+    return {
+        "people": people,
+        "priorities": MOCK_PRIORITIES,
+        "types": [{"id": "mock-task", "name": "Task"},
+                  {"id": "mock-story", "name": "Story"},
+                  {"id": "mock-bug", "name": "Bug"}],
+    }
+
+
+def mock_update(state, key, payload):
+    issue = state["issues"].get(key)
+    if not issue:
+        raise RuntimeError("Okänt ärende {}".format(key))
+    if "summary" in payload:
+        summary = str(payload.get("summary") or "").strip()
+        if not summary:
+            raise RuntimeError("Sammanfattningen får inte vara tom.")
+        issue["summary"] = summary
+    if "description" in payload:
+        issue["description"] = str(payload.get("description") or "")
+    if "priorityName" in payload:
+        issue["priorityName"] = str(payload.get("priorityName") or "")
+    if "assigneeAccountId" in payload or "assigneeEmail" in payload:
+        email = str(payload.get("assigneeEmail") or "")
+        account = str(payload.get("assigneeAccountId") or "")
+        if not email and not account:
+            issue["assigneeName"] = ""
+            issue["assigneeEmail"] = ""
+        else:
+            for person in mock_options(issue["projectKey"])["people"]:
+                if (email and person["email"] == email) or (account and person["accountId"] == account):
+                    issue["assigneeName"] = person["displayName"]
+                    issue["assigneeEmail"] = person["email"]
+                    break
+    if "storyPoints" in payload:
+        raw = payload.get("storyPoints")
+        issue["storyPoints"] = None if raw in (None, "") else float(raw)
+    save_mock_state(state)
+
+
+def mock_activity(state, pkey, limit=25):
+    """Newest first, using the deterministic per-key timestamp."""
+    rows = []
+    for key, issue in state["issues"].items():
+        if pkey and issue["projectKey"] != pkey:
+            continue
+        row = mock_issue(key, state)
+        status_name = MOCK_STATUSES[issue["statusId"]][0]
+        row["lastChange"] = ("status: To Do -> {}".format(status_name)
+                             if issue["statusId"] != "todo" else "skapad på backloggen")
+        row["lastChangeMs"] = row["updatedMs"]
+        rows.append(row)
+    rows.sort(key=lambda r: r["updatedMs"], reverse=True)
+    return rows[:limit]
+
+
+MOCK_DEV = {
+    "MOB-22": {
+        "pullRequests": [
+            {"id": "412", "title": "Cache search results offline", "status": "OPEN",
+             "url": "https://example.invalid/pull/412", "author": "Alex Weström", "updatedMs": 0},
+        ],
+        "branches": [{"name": "feature/offline-cache", "url": "", "lastCommit": "Wire the cache into search"}],
+        "commits": [
+            {"id": "a1b2c3d", "message": "Cache the last query and its results", "url": "",
+             "author": "Alex Weström", "updatedMs": 0},
+            {"id": "e4f5a6b", "message": "Mark cached results stale on reconnect", "url": "",
+             "author": "Alex Weström", "updatedMs": 0},
+        ],
+        "builds": [{"name": "CI · ios-debug", "status": "SUCCESSFUL", "url": ""}],
+    },
+    "MOB-24": {
+        "commits": [{"id": "9f8e7d6", "message": "Guard against a null account on boot", "url": "",
+                     "author": "Noah Berg", "updatedMs": 0}],
+    },
+}
+
+
+def mock_dev_status(state, key):
+    """Seeded git/CI data for two mock issues, empty for the rest, plus the
+    issue's (mock) history - so both the populated and the empty state render."""
+    issue = state["issues"].get(key)
+    if not issue:
+        raise RuntimeError("Okänt ärende {}".format(key))
+    seeded = MOCK_DEV.get(key) or {}
+    out = {"configured": bool(seeded), "counts": {}, "pullRequests": [], "branches": [],
+           "commits": [], "builds": [], "applications": ["GitHub"],
+           "history": [{"authorName": "Alex Weström", "createdMs": 0,
+                        "text": "status: To Do -> {}".format(MOCK_STATUSES[issue["statusId"]][0])}]}
+    for data_type in ("pullrequest", "branch", "commit", "build"):
+        out["counts"][data_type] = 0
+    for field in ("pullRequests", "branches", "commits", "builds"):
+        rows = [dict(row) for row in (seeded.get(field) or [])]
+        out[field] = rows
+    out["counts"]["pullrequest"] = len(out["pullRequests"])
+    out["counts"]["branch"] = len(out["branches"])
+    out["counts"]["commit"] = len(out["commits"])
+    out["counts"]["build"] = len(out["builds"])
+    return out
+
+
+def mock_report(state, board_id, sprint_id):
+    """A deterministic burndown for the mock sprint: a straight line from the
+    sprint's opening scope down to whatever is still open."""
+    board = None
+    for candidate in MOCK_BOARDS:
+        if str(candidate["id"]) == str(board_id):
+            board = candidate
+            break
+    out = {"sprintId": str(sprint_id), "points": [], "summary": {}, "velocity": []}
+    row = None
+    for sprint in (board or {}).get("sprints") or []:
+        if str(sprint["id"]) == str(sprint_id):
+            row = mock_sprint_row(sprint)
+            break
+    if not row:
+        return out
+
+    keys = [k for k, i in state["issues"].items()
+            if str(i.get("sprintId") or "") == str(sprint_id)]
+    done_keys = [k for k in keys
+                 if MOCK_STATUSES[state["issues"][k]["statusId"]][1] == "done"]
+    total = len(keys)
+    done = len(done_keys)
+    steps = 14
+    span = max(1, row["endMs"] - row["startMs"])
+    for step in range(steps + 1):
+        at = row["startMs"] + int(span * step / steps)
+        out["points"].append({
+            "atMs": at,
+            "remaining": max(0, total - int(round(done * step / steps))),
+            "total": total,
+        })
+    out["summary"] = {
+        "name": row["name"],
+        "state": row["state"],
+        "startMs": row["startMs"],
+        "endMs": row["endMs"],
+        "completed": done,
+        "notCompleted": total - done,
+        "punted": 0,
+        "added": total,
+        "completedKeys": done_keys,
+        "notCompletedKeys": [k for k in keys if k not in done_keys],
+    }
+    out["velocity"] = [{"id": row["id"], "name": row["name"],
+                        "estimates": total * 3, "completed": done * 3}]
+    return out
 
 
 # ----------------------------------------------------------------- status
@@ -1168,6 +1872,124 @@ def main(argv):
             issue["statusId"] = nxt[0]
         save_mock_state(state)
         payload(mock_snapshot(cfg))
+
+    if cmd == "assign":
+        cfg = load_config()
+        key = argv[2] if len(argv) > 2 else ""
+        target = argv[3] if len(argv) > 3 else ""
+        if not key or not target:
+            err_payload("assign kräver en issue-key och ett sprintId (eller 'backlog')")
+        try:
+            if cfg.get("mode") == "real":
+                real_assign_sprint(cfg, key, target)
+            else:
+                mock_assign_sprint(mock_state(), key, target)
+        except RuntimeError as exc:
+            err_payload(str(exc))
+        snap = mock_snapshot(cfg) if cfg.get("mode") != "real" else real_snapshot(cfg)
+        capture_baseline(cfg, snap)
+        payload(snap)
+
+    if cmd == "comments":
+        cfg = load_config()
+        key = argv[2] if len(argv) > 2 else ""
+        if not key:
+            err_payload("comments kräver en issue-key")
+        try:
+            rows = real_comments(cfg, key) if cfg.get("mode") == "real" \
+                else mock_comments(mock_state(), key)
+        except RuntimeError as exc:
+            err_payload(str(exc))
+        ok_payload(key=key, comments=rows)
+
+    if cmd == "comment":
+        cfg = load_config()
+        key = argv[2] if len(argv) > 2 else ""
+        text = argv[3] if len(argv) > 3 else ""
+        if not key or not text:
+            err_payload("comment kräver en issue-key och en text")
+        try:
+            if cfg.get("mode") == "real":
+                rows = real_add_comment(cfg, key, text)
+            else:
+                rows = mock_add_comment(mock_state(), key, text)
+        except RuntimeError as exc:
+            err_payload(str(exc))
+        ok_payload(key=key, comments=rows)
+
+    if cmd == "update":
+        cfg = load_config()
+        key = argv[2] if len(argv) > 2 else ""
+        raw = argv[3] if len(argv) > 3 else ""
+        if not key or not raw:
+            err_payload("update kräver en issue-key och ett JSON-payload")
+        try:
+            payload_data = json.loads(raw)
+        except ValueError as exc:
+            err_payload("update fick ogiltig JSON: {}".format(exc))
+        try:
+            if cfg.get("mode") == "real":
+                real_update(cfg, key, payload_data)
+            else:
+                mock_update(mock_state(), key, payload_data)
+        except RuntimeError as exc:
+            err_payload(str(exc))
+        snap = mock_snapshot(cfg) if cfg.get("mode") != "real" else real_snapshot(cfg)
+        capture_baseline(cfg, snap)
+        payload(snap)
+
+    if cmd == "options":
+        cfg = load_config()
+        pkey = argv[2] if len(argv) > 2 else ""
+        if not pkey:
+            pkey = cfg.get("selectedProjectKey") or ""
+        if cfg.get("mode") == "real":
+            if not pkey:
+                err_payload("options kräver en projektnyckel")
+            rows = real_options(cfg, pkey)
+        else:
+            rows = mock_options(pkey or "WEB")
+        ok_payload(projectKey=pkey, options=rows)
+
+    if cmd == "activity":
+        cfg = load_config()
+        pkey = argv[2] if len(argv) > 2 else ""
+        limit = argv[3] if len(argv) > 3 else "25"
+        try:
+            limit = max(1, min(100, int(limit)))
+        except (TypeError, ValueError):
+            limit = 25
+        if cfg.get("mode") == "real":
+            if not pkey:
+                err_payload("activity kräver en projektnyckel")
+            rows = real_activity(cfg, pkey, limit)
+        else:
+            rows = mock_activity(mock_state(), pkey or "WEB", limit)
+        ok_payload(projectKey=pkey, activity=rows)
+
+    if cmd == "report":
+        cfg = load_config()
+        bid = argv[2] if len(argv) > 2 else ""
+        sid = argv[3] if len(argv) > 3 else ""
+        if not bid or not sid:
+            err_payload("report kräver boardId och sprintId")
+        if cfg.get("mode") == "real":
+            rows = real_report(cfg, bid, sid)
+        else:
+            rows = mock_report(mock_state(), bid, sid)
+        ok_payload(boardId=bid, report=rows)
+
+    if cmd == "dev":
+        cfg = load_config()
+        key = argv[2] if len(argv) > 2 else ""
+        if not key:
+            err_payload("dev kräver en issue-key")
+        try:
+            rows = real_dev_status(cfg, key) if cfg.get("mode") == "real" \
+                else mock_dev_status(mock_state(), key)
+        except RuntimeError as exc:
+            err_payload(str(exc))
+        ok_payload(key=key, dev=rows)
 
     if cmd == "watch":
         cfg = load_config()
