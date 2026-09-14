@@ -163,6 +163,7 @@ Item {
             spacing: 4
 
             delegate: Column {
+              id: dayCol
               required property var modelData
               width: ListView.view.width
               spacing: 4
@@ -181,7 +182,9 @@ Item {
 
                 Rectangle {
                   required property var modelData
-                  width: ListView.view.width
+                  // Not ListView.view: inside the day's Repeater that attached
+                  // property is null (the row belongs to the day column).
+                  width: dayCol.width
                   height: 48
                   radius: 8
                   color: Qt.darker(Color.background, 1.18)
