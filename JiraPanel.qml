@@ -13,6 +13,8 @@ import qs.Ui
 //
 //   omarchy-shell shell toggle custom.jira '{}'   <- bar icon
 //   omarchy-shell shell call custom.jira refresh  <- bar right-click
+//   omarchy-shell shell call custom.jira view timeline   <- jump to a view
+//       (summary, board, backlog, timeline, reports, dev, activity)
 //
 // The root owns the FloatingWindow (the actual client), every bit of
 // application state, and the single Python bridge process that talks to
@@ -68,13 +70,50 @@ Item {
     return jiraWindow.visible ? root.close() : root.open("{}")
   }
 
+  // The view the config asks for, or "" when it names nothing we have.
+  function configuredView() {
+    var wanted = root.configStartView
+    if (!wanted) return ""
+    for (var i = 0; i < root.navModel.length; i++) {
+      if (root.navModel[i].key === wanted) return wanted
+    }
+    return ""
+  }
+
   function ping() { return "ok" }
+
+  // Move the panel to a named view.
+  function showTab(tab) {
+    var wanted = String(tab || "").trim().toLowerCase()
+    var names = {
+      summary: "summary", oversikt: "summary", översikt: "summary",
+      board: "board", tavla: "board",
+      backlog: "backlog",
+      timeline: "timeline", tidslinje: "timeline",
+      reports: "reports", report: "reports", rapporter: "reports",
+      dev: "dev", development: "dev", utveckling: "dev",
+      activity: "activity", aktivitet: "activity"
+    }
+    var key = names[wanted] || wanted
+    for (var i = 0; i < root.navModel.length; i++) {
+      if (root.navModel[i].key === key) {
+        root.open("{}")
+        root.tabIndex = i
+        return "ok"
+      }
+    }
+    return "unknown view: " + tab
+  }
 
   function refresh() {
     root.requestSnapshot()
     return "ok"
   }
 
+  // The shell only ever routes the method set a plugin had when it was first
+  // loaded here (adding a method to this file does not make it reachable,
+  // typed or not), so the panel's view is chosen from config instead - see
+  // `startView` in ~/.config/omarchy/jira.json.
   IpcHandler {
     target: "custom.jira"
     function open(): string { return root.open("{}") }
@@ -91,6 +130,8 @@ Item {
 
   property bool booted: false
   property bool fittedToScreen: false
+  property string configStartView: ""
+  property bool startViewApplied: false
   property bool connected: false
   property string mode: "mock"
   property var account: ({})
@@ -112,6 +153,25 @@ Item {
   property int tabIndex: 1
   property bool showConnect: false
   property int refreshIntervalMs: 30000
+
+  // Data pulled on demand rather than with every snapshot. Each one is tagged
+  // with what it belongs to, so the 30 s refresh does not refetch a comment
+  // thread or a report that has not changed under the user.
+  property var issueComments: []
+  property string issueCommentsFor: ""
+  property bool commentsLoading: false
+  property var projectOptions: ({})
+  property string projectOptionsFor: ""
+  property var activityRows: []
+  property string activityFor: ""
+  property bool activityLoading: false
+  property var reportData: null
+  property string reportFor: ""
+  property bool reportLoading: false
+  property var devData: null
+  property string devFor: ""
+  property bool devLoading: false
+  property string commentsDraft: ""
 
   // ------------------------------------------------------------- bridge
   property bool procBusy: false
@@ -184,6 +244,12 @@ Item {
       root.mode = parsed.mode || "mock"
       root.connected = !!parsed.connected
       root.account = parsed.account || {}
+      if (parsed.config) root.configStartView = parsed.config.startView || ""
+      // Open straight on the configured view, once per shell run.
+      if (!root.startViewApplied && root.configuredView() !== "") {
+        root.startViewApplied = true
+        root.showTab(root.configuredView())
+      }
       if (root.connected) {
         root.showConnect = false
         root.requestSnapshot()
@@ -368,21 +434,28 @@ Item {
     { key: "summary", label: "Summary", file: "views/SummaryView.qml" },
     { key: "board", label: "Board", file: "views/BoardView.qml" },
     { key: "backlog", label: "Backlog", file: "views/BacklogView.qml" },
-    { key: "dev", label: "Development", file: "views/PlaceholderView.qml" },
-    { key: "timeline", label: "Timeline", file: "views/PlaceholderView.qml" },
-    { key: "docs", label: "Docs", file: "views/PlaceholderView.qml" }
+    { key: "timeline", label: "Timeline", file: "views/TimelineView.qml" },
+    { key: "reports", label: "Reports", file: "views/ReportsView.qml" },
+    { key: "dev", label: "Development", file: "views/DevelopmentView.qml" },
+    { key: "activity", label: "Activity", file: "views/ActivityView.qml" }
   ]
 
   function openIssue(key) {
     if (!key) return
     root.selectedIssueKey = key
     root.refreshTransitions(key)
+    root.loadComments(key, true)
+    var board = root.currentBoard()
+    if (board) root.loadOptions(board.projectKey, false)
   }
 
   function clearIssue() {
     root.selectedIssueKey = ""
     root.issueTransitions = []
     root.issueTransitionsFor = ""
+    root.issueComments = []
+    root.issueCommentsFor = ""
+    root.commentsDraft = ""
   }
 
   function openInBrowser(key) {
@@ -423,6 +496,162 @@ Item {
       } else {
         root.statusError = (parsed && parsed.error) || "Flytten misslyckades."
         root.refreshTransitions(key)
+      }
+    })
+  }
+
+  // ------------------------------------------------------------- sprint
+  // The board's sprints, oldest first, as the timeline and the report picker
+  // want them.
+  function boardSprints() {
+    var b = root.currentBoard()
+    var list = (b && b.sprints) ? b.sprints.slice() : []
+    return list
+  }
+
+  function sprintById(id) {
+    var list = root.boardSprints()
+    for (var i = 0; i < list.length; i++) if (String(list[i].id) === String(id)) return list[i]
+    return null
+  }
+
+  function sprintNameOf(id) {
+    if (!id) return "Backlog"
+    var sp = root.sprintById(id)
+    return sp ? sp.name : id
+  }
+
+  function sprintRange(sp) {
+    if (!sp) return ""
+    var start = sp.startMs ? Qt.formatDateTime(new Date(sp.startMs), "d MMM") : ""
+    var end = sp.endMs ? Qt.formatDateTime(new Date(sp.endMs), "d MMM") : ""
+    if (start && end) return start + " – " + end
+    return start || end
+  }
+
+  // How much of a sprint's window has passed, 0..1 (0 when it has no dates).
+  function sprintProgress(sp) {
+    if (!sp || !sp.startMs || !sp.endMs || sp.endMs <= sp.startMs) return 0
+    var p = (Date.now() - sp.startMs) / (sp.endMs - sp.startMs)
+    return Math.max(0, Math.min(1, p))
+  }
+
+  function assignIssue(key, sprintId) {
+    if (!key) return
+    var target = String(sprintId || "backlog")
+    root.callBridge(["assign", key, target], {}, function(parsed) {
+      if (parsed && parsed.ok) {
+        root.applySnapshot(parsed)
+        root.notice = key + " → " + root.sprintNameOf(target === "backlog" ? "" : target)
+      } else {
+        root.statusError = (parsed && parsed.error) || "Kunde inte flytta ärendet."
+      }
+    })
+  }
+
+  // ------------------------------------------------------------- comments/edit
+  function loadComments(key, force) {
+    if (!key) return
+    if (!force && root.issueCommentsFor === key) return
+    root.issueCommentsFor = key
+    root.commentsLoading = true
+    root.callBridge(["comments", key], {}, function(parsed) {
+      root.commentsLoading = false
+      if (parsed && parsed.ok) {
+        root.issueComments = parsed.comments || []
+      } else {
+        root.issueComments = []
+        root.statusError = (parsed && parsed.error) || "Kunde inte läsa kommentarerna."
+      }
+    })
+  }
+
+  function addComment(key, text) {
+    var body = String(text || "").trim()
+    if (!body) { root.statusError = "Kommentaren är tom."; return }
+    root.commentsLoading = true
+    root.callBridge(["comment", key, body], {}, function(parsed) {
+      root.commentsLoading = false
+      if (parsed && parsed.ok) {
+        root.issueComments = parsed.comments || []
+        root.commentsDraft = ""
+        root.notice = "Kommentar skickad."
+      } else {
+        root.statusError = (parsed && parsed.error) || "Kunde inte skicka kommentaren."
+      }
+    })
+  }
+
+  function loadOptions(projectKey, force) {
+    if (!projectKey) return
+    if (!force && root.projectOptionsFor === projectKey) return
+    root.projectOptionsFor = projectKey
+    root.callBridge(["options", projectKey], {}, function(parsed) {
+      root.projectOptions = (parsed && parsed.ok && parsed.options) ? parsed.options : ({})
+    })
+  }
+
+  function saveIssue(key, payload, onDone) {
+    if (!key) return
+    root.callBridge(["update", key, JSON.stringify(payload || {})], {}, function(parsed) {
+      if (parsed && parsed.ok) {
+        root.applySnapshot(parsed)
+        root.notice = key + " uppdaterad."
+        if (onDone) onDone(true)
+      } else {
+        root.statusError = (parsed && parsed.error) || "Kunde inte spara ärendet."
+        if (onDone) onDone(false)
+      }
+    })
+  }
+
+  // ------------------------------------------------------------- activity/report
+  function loadActivity(projectKey, limit, force) {
+    if (!projectKey) return
+    var tag = projectKey + ":" + limit
+    if (!force && root.activityFor === tag) return
+    root.activityFor = tag
+    root.activityLoading = true
+    root.callBridge(["activity", projectKey, String(limit)], {}, function(parsed) {
+      root.activityLoading = false
+      if (parsed && parsed.ok) {
+        root.activityRows = parsed.activity || []
+      } else {
+        root.activityRows = []
+        root.statusError = (parsed && parsed.error) || "Kunde inte läsa aktiviteten."
+      }
+    })
+  }
+
+  function loadReport(boardId, sprintId, force) {
+    if (!boardId || !sprintId) { root.reportData = null; root.reportFor = ""; return }
+    var tag = boardId + ":" + sprintId
+    if (!force && root.reportFor === tag) return
+    root.reportFor = tag
+    root.reportLoading = true
+    root.callBridge(["report", String(boardId), String(sprintId)], {}, function(parsed) {
+      root.reportLoading = false
+      if (parsed && parsed.ok) {
+        root.reportData = parsed.report || null
+      } else {
+        root.reportData = null
+        root.statusError = (parsed && parsed.error) || "Kunde inte läsa rapporten."
+      }
+    })
+  }
+
+  function loadDev(key, force) {
+    if (!key) return
+    if (!force && root.devFor === key) return
+    root.devFor = key
+    root.devLoading = true
+    root.callBridge(["dev", key], {}, function(parsed) {
+      root.devLoading = false
+      if (parsed && parsed.ok) {
+        root.devData = parsed.dev || null
+      } else {
+        root.devData = null
+        root.statusError = (parsed && parsed.error) || "Kunde inte läsa utvecklarstatus."
       }
     })
   }

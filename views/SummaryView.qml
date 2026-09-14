@@ -49,10 +49,10 @@ Item {
         if (o.assigneeEmail && o.assigneeEmail === app.myEmail()) {
           if (o.statusCategory === "indeterminate") mine.push(o)
         }
-        if (o.lastTransitionMs) recent.push(o)
+        if (o.updatedMs) recent.push(o)
       }
       mineModel = mine
-      recent.sort(function(a, b) { return (b.lastTransitionMs || 0) - (a.lastTransitionMs || 0) })
+      recent.sort(function(a, b) { return (b.updatedMs || 0) - (a.updatedMs || 0) })
       recentModel = recent.slice(0, 8)
     }
 
@@ -153,7 +153,7 @@ Item {
                   text: modelData.keys.length
                   color: Qt.darker(Color.foreground, 1.3)
                   font.family: Style.font.family
-                  font.pixelSize: Style.font.huge
+                  font.pixelSize: Style.font.display
                   font.bold: true
                 }
               }
@@ -290,14 +290,9 @@ Item {
                     width: parent.width - 90 - 120
                   }
                   Text {
-                    text: {
-                      var when = modelData.lastTransitionText || ""
-                      if (modelData.lastTransitionMs) {
-                        var d = new Date(modelData.lastTransitionMs)
-                        when = Qt.formatDateTime(d, "d MMM HH:mm")
-                      }
-                      return when
-                    }
+                    text: modelData.updatedMs
+                      ? Qt.formatDateTime(new Date(modelData.updatedMs), "d MMM HH:mm")
+                      : ""
                     color: Qt.darker(Color.foreground, 1.5)
                     font.family: Style.font.family
                     font.pixelSize: Style.font.caption
@@ -327,7 +322,10 @@ Item {
           anchors.left: parent.left
           anchors.leftMargin: 20
           anchors.verticalCenter: parent.verticalCenter
-          text: modelView.statusText || ("Tavla: " + (modelView.myBoard ? modelView.myBoard.issues.length + " ärenden på tavlan, " + modelView.myBoard.backlog.length + " i backlog" : "inget valt"))
+          text: modelView.statusText || ("Tavla: " + (modelView.myBoard
+            ? modelView.myBoard.issues.length + " ärenden i sprint, "
+              + modelView.myBoard.backlog.length + " i backlog"
+            : "inget valt"))
           color: Qt.darker(Color.foreground, 1.5)
           font.family: Style.font.family
           font.pixelSize: Style.font.caption
