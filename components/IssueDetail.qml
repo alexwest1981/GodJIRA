@@ -730,25 +730,77 @@ Rectangle {
       Item { width: 1; height: 8 }
 
       // ---- delete
-      Row {
+      //
+      // Två steg med flit, och det andra steget ser **annorlunda ut** än det första:
+      // en fråga som namnger ärendet, med egna knappar. Tidigare bytte samma knapp
+      // bara text, vilket gjorde två snabba klick till en radering utan att man såg
+      // vad man gjorde. Går inte att ångra i Jira — därför står det.
+      Column {
         width: parent.width
+        spacing: 6
         visible: detail.app !== null && detail.app.boardCanDelete() && detail.issue !== null
 
         Button {
           id: deleteBtn
           width: 160
-          text: detail.deleteArmed
-            ? "Klicka igen för att radera"
-            : "Radera ärende"
+          visible: !detail.deleteArmed
+          text: "Radera ärende…"
           fontSize: Style.font.caption
           onClicked: {
-            if (!detail.deleteArmed) {
-              detail.deleteArmed = true
-              detail.deleteResetTimer.restart()
-            } else {
-              detail.deleteResetTimer.stop()
-              detail.deleteArmed = false
-              detail.app.deleteIssue(detail.issue.key)
+            detail.deleteArmed = true
+            detail.deleteResetTimer.restart()
+          }
+        }
+
+        Rectangle {
+          visible: detail.deleteArmed
+          width: parent.width
+          height: confirmCol.implicitHeight + 16
+          color: Util.alpha("#c0392b", 0.12)
+          border.color: Util.alpha("#c0392b", 0.55)
+          border.width: 1
+
+          Column {
+            id: confirmCol
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.margins: 8
+            spacing: 6
+
+            Text {
+              width: parent.width
+              text: "Radera " + (detail.issue ? detail.issue.key : "") + " — \"" +
+                    (detail.issue ? detail.issue.summary : "") + "\"?\n" +
+                    "Det går inte att ångra i Jira. En kopia sparas lokalt i papperskorgen " +
+                    "och kan återställas."
+              color: Color.foreground
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+
+            Row {
+              spacing: 8
+
+              Button {
+                text: "Avbryt"
+                fontSize: Style.font.caption
+                onClicked: {
+                  detail.deleteResetTimer.stop()
+                  detail.deleteArmed = false
+                }
+              }
+
+              Button {
+                text: "Radera"
+                fontSize: Style.font.caption
+                onClicked: {
+                  detail.deleteResetTimer.stop()
+                  detail.deleteArmed = false
+                  detail.app.deleteIssue(detail.issue.key)
+                }
+              }
             }
           }
         }

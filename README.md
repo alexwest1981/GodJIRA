@@ -151,7 +151,10 @@ python3 bin/jira_bridge.py snapshot                       # neutral board model 
 python3 bin/jira_bridge.py transitions WEB-41             # statuses the issue can move to
 python3 bin/jira_bridge.py move WEB-41 "In Progress"      # change an issue's status
 python3 bin/jira_bridge.py create 1 '{"summary":"...", "statusId":"progress"}'
-python3 bin/jira_bridge.py delete WEB-41
+python3 bin/jira_bridge.py delete WEB-41 --yes          # --yes krävs; kopia sparas först
+python3 bin/jira_bridge.py journal 20                    # vad verktyget har skrivit, nyaste först
+python3 bin/jira_bridge.py trash WEB-41                  # kopiorna som togs före radering/ändring
+python3 bin/jira_bridge.py restore WEB-41                # återskapa ur kopian
 python3 bin/jira_bridge.py assign WEB-41 7               # into a sprint (or "backlog")
 python3 bin/jira_bridge.py comments WEB-41               # read the comment thread
 python3 bin/jira_bridge.py comment WEB-41 "Ser bra ut"   # post a comment
@@ -209,6 +212,8 @@ connect screen.
 | Mock dataset | `~/.local/state/omarchy/jira-mock.json` |
 | Watcher baseline | `~/.local/state/omarchy/jira-watch.json` |
 | API token (real mode) | system keyring, service `custom.jira` |
+| Skrivjournal | `~/.local/state/omarchy/jira-actions.log` (0600) |
+| Lokal papperskorg | `~/.local/state/omarchy/jira-trash/` (0600 per fil) |
 
 Refresh interval: open the Jira widget's settings (default 30 s, min 10 s).
 
@@ -222,6 +227,40 @@ python3 ~/.config/omarchy/plugins/custom.jira/bin/jira_bridge.py \
 
 Accepted values: `summary`, `board` (default), `backlog`, `timeline`, `reports`,
 `dev`, `activity`.
+
+## Skrivskydd (safety nets)
+
+Klienten får skriva mot din Jira, och i Jira Cloud **går en radering inte att
+ångra** — det finns ingen papperskorg för ärenden. Fyra nät finns därför inbyggda.
+De är tysta i normalfallet och syns bara när de behövs.
+
+1. **Journal.** Varje skrivning lämnar en rad i `~/.local/state/omarchy/jira-actions.log`:
+   vad som gjordes, vilket ärende, av vem och när — även försök som nekades.
+   Läs den med `journal` (eller öppna filen; en rad JSON per händelse).
+2. **Lokal papperskorg.** Före varje radering — och före en ändring av
+   sammanfattning eller beskrivning — sparas hela ärendet (alla fält **och**
+   kommentarerna, kommentarerna ordagrant som ADF) i `jira-trash/`. Går kopian inte
+   att skriva **nekas åtgärden**: vi raderar aldrig något vi inte först kunnat spara.
+   `restore <key>` skapar ärendet igen ur den nyaste kopian och **säger vad som inte
+   kunde läggas tillbaka** (kommentarer får den ursprungliga skribenten och datumet
+   i raden, eftersom Jira inte tillåter att skriva i någon annans namn).
+3. **Kvotvakt.** Fler än tre raderingar inom tio minuter nekas, och beskedet säger
+   hur många som redan gjorts. En skur — ett misstag eller en loop — blir då tre
+   ärenden och ett tydligt fel i stället för en tyst utrensning. `--force` kringgår
+   vakten när man vet vad man gör (städning), och även det hamnar i journalen.
+4. **Kvitto.** Efter varje skrivning läses ändringen tillbaka och jämförs med vad som
+   beställdes: flytten ska ha landat i rätt status, kommentaren ska finnas i tråden,
+   det ändrade fältet ska ha rätt värde, och det raderade ärendet ska svara 404.
+   Stämmer det inte rapporteras det som ett fel — en skrivning får aldrig se ut att ha
+   lyckats när den inte gjorde det.
+
+I gränssnittet är raderingen två steg: först `Radera ärende…`, sedan en ruta som
+**namnger ärendet** och säger att det inte går att ångra i Jira men att en kopia sparas
+lokalt. Det andra steget ser medvetet annorlunda ut än det första.
+
+Sajtens egna medel: Jira-administratören kan se **vem och när** ett ärende raderades i
+`⚙ → System → Audit log` (sök på `Work item deleted` eller nyckeln). Överväg också att
+ta bort rättigheten *Delete Issues* från vanliga medlemmar — en status räcker oftast.
 
 ## Development notes
 

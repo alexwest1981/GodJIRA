@@ -745,7 +745,9 @@ Item {
   function deleteIssue(key) {
     root.statusError = ""
     root.notice = ""
-    root.callBridge(["delete", key], {}, function(parsed) {
+    // --yes: raderingen är redan bekräftad i en ruta som namngav ärendet, och
+    // bryggan begär ordet för att ingen kodväg ska kunna radera utan ett uttalat val.
+    root.callBridge(["delete", key, "--yes"], {}, function(parsed) {
       if (parsed && parsed.ok) {
         if (root.selectedIssueKey === key) {
           root.selectedIssueKey = ""
@@ -753,7 +755,7 @@ Item {
           root.issueTransitionsFor = ""
         }
         root.applySnapshot(parsed)
-        root.notice = "Raderade " + key + "."
+        root.notice = "Raderade " + key + " — en kopia ligger i papperskorgen."
       } else {
         root.statusError = (parsed && parsed.error) || "Kunde inte radera ärendet."
       }

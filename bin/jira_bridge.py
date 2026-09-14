@@ -22,7 +22,13 @@ user can encounter):
   transitions <issueKey>          Statuses the issue can move to
   move <issueKey> <target>        Move issue to a status/transition
   create <boardId> <json>         Add an issue to a board (admin/create perms)
-  delete <issueKey>               Delete an issue (admin perms)
+  delete <issueKey> --yes         Delete an issue (admin perms). Requires --yes;
+                                  a full copy is saved first, and more than 3
+                                  deletions within 10 minutes are refused
+                                  (--force overrides). See "Skrivskydd".
+  journal [limit]                 What this tool has written, newest first
+  trash [issueKey]                The local copies taken before deletions/changes
+  restore <issueKey>              Recreate a deleted issue from its local copy
   assign <issueKey> <sprint|backlog>  Put an issue in a sprint, or on the backlog
   comments <issueKey>             Comments on an issue
   comment <issueKey> <text>       Add a comment to an issue
@@ -42,6 +48,7 @@ import base64
 import datetime
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -60,6 +67,12 @@ CONFIG_PATH = os.path.join(CONFIG_DIR, "jira.json")
 STATE_DIR = os.path.join(HOME, ".local", "state", "omarchy")
 MOCK_STATE_PATH = os.path.join(STATE_DIR, "jira-mock.json")
 WATCH_PATH = os.path.join(STATE_DIR, "jira-watch.json")
+# Skrivskyddet: en journal över varje skrivning, en lokal papperskorg och en kvot
+# som stoppar en skur av raderingar. Se "skrivskydd" längre ner.
+ACTION_LOG_PATH = os.path.join(STATE_DIR, "jira-actions.log")
+TRASH_DIR = os.path.join(STATE_DIR, "jira-trash")
+DELETE_QUOTA = 3
+DELETE_WINDOW_SECS = 600
 
 DEFAULT_CONFIG = {
     "schema": 1,
@@ -472,6 +485,7 @@ def real_move(cfg, key, target):
             key, target, available or "inga"))
     jira_post(cfg, "/rest/api/3/issue/{}/transitions".format(key),
               {"transition": {"id": chosen["id"]}})
+    return chosen
 
 
 def real_project_permissions(cfg, cache, pkey):
@@ -1713,6 +1727,310 @@ def capture_baseline(cfg, snap):
     if entries:
         store_baseline(entries, wanted)
 
+# ------------------------------------------------------------- skrivskydd
+#
+# Fyra nät, osynliga i normalfallet men avgörande när något går fel:
+#
+#   1. **Journal.** Varje skrivning lämnar en rad i `jira-actions.log` (JSON per
+#      rad): vad, vilket ärende, av vem och när — även försök som nekades. Utan
+#      den går det inte att i efterhand svara på "vad gjorde verktyget?".
+#   2. **Lokal papperskorg.** Före varje radering sparas hela ärendet (fält +
+#      kommentarer) som JSON i `jira-trash/`. Jira Cloud har ingen papperskorg
+#      för ärenden, så den filen är det enda som finns kvar. Går kopian inte att
+#      skriva **nekas raderingen** — vi raderar aldrig något vi inte först kunnat
+#      spara.
+#   3. **Kvotvakt.** Fler än `DELETE_QUOTA` raderingar inom `DELETE_WINDOW_SECS`
+#      nekas, med besked om varför. En skur (av misstag eller i en loop) blir då
+#      tre ärenden och ett tydligt felmeddelande i stället för en tyst
+#      utrensning.
+#   4. **Kvitto.** Efter varje skrivning läses ändringen tillbaka och jämförs med
+#      vad som beställdes. Stämmer det inte rapporteras det som ett fel — en
+#      skrivning får aldrig se ut att ha lyckats när den inte gjorde det.
+
+def iso_now():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+
+
+def log_action(cfg, action, key, detail="", ok=True, refused=False,
+               reason="", before=None, after=None, extra=None):
+    """En rad per skrivning. Append-only; en trasig rad får aldrig stoppa en skrivning."""
+    entry = {
+        "at": iso_now(),
+        "action": action,
+        "key": key or "",
+        "mode": (cfg or {}).get("mode") or "",
+        "user": (cfg or {}).get("email") or "",
+        "detail": detail or "",
+        "ok": bool(ok),
+    }
+    if refused:
+        entry["refused"] = True
+        entry["reason"] = reason or ""
+    if before is not None:
+        entry["before"] = before
+    if after is not None:
+        entry["after"] = after
+    if extra:
+        entry["extra"] = extra
+    try:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        with open(ACTION_LOG_PATH, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        os.chmod(ACTION_LOG_PATH, 0o600)
+    except OSError:
+        # Journalen är ett skyddsnät, inte en förutsättning: kan den inte skrivas
+        # går skrivningen ändå. Felet syns i journal-kommandot.
+        pass
+    return entry
+
+
+def read_actions(limit=200):
+    """Journalen, nyaste först. Trasiga rader hoppas över i stället för att krascha."""
+    rows = []
+    if not os.path.exists(ACTION_LOG_PATH):
+        return rows
+    try:
+        with open(ACTION_LOG_PATH, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rows.append(json.loads(line))
+                except ValueError:
+                    continue
+    except OSError:
+        return rows
+    rows.reverse()
+    return rows[:int(limit)]
+
+
+def deletes_in_window(secs=DELETE_WINDOW_SECS):
+    """Tidpunkterna för de raderingar som lyckats och ligger inom fönstret."""
+    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=secs)
+    hits = []
+    for row in read_actions(limit=500):
+        if row.get("action") != "delete" or not row.get("ok") or row.get("refused"):
+            continue
+        try:
+            at = datetime.datetime.fromisoformat(row.get("at") or "")
+        except ValueError:
+            continue
+        if at >= cutoff:
+            hits.append(row.get("at"))
+    return hits
+
+
+def refuse(cfg, action, key, reason, detail=""):
+    """Nekar en skrivning och lämnar spår av det."""
+    log_action(cfg, action, key, detail=detail, ok=False, refused=True, reason=reason)
+    return reason
+
+
+def trash_path_for(key):
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", str(key or "okand"))
+    return os.path.join(TRASH_DIR, "{}-{}.json".format(safe, stamp))
+
+
+def snapshot_issue(cfg, key, why="radering"):
+    """Sparar hela ärendet (fält + kommentarer) innan något förstörande sker.
+
+    Kastar RuntimeError om kopian inte kan skrivas — anroparen ska då neka
+    åtgärden. En radering utan kopia är precis det vi inte får göra."""
+    fields = ("summary,description,issuetype,priority,assignee,reporter,labels,"
+              "parent,status,project,customfield_10016,customfield_10020,"
+              "customfield_10015,duedate,created,updated")
+    issue = jira_get(cfg, "/rest/api/3/issue/{}?fields={}".format(key, fields))
+    comments = []
+    try:
+        data = jira_get(cfg, "/rest/api/3/issue/{}/comment?maxResults=100".format(key))
+        comments = data.get("comments") or []
+    except RuntimeError:
+        comments = []
+    blob = {
+        "schema": 1,
+        "savedAt": iso_now(),
+        "why": why,
+        "site": cfg.get("siteUrl") or "",
+        "savedBy": cfg.get("email") or "",
+        "key": key,
+        "issue": issue,
+        "comments": comments,
+    }
+    path = trash_path_for(key)
+    try:
+        os.makedirs(TRASH_DIR, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(blob, fh, ensure_ascii=False, indent=2)
+        os.chmod(path, 0o600)
+    except OSError as exc:
+        raise RuntimeError("Kunde inte spara en kopia av {} ({}); raderar därför inget.".format(
+            key, exc))
+    return path
+
+
+def trash_entries(key=None):
+    """Papperskorgen, nyaste först. Utan key listas allt."""
+    if not os.path.isdir(TRASH_DIR):
+        return []
+    rows = []
+    for name in sorted(os.listdir(TRASH_DIR)):
+        if not name.endswith(".json"):
+            continue
+        path = os.path.join(TRASH_DIR, name)
+        try:
+            with open(path, encoding="utf-8") as fh:
+                blob = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        # Nyckeln läses ur filen, inte ur filnamnet: filnamnet är säkrat för
+        # filsystemet och kan därför skilja sig från ärendets riktiga nyckel.
+        if key and (blob.get("key") or "") != key:
+            continue
+        rows.append({
+            "file": name,
+            "key": blob.get("key") or "",
+            "savedAt": blob.get("savedAt") or "",
+            "why": blob.get("why") or "",
+            "summary": ((blob.get("issue") or {}).get("fields") or {}).get("summary") or "",
+            "comments": len(blob.get("comments") or []),
+        })
+    rows.sort(key=lambda r: r.get("savedAt") or "", reverse=True)
+    return rows
+
+
+def issue_status(cfg, key):
+    """Statusens namn, eller '' om ärendet inte går att läsa."""
+    try:
+        data = jira_get(cfg, "/rest/api/3/issue/{}?fields=status".format(key))
+        return ((data.get("fields") or {}).get("status") or {}).get("name") or ""
+    except RuntimeError:
+        return ""
+
+
+def snapshot_issue_entry(snap, key):
+    """Ärendet som det ser ut i en snapshot (boards + backlog), annars None."""
+    for board in (snap or {}).get("boards") or []:
+        for row in (board.get("issues") or []) + (board.get("backlog") or []):
+            if row.get("key") == key:
+                return row
+    return None
+
+
+def verify_update(cfg, key, payload):
+    """Läser tillbaka de fält som ändringen gällde."""
+    try:
+        data = jira_get(cfg, "/rest/api/3/issue/{}?fields=summary,priority,description,{}".format(
+            key, STORY_POINTS_FIELD))
+    except RuntimeError as exc:
+        return False, "kunde inte läsa tillbaka {}: {}".format(key, exc)
+    fields = data.get("fields") or {}
+    checks = []
+    if "summary" in payload:
+        checks.append(("sammanfattning", fields.get("summary") or "", payload.get("summary") or ""))
+    if "priorityName" in payload:
+        checks.append(("prioritet",
+                       ((fields.get("priority") or {}).get("name") or ""),
+                       payload.get("priorityName") or ""))
+    if "storyPoints" in payload and payload.get("storyPoints") not in (None, ""):
+        raw = fields.get(STORY_POINTS_FIELD)
+        checks.append(("story points", "" if raw is None else str(raw),
+                       str(payload.get("storyPoints"))))
+    for label, got, want in checks:
+        if str(got).strip() != str(want).strip():
+            return False, "{} står som '{}' i {}, beställde '{}'.".format(label, got, key, want)
+    return True, ""
+
+
+def restore_from_trash(cfg, path):
+    """Återskapar ett ärende från papperskorgen. Returnerar (ny nyckel, besked).
+
+    Beskedet namnger allt som **inte** kunde läggas tillbaka — en återställning som
+    tiger om sina luckor är värre än ingen återställning."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            blob = json.load(fh)
+    except (OSError, ValueError) as exc:
+        raise RuntimeError("Kunde inte läsa kopian {}: {}".format(path, exc))
+    fields = ((blob.get("issue") or {}).get("fields") or {})
+    project = ((fields.get("project") or {}).get("key") or "")
+    if not project:
+        raise RuntimeError("Kopian saknar projekt – kan inte återskapa ärendet.")
+    body = {"fields": {"project": {"key": project},
+                       "summary": fields.get("summary") or "Återställt ärende"}}
+    itype = fields.get("issuetype") or {}
+    if itype.get("id"):
+        body["fields"]["issuetype"] = {"id": str(itype["id"])}
+    if fields.get("description") is not None:
+        body["fields"]["description"] = fields["description"]
+    if fields.get("labels"):
+        body["fields"]["labels"] = fields["labels"]
+    if (fields.get("priority") or {}).get("id"):
+        body["fields"]["priority"] = {"id": str(fields["priority"]["id"])}
+    if (fields.get("assignee") or {}).get("accountId"):
+        body["fields"]["assignee"] = {"accountId": fields["assignee"]["accountId"]}
+    points = fields.get(STORY_POINTS_FIELD)
+    if points is not None:
+        body["fields"][STORY_POINTS_FIELD] = points
+    created = jira_post(cfg, "/rest/api/3/issue", body)
+    new_key = (created or {}).get("key") or ""
+    if not new_key:
+        raise RuntimeError("Jira svarade utan nyckel – inget återskapat.")
+    gaps = []
+    restored_comments = 0
+    for row in blob.get("comments") or []:
+        raw = row.get("body")
+        text = raw if isinstance(raw, str) else adf_to_text(raw)
+        if not text.strip():
+            continue
+        author = (row.get("author") or {}).get("displayName") or "okänd"
+        when = (row.get("created") or "")[:10]
+        try:
+            jira_post(cfg, "/rest/api/3/issue/{}/comment".format(new_key),
+                      {"body": text_to_adf("[{} {}] {}".format(author, when, text))})
+            restored_comments += 1
+        except RuntimeError:
+            gaps.append("en kommentar kunde inte läggas tillbaka")
+    status_name = ((fields.get("status") or {}).get("name") or "")
+    if status_name and status_name not in ("To Do", "Backlog"):
+        try:
+            real_move(cfg, new_key, status_name)
+        except RuntimeError:
+            gaps.append("statusen '{}' kunde inte sättas".format(status_name))
+    if fields.get(SPRINT_FIELD):
+        gaps.append("sprinttillhörigheten får sättas för hand")
+    report = ("{} kommentarer tillbaka.".format(restored_comments) if restored_comments
+              else "Inga kommentarer fanns i kopian.")
+    if gaps:
+        report += " Kvar: " + "; ".join(gaps) + "."
+    return new_key, report
+
+
+def verify_write(cfg, action, key, expect):
+    """Läser tillbaka och jämför. Returnerar (ok, besked) — beskedet hamnar i svaret."""
+    try:
+        if action == "delete":
+            jira_get(cfg, "/rest/api/3/issue/{}?fields=summary".format(key))
+            return False, "{} svarar fortfarande efter raderingen.".format(key)
+        data = jira_get(cfg, "/rest/api/3/issue/{}?fields=summary,status".format(key))
+        status = (data.get("fields") or {}).get("status") or {}
+        got = status.get("name") or ""
+        want_id = str((expect or {}).get("statusId") or "")
+        want = (expect or {}).get("status") or ""
+        if want_id and str(status.get("id") or "") != want_id:
+            return False, "{} står i '{}' ({}), beställde status-id {}.".format(
+                key, got, status.get("id"), want_id)
+        if want and got != want:
+            return False, "{} står i '{}', beställde '{}'.".format(key, got, want)
+        return True, ""
+    except RuntimeError as exc:
+        if action == "delete" and "404" in str(exc):
+            return True, ""
+        return False, "kunde inte läsa tillbaka {}: {}".format(key, exc)
+
+
+
 
 # ----------------------------------------------------------------- status
 
@@ -1785,10 +2103,21 @@ def main(argv):
             err_payload("move kräver key och målstatus")
         try:
             if cfg.get("mode") == "real":
-                real_move(cfg, key, target)
+                before = issue_status(cfg, key)
+                chosen = real_move(cfg, key, target)
+                ok, msg = verify_write(cfg, "move", key,
+                                       {"statusId": (chosen or {}).get("toStatusId")})
+                log_action(cfg, "move", key,
+                           detail="{} → '{}'".format(before or "?", (chosen or {}).get("toStatusName") or target),
+                           before=before, after=(chosen or {}).get("toStatusName") or "",
+                           ok=ok, reason="" if ok else msg)
+                if not ok:
+                    err_payload("Flytten av {} kunde inte bekräftas: {}".format(key, msg))
             else:
                 mock_move(mock_state(), key, target)
+                log_action(cfg, "move", key, detail="till '{}' (mock)".format(target))
         except RuntimeError as exc:
+            log_action(cfg, "move", key, detail="till '{}'".format(target), ok=False, reason=str(exc))
             err_payload(str(exc))
         snap = mock_snapshot(cfg) if cfg.get("mode") != "real" else real_snapshot(cfg)
         capture_baseline(cfg, snap)
@@ -1816,28 +2145,75 @@ def main(argv):
                 if not board.get("canAdd"):
                     raise RuntimeError("Du saknar rättighet att skapa ärenden i {}.".format(
                         board.get("projectKey")))
+                known = set()
+                for row in (board.get("issues") or []) + (board.get("backlog") or []):
+                    known.add(row.get("key"))
                 real_create(cfg, board, payload_data)
+                snap = real_snapshot(cfg)
+                fresh = [row.get("key") for b in snap.get("boards") or []
+                         for row in (b.get("issues") or []) + (b.get("backlog") or [])
+                         if row.get("key") not in known]
+                new_key = fresh[0] if fresh else ""
+                log_action(cfg, "create", new_key,
+                           detail=(payload_data.get("summary") or "")[:80],
+                           extra={"project": board.get("projectKey"),
+                                  "type": (payload_data.get("typeName") or "Task")})
+                # Kvitto: ett skapat ärende som inte syns i tavlan efteråt är ett fel,
+                # inte en framgång.
+                if not new_key:
+                    err_payload("Ärendet skapades men syns inte i tavlan efteråt — kontrollera i Jira.")
             else:
                 mock_create(mock_state(), board_id, payload_data)
+                snap = mock_snapshot(cfg)
         except RuntimeError as exc:
+            log_action(cfg, "create", "", detail=(payload_data.get("summary") or "")[:80],
+                       ok=False, reason=str(exc))
             err_payload(str(exc))
-        snap = mock_snapshot(cfg) if cfg.get("mode") != "real" else real_snapshot(cfg)
         capture_baseline(cfg, snap)
         payload(snap)
 
     if cmd == "delete":
         cfg = load_config()
         key = argv[2] if len(argv) > 2 else ""
+        flags = list(argv[3:])
+        confirmed = "--yes" in flags
+        forced = "--force" in flags
         if not key:
             err_payload("delete kräver en issue-key")
+        # Nät 1: ingen radering utan ett uttalat ja. Gränssnittet frågar först i en
+        # ruta som namnger ärendet; kommandoraden måste säga --yes.
+        if not confirmed:
+            err_payload(refuse(cfg, "delete", key,
+                               "Radering av {} kräver ett bekräftat val (--yes).".format(key),
+                               detail="obekräftad"))
+        # Nät 2: kvotvakten. En skur av raderingar stoppas och syns i svaret, i
+        # stället för att 15 ärenden försvinner tyst.
+        recent = deletes_in_window()
+        if len(recent) >= DELETE_QUOTA and not forced:
+            err_payload(refuse(cfg, "delete", key,
+                               "{} raderingar de senaste {} minuterna. Stanna och kontrollera "
+                               "vad som händer — --force om fler verkligen ska bort.".format(
+                                   len(recent), DELETE_WINDOW_SECS // 60),
+                               detail="kvotvakt"))
         try:
             if cfg.get("mode") == "real":
-                # Best effort guard: permissions were fetched with the snapshot,
-                # so let Jira itself reject if they changed since.
+                # Nät 3: kopia först, radera sedan. Går kopian inte att skriva nekas raderingen.
+                path = snapshot_issue(cfg, key, why="radering")
+                base = os.path.basename(path)
                 real_delete(cfg, key)
+                # Nät 4: läs tillbaka. En radering som inte kan bekräftas är ett fel.
+                ok, msg = verify_write(cfg, "delete", key, None)
+                log_action(cfg, "delete", key, detail="kopia: " + base, ok=ok,
+                           reason="" if ok else msg, extra={"trash": base})
+                raise_notification("OmaJIRA · {} raderad".format(key),
+                                   "En kopia ligger i papperskorgen ({}) och kan återställas.".format(base))
+                if not ok:
+                    err_payload("{} raderades men kunde inte bekräftas: {}".format(key, msg))
             else:
                 mock_delete(mock_state(), key)
+                log_action(cfg, "delete", key, detail="mock-radering")
         except RuntimeError as exc:
+            log_action(cfg, "delete", key, detail="misslyckades", ok=False, reason=str(exc))
             err_payload(str(exc))
         snap = mock_snapshot(cfg) if cfg.get("mode") != "real" else real_snapshot(cfg)
         capture_baseline(cfg, snap)
@@ -1889,9 +2265,19 @@ def main(argv):
             else:
                 mock_assign_sprint(mock_state(), key, target)
         except RuntimeError as exc:
+            log_action(cfg, "assign", key, detail="→ {}".format(target), ok=False, reason=str(exc))
             err_payload(str(exc))
         snap = mock_snapshot(cfg) if cfg.get("mode") != "real" else real_snapshot(cfg)
+        row = snapshot_issue_entry(snap, key)
+        got = "" if row is None else (row.get("sprintId") or "")
+        want = "" if str(target).lower() in ("", "backlog") else str(target)
+        ok = str(got) == want
+        log_action(cfg, "assign", key, detail="→ {}".format(target or "backlog"), after=got, ok=ok,
+                   reason="" if ok else "ligger i sprint '{}', beställde '{}'".format(got, want))
         capture_baseline(cfg, snap)
+        if not ok:
+            err_payload("{} ligger i sprint '{}', beställde '{}' — kontrollera i Jira.".format(
+                key, got or "backloggen", want or "backloggen"))
         payload(snap)
 
     if cmd == "comments":
@@ -1915,9 +2301,17 @@ def main(argv):
         try:
             if cfg.get("mode") == "real":
                 rows = real_add_comment(cfg, key, text)
+                head = re.sub(r"\s+", " ", text).strip()[:30]
+                ok = any(head in re.sub(r"\s+", " ", (r.get("body") or "")) for r in rows)
+                log_action(cfg, "comment", key, detail=text[:80], ok=ok,
+                           reason="" if ok else "kommentaren syns inte i ärendet efteråt")
+                if not ok:
+                    err_payload("Kommentaren på {} kunde inte bekräftas.".format(key))
             else:
                 rows = mock_add_comment(mock_state(), key, text)
+                log_action(cfg, "comment", key, detail=text[:80])
         except RuntimeError as exc:
+            log_action(cfg, "comment", key, detail=text[:80], ok=False, reason=str(exc))
             err_payload(str(exc))
         ok_payload(key=key, comments=rows)
 
@@ -1931,16 +2325,65 @@ def main(argv):
             payload_data = json.loads(raw)
         except ValueError as exc:
             err_payload("update fick ogiltig JSON: {}".format(exc))
+        if not payload_data:
+            err_payload(refuse(cfg, "update", key, "Ändringen innehåller inga fält.", detail="tomt payload"))
         try:
             if cfg.get("mode") == "real":
+                # En ändring av text kan skriva över något som bara fanns där. Kopian
+                # läggs i papperskorgen först, så texten går att få tillbaka.
+                base = ""
+                if any(f in payload_data for f in ("description", "summary")):
+                    base = os.path.basename(snapshot_issue(cfg, key, why="före ändring"))
                 real_update(cfg, key, payload_data)
+                ok, msg = verify_update(cfg, key, payload_data)
+                log_action(cfg, "update", key,
+                           detail="fält: " + ", ".join(sorted(payload_data.keys())),
+                           ok=ok, reason="" if ok else msg,
+                           extra={"trash": base} if base else None)
+                if not ok:
+                    err_payload("Ändringen av {} kunde inte bekräftas: {}".format(key, msg))
             else:
                 mock_update(mock_state(), key, payload_data)
+                log_action(cfg, "update", key,
+                           detail="fält: " + ", ".join(sorted(payload_data.keys())) + " (mock)")
         except RuntimeError as exc:
+            log_action(cfg, "update", key,
+                       detail="fält: " + ", ".join(sorted(payload_data.keys())),
+                       ok=False, reason=str(exc))
             err_payload(str(exc))
         snap = mock_snapshot(cfg) if cfg.get("mode") != "real" else real_snapshot(cfg)
         capture_baseline(cfg, snap)
         payload(snap)
+
+    if cmd == "journal":
+        cfg = load_config()
+        limit = int(argv[2]) if len(argv) > 2 and str(argv[2]).isdigit() else 50
+        ok_payload(log=read_actions(limit), path=ACTION_LOG_PATH)
+
+    if cmd == "trash":
+        cfg = load_config()
+        key = argv[2] if len(argv) > 2 else ""
+        ok_payload(entries=trash_entries(key or None), path=TRASH_DIR)
+
+    if cmd == "restore":
+        cfg = load_config()
+        key = argv[2] if len(argv) > 2 else ""
+        if not key:
+            err_payload("restore kräver nyckeln på det raderade ärendet")
+        rows = trash_entries(key)
+        if not rows:
+            err_payload("Ingen kopia av {} i papperskorgen ({})".format(key, TRASH_DIR))
+        try:
+            new_key, report = restore_from_trash(cfg, os.path.join(TRASH_DIR, rows[0]["file"]))
+        except RuntimeError as exc:
+            log_action(cfg, "restore", key, ok=False, reason=str(exc))
+            err_payload(str(exc))
+        log_action(cfg, "restore", new_key, detail="från " + rows[0]["file"],
+                   extra={"origin": key, "report": report})
+        raise_notification("OmaJIRA · {} återställd som {}".format(key, new_key), report)
+        snap = mock_snapshot(cfg) if cfg.get("mode") != "real" else real_snapshot(cfg)
+        capture_baseline(cfg, snap)
+        payload(dict(snap, restoredKey=new_key, restoredFrom=key, report=report))
 
     if cmd == "options":
         cfg = load_config()
