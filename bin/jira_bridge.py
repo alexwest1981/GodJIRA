@@ -37,8 +37,16 @@ user can encounter):
   activity <projectKey> [limit]   Recently changed issues, newest first
   dev <issueKey>                  Git/PR/build status + the issue's history
   report <boardId> <sprintId>     Burndown series + sprint report + velocity
-  login --token-file <path>       Validate creds, store token in the keyring
-  logout                          Forget the stored credential
+  login [--site <url>] [--email <addr>] [--token-file <path>] [--replace]
+                                  Validate the credentials against Jira FIRST,
+                                  and only then store the token and write the
+                                  address. An existing working connection is
+                                  never overwritten without --replace.
+  logout --yes                    Forget the stored credential (--yes required).
+                                  The address is kept, the token is removed.
+  configure <json> [--replace]    Store UI/config keys. The identity keys
+                                  (mode, siteUrl, email) are refused while a
+                                  working connection exists unless --replace.
   mock-reset                      Rebuild the mock dataset
 
 Anything else (bad args, bad JSON, a crash) is a bug in the helper and exits 1.
@@ -161,6 +169,58 @@ def load_secret(account):
         return None
     token = proc.stdout.decode("utf-8", "replace").strip()
     return token or None
+
+
+# ---------------------------------------------------- anslutningslåset
+
+# Nycklarna som beskriver VILKEN anslutning som används. UI-nycklar som
+# startView eller vald tavla rör dem inte och ska fortsätta gå att spara.
+IDENTITY_KEYS = ("mode", "siteUrl", "email")
+
+
+def stored_token(cfg):
+    """Token ur nyckelringen, eller None. Får aldrig kasta."""
+    account = (cfg or {}).get("email") or ""
+    if not account:
+        return None
+    try:
+        return load_secret(account)
+    except Exception:  # nyckelringen kan saknas helt
+        return None
+
+
+def connection_summary(cfg):
+    """Den sparade anslutningen som UI:t får se den — aldrig token själv."""
+    site = (cfg or {}).get("siteUrl") or ""
+    email = (cfg or {}).get("email") or ""
+    mode = (cfg or {}).get("mode") or ""
+    token = stored_token(cfg) if email else None
+    return {
+        "siteUrl": site,
+        "email": email,
+        "mode": mode,
+        "hasToken": bool(token),
+        "locked": bool(site and email and token and mode == "real"),
+    }
+
+
+def forget_stored_token(email):
+    """Tar bort token för ett konto. Saknad post är inget fel."""
+    if not email:
+        return False
+    try:
+        clear_secret(email)
+        return True
+    except Exception:
+        return False
+
+
+def flag_value(argv, name):
+    if name in argv:
+        i = argv.index(name) + 1
+        if i < len(argv):
+            return argv[i]
+    return None
 
 
 # ---------------------------------------------------------------- http
@@ -2036,32 +2096,36 @@ def verify_write(cfg, action, key, expect):
 
 def status_payload(cfg):
     mode = cfg.get("mode")
+    summary = connection_summary(cfg)
     if mode == "real":
         email = cfg.get("email") or ""
         token = load_secret(account_for(cfg))
         site = cfg.get("siteUrl") or ""
         if not site or not email:
-            return ok_payload(mode=mode, connected=False, account={
+            return ok_payload(mode=mode, connected=False, connection=summary,
+                account={
                 "email": email, "displayName": "", "siteUrl": site, "connected": False},
                 projects=[])
         if not token:
-            return ok_payload(mode=mode, connected=False, account={
+            return ok_payload(mode=mode, connected=False, connection=summary,
+                account={
                 "email": email, "displayName": "", "siteUrl": site, "connected": False},
                 projects=[])
         try:
             myself = jira_get(cfg, "/rest/api/3/myself")
-            return ok_payload(mode=mode, connected=True, account={
+            return ok_payload(mode=mode, connected=True, connection=summary, account={
                 "email": myself.get("emailAddress") or email,
                 "displayName": myself.get("displayName") or "",
                 "siteUrl": site,
                 "connected": True,
             }, config={"startView": cfg.get("startView") or ""})
         except RuntimeError as exc:
-            return ok_payload(mode=mode, connected=False, error=str(exc), account={
+            return ok_payload(mode=mode, connected=False, connection=summary,
+                error=str(exc), account={
                 "email": email, "displayName": "", "siteUrl": site, "connected": False})
     # mock
     account = mock_snapshot(cfg)["account"]
-    return ok_payload(mode="mock", connected=True, account=account,
+    return ok_payload(mode="mock", connected=True, connection=summary, account=account,
                       config={"startView": cfg.get("startView") or ""})
 
 
@@ -2445,10 +2509,22 @@ def main(argv):
     if cmd == "configure":
         cfg = load_config()
         raw = argv[2] if len(argv) > 2 else ""
+        flags = list(argv[3:])
         try:
             updates = json.loads(raw) if raw else {}
         except ValueError as exc:
             err_payload("configure fick ogiltig JSON: {}".format(exc))
+        # Anslutningslåset: en fungerande anslutning (site + konto + token) får
+        # inte skrivas över av misstag. Identitetsnycklarna kräver --replace;
+        # vanliga UI-nycklar (startView, vald tavla, vald sprint) går som förut.
+        touched = sorted(k for k in updates if k in IDENTITY_KEYS)
+        summary = connection_summary(cfg)
+        if touched and "--replace" not in flags and summary["locked"]:
+            err_payload(refuse(cfg, "configure", "",
+                               "Anslutningen är låst: {} ändras bara via 'Skapa ny "
+                               "anslutning' eller --replace.".format(", ".join(touched)),
+                               detail="anslutningslås"),
+                        refused=True, connection=summary)
         for key, value in updates.items():
             cfg[key] = value
         save_config(cfg)
@@ -2456,15 +2532,23 @@ def main(argv):
 
     if cmd == "login":
         cfg = load_config()
-        token_file = None
-        if "--token-file" in argv:
-            token_file = argv[argv.index("--token-file") + 1]
-        site = cfg.get("siteUrl") or ""
-        email = cfg.get("email") or ""
-        if cfg.get("mode") != "real":
-            err_payload("Sätt mode till 'real' i config innan login.")
+        flags = list(argv[2:])
+        token_file = flag_value(argv, "--token-file")
+        site = (flag_value(argv, "--site") or cfg.get("siteUrl") or "").strip()
+        email = (flag_value(argv, "--email") or cfg.get("email") or "").strip()
         if not site or not email:
-            err_payload("siteUrl och email saknas i config ({}).".format(CONFIG_PATH))
+            err_payload("siteUrl och email krävs (--site/--email eller i config).")
+        summary = connection_summary(cfg)
+        same_account = (site == summary["siteUrl"] and email == summary["email"])
+        # Att byta anslutning är ett uttalat val. Samma konto igen (ny token) är
+        # inte ett byte och ska inte kräva --replace.
+        if summary["locked"] and not same_account and "--replace" not in flags:
+            err_payload(refuse(cfg, "login", "",
+                               "Det finns redan en fungerande anslutning till {}. "
+                               "Tryck 'Skapa ny anslutning' för att byta.".format(
+                                   summary["siteUrl"] or "Jira"),
+                               detail="anslutningslås"),
+                        refused=True, connection=summary)
         token = None
         if token_file:
             try:
@@ -2474,14 +2558,30 @@ def main(argv):
             except OSError:
                 pass
         if not token:
-            token = os.environ.get("JIRA_TOKEN") or load_secret(account_for(cfg))
+            token = os.environ.get("JIRA_TOKEN") or stored_token({"email": email})
         if not token:
             err_payload("Ingen token angiven och ingen finns i nyckelringen.")
+        # Validera mot Jira FÖRST. Först när kontot svarar skrivs adressen in, så
+        # en felstavad site eller e-post kan inte slå ut en anslutning som
+        # redan fungerar.
+        probe = dict(cfg)
+        probe["siteUrl"] = site
+        probe["email"] = email
+        probe["mode"] = "real"
         try:
-            myself = jira_get(cfg, "/rest/api/3/myself", token=token)
-        except RuntimeError as exc:
-            err_payload("Kunde inte ansluta: {}".format(exc))
-        store_secret(token, account_for(cfg))
+            myself = jira_get(probe, "/rest/api/3/myself", token=token)
+        except Exception as exc:  # DNS, timeout, HTTP: allt blir ett tydligt svar
+            err_payload(refuse(cfg, "login", "",
+                               "Kunde inte ansluta till {}: {}".format(site, exc),
+                               detail="inloggningen misslyckades"),
+                        refused=True, connection=summary)
+        store_secret(token, email)
+        cfg["mode"] = "real"
+        cfg["siteUrl"] = site
+        cfg["email"] = email
+        save_config(cfg)
+        log_action(cfg, "login", "", detail="ansluten till {}".format(site),
+                   before=summary, after=connection_summary(cfg))
         return payload({
             "schema": SCHEMA, "ok": True, "error": None,
             "generatedAt": utc_now(),
@@ -2490,12 +2590,27 @@ def main(argv):
                 "displayName": myself.get("displayName") or "",
                 "siteUrl": site,
                 "connected": True,
-            }})
+            },
+            "connection": connection_summary(cfg)})
 
     if cmd == "logout":
         cfg = load_config()
-        clear_secret(account_for(cfg))
-        return ok_payload()
+        flags = list(argv[2:])
+        summary = connection_summary(cfg)
+        if "--yes" not in flags:
+            err_payload(refuse(cfg, "logout", "",
+                               "Frånkoppling kräver ett bekräftat val (--yes).",
+                               detail="obekräftad"),
+                        refused=True, connection=summary)
+        forget_stored_token(summary["email"] or cfg.get("email"))
+        cfg["mode"] = "mock"
+        save_config(cfg)
+        log_action(cfg, "logout", "",
+                   detail="token borttagen för {}".format(summary["email"]),
+                   before=summary, after=connection_summary(cfg))
+        return payload({"schema": SCHEMA, "ok": True, "error": None,
+                        "generatedAt": utc_now(),
+                        "connection": connection_summary(cfg)})
 
     if cmd == "mock-reset":
         mock_reset()
