@@ -307,10 +307,25 @@ def real_snapshot(cfg):
 
         board_issues = load_issues(
             "/rest/agile/1.0/board/{}/issue?fields={}".format(bid, FIELD_SUBSET))
+
+        # Jira's Agile API reports team-managed boards as type "simple"
+        # (kanban-capable boards can also come back as "simple"), and those do
+        # have a real backlog - only kanban boards have none, where the
+        # endpoint 404s. Never let a board without a backlog kill the snapshot.
+        #
+        # `/board/{id}/issue` also returns the backlog issues, so whatever the
+        # backlog endpoint gives us is removed from the board list: the two
+        # lists stay disjoint, exactly like the mock model.
         backlog = []
-        if btype == "scrum":
-            backlog = load_issues(
-                "/rest/agile/1.0/board/{}/backlog?fields={}".format(bid, FIELD_SUBSET))
+        if btype != "kanban":
+            try:
+                backlog = load_issues(
+                    "/rest/agile/1.0/board/{}/backlog?fields={}".format(bid, FIELD_SUBSET))
+            except RuntimeError:
+                backlog = []
+        backlog_keys = set(issue["key"] for issue in backlog)
+        if backlog_keys:
+            board_issues = [i for i in board_issues if i["key"] not in backlog_keys]
 
         boards.append({
             "id": str(bid),
