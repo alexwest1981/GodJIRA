@@ -17,6 +17,23 @@ delete issues when you have the right permissions.
   issue on the team board and only the ones assigned to you (matched on your
   account email/display name). The filter is shared across the views.
 - **Backlog / Summary** – remaining columns and sprint status.
+- **Timeline** – the board's sprints as lanes on a date axis, the backlog as the
+  last lane. Each lane is as wide as its sprint window and fills up as the
+  sprint runs. "⇄" on a card moves the issue to another sprint (or back to the
+  backlog); the same choice sits on the detail page.
+- **Reports** – per sprint: burndown against the ideal line, completed / left /
+  added / punted counts, the issue lists behind them, and velocity once sprints
+  have closed. Reads Jira's own chart and sprint-report endpoints.
+- **Development** – for the selected issue: pull requests, branches, commits and
+  builds from Jira's dev-status API, plus the issue's change history (which is
+  shown whether or not a git provider is connected). On a site with no
+  integration it says so instead of showing empty lists.
+- **Activity** – the project's most recently changed issues, grouped by day,
+  with what changed last ("status: To Do -> In Review") when the site keeps
+  that history.
+- **Comments and editing** – the detail page lists an issue's comments and
+  posts new ones, and edits summary, description, priority, assignee and story
+  points. Only the fields you actually changed are sent to Jira.
 - **"＋ Ny"** – full page to create an issue on the current board.
 - **Change notifications** – the bar widget polls every 30 s and raises a
   desktop notification when an issue on a tracked board was added, moved,
@@ -104,7 +121,8 @@ custom.jira/
 ├── manifest.json            plugin manifest (panel + bar widget)
 ├── JiraPanel.qml            root: bridge process, connection, routing
 ├── BarWidget.qml            bar launcher
-├── views/                   BoardView, BacklogView, SummaryView, PlaceholderView
+├── views/                   SummaryView, BoardView, BacklogView, TimelineView,
+│                            ReportsView, DevelopmentView, ActivityView
 ├── components/              IssueCard, IssueDetail
 ├── window-rule.lua          Hyprland rule that floats the Jira window (see README)
 └── bin/jira_bridge.py       everything network/credential related (Python stdlib only)
@@ -125,6 +143,14 @@ python3 bin/jira_bridge.py transitions WEB-41             # statuses the issue c
 python3 bin/jira_bridge.py move WEB-41 "In Progress"      # change an issue's status
 python3 bin/jira_bridge.py create 1 '{"summary":"...", "statusId":"progress"}'
 python3 bin/jira_bridge.py delete WEB-41
+python3 bin/jira_bridge.py assign WEB-41 7               # into a sprint (or "backlog")
+python3 bin/jira_bridge.py comments WEB-41               # read the comment thread
+python3 bin/jira_bridge.py comment WEB-41 "Ser bra ut"   # post a comment
+python3 bin/jira_bridge.py update WEB-41 '{"priorityName":"High","storyPoints":5}'
+python3 bin/jira_bridge.py options WEB                  # assignable people, priorities, types
+python3 bin/jira_bridge.py activity WEB 25              # recently changed issues
+python3 bin/jira_bridge.py report 1 7                   # burndown + sprint report + velocity
+python3 bin/jira_bridge.py dev WEB-41                   # git/PR/build status + issue history
 python3 bin/jira_bridge.py configure '<json>'             # e.g. {"mode":"real"}
 python3 bin/jira_bridge.py watch                          # diff vs baseline; notifies if changed
 python3 bin/jira_bridge.py mock-touch WEB-41 done         # simulate a teammate's change (mock)
@@ -170,17 +196,38 @@ connect screen.
 | Thing | Location |
 | --- | --- |
 | Plugin | `~/.config/omarchy/plugins/custom.jira/` |
-| Config (mode, site, email) | `~/.config/omarchy/jira.json` |
+| Config (mode, site, email, startView) | `~/.config/omarchy/jira.json` |
 | Mock dataset | `~/.local/state/omarchy/jira-mock.json` |
 | Watcher baseline | `~/.local/state/omarchy/jira-watch.json` |
 | API token (real mode) | system keyring, service `custom.jira` |
 
 Refresh interval: open the Jira widget's settings (default 30 s, min 10 s).
 
+Which view the window opens on is a config value (it takes effect the next time
+the shell loads the plugin, since a loaded plugin's code is kept):
+
+```
+python3 ~/.config/omarchy/plugins/custom.jira/bin/jira_bridge.py \
+    configure '{"startView":"timeline"}'
+```
+
+Accepted values: `summary`, `board` (default), `backlog`, `timeline`, `reports`,
+`dev`, `activity`.
+
 ## Development notes
 
 - After editing QML, restart the shell so the running engine picks the files up:
-  `omarchy-restart-shell`, then reopen the window.
+  `omarchy-restart-shell`, then reopen the window. The plugin is declared
+  `keepLoaded: true`, so the shell keeps the loaded instance and does **not**
+  replace it on hot reload - edits to `JiraPanel.qml` (the entry point) need a
+  shell restart to show up, while the view files under `views/` are re-read when
+  a view is loaded.
+- A plugin's IPC surface is fixed to the methods it had when the shell first
+  loaded it: adding a method to the `IpcHandler` does not make it callable
+  (`omarchy-shell shell call custom.jira <name>` answers `unknown`), and an
+  untyped parameter is rejected outright - "Type of argument 1 (x: QVariant)
+  cannot be used across IPC". That is why the view to open with is a config
+  value rather than an IPC argument.
 - Lint plugin QML against the shell UI types:
 
 ```
