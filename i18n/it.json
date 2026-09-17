@@ -236,6 +236,7 @@
   "detail.deleteWarning": "In Jira non si può annullare. Una copia viene salvata nel cestino locale e può essere ripristinata.",
   "dev.codeStatus": "Jira riporta lo stato del codice per questa issue: {pr} pull request, {br} rami, {co} commit, {bu} build.",
   "board.allSprints": "Tutti gli sprint",
+  "board.scopeNoSprint": "Nessuno sprint attivo – mostra il backlog",
   "backlog.isEmpty": "vuoto",
   "common.boardPrefix": "Bacheca: ",
   "summary.noBoard": "Nessuna bacheca selezionata.",

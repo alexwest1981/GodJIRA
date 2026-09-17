@@ -236,6 +236,7 @@
   "detail.deleteWarning": "Det går inte att ångra i Jira. En kopia sparas lokalt i papperskorgen och kan återställas.",
   "dev.codeStatus": "Jira rapporterar kodstatus för det här ärendet: {pr} pull requests, {br} grenar, {co} commits, {bu} byggen.",
   "board.allSprints": "Alla sprintar",
+  "board.scopeNoSprint": "Ingen aktiv sprint – visar backloggen",
   "backlog.isEmpty": "tom",
   "common.boardPrefix": "Tavla: ",
   "summary.noBoard": "Ingen tavla vald.",

@@ -236,6 +236,7 @@
   "detail.deleteWarning": "It cannot be undone in Jira. A copy is saved locally in the trash and can be restored.",
   "dev.codeStatus": "Jira reports code status for this issue: {pr} pull requests, {br} branches, {co} commits, {bu} builds.",
   "board.allSprints": "All sprints",
+  "board.scopeNoSprint": "No active sprint — showing the backlog",
   "backlog.isEmpty": "empty",
   "common.boardPrefix": "Board: ",
   "summary.noBoard": "No board selected.",

@@ -236,6 +236,7 @@
   "detail.deleteWarning": "En Jira no se puede deshacer. Se guarda una copia local en la papelera y se puede restaurar.",
   "dev.codeStatus": "Jira informa del estado del código de esta incidencia: {pr} pull requests, {br} ramas, {co} commits, {bu} builds.",
   "board.allSprints": "Todos los sprints",
+  "board.scopeNoSprint": "Sin sprint activo – mostrando el backlog",
   "backlog.isEmpty": "vacío",
   "common.boardPrefix": "Tablero: ",
   "summary.noBoard": "Ningún tablero seleccionado.",

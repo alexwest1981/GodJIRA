@@ -236,6 +236,7 @@
   "detail.deleteWarning": "Das lässt sich in Jira nicht rückgängig machen. Eine Kopie wird lokal im Papierkorb gespeichert und kann wiederhergestellt werden.",
   "dev.codeStatus": "Jira meldet Codestatus für diesen Vorgang: {pr} Pull Requests, {br} Branches, {co} Commits, {bu} Builds.",
   "board.allSprints": "Alle Sprints",
+  "board.scopeNoSprint": "Kein aktiver Sprint – zeigt das Backlog",
   "backlog.isEmpty": "leer",
   "common.boardPrefix": "Board: ",
   "summary.noBoard": "Kein Board ausgewählt.",

@@ -236,6 +236,7 @@
   "detail.deleteWarning": "No Jira não dá para desfazer. Uma cópia é salva localmente na lixeira e pode ser restaurada.",
   "dev.codeStatus": "O Jira informa o status do código deste chamado: {pr} pull requests, {br} branches, {co} commits, {bu} builds.",
   "board.allSprints": "Todas as sprints",
+  "board.scopeNoSprint": "Sem sprint ativo – a mostrar o backlog",
   "backlog.isEmpty": "vazio",
   "common.boardPrefix": "Quadro: ",
   "summary.noBoard": "Nenhum quadro selecionado.",
