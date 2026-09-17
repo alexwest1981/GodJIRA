@@ -194,6 +194,27 @@ watch a notification appear without a second user.
 `DELETE_ISSUES`; the snapshot carries per-board `canAdd`/`canDelete`, which hide
 "＋ Ny" / "Radera ärende" in the UI otherwise.
 
+### MCP (for an agent in an editor)
+
+`bin/jira_mcp.py` exposes the bridge over MCP (stdio, JSON-RPC), so a coding
+agent can read the backlog and move issues without a second Jira client:
+fourteen tools, and every one of them shells out to `jira_bridge.py` — the
+credential, the read-back verification and the journal/trash nets stay in one
+place. `delete`, `restore`, `configure`, `login` and `logout` are deliberately
+**not** exposed.
+
+```
+{"mcpServers": {"godjira": {"command": "python3",
+    "args": ["/home/<you>/.config/omarchy/plugins/custom.jira/bin/jira_mcp.py"]}}}
+```
+
+The args are passed to the process literally, so the path has to be absolute.
+
+Antigravity reads that globally from `~/.gemini/config/mcp_config.json` (or per
+workspace from `.agents/mcp_config.json`); any other MCP client works the same
+way. Self-check: `python3 bin/jira_mcp.py --selftest` (handshake, tool list,
+and a real backlog read through the bridge).
+
 ## Real Jira Cloud
 
 1. Create an API token at
