@@ -236,6 +236,7 @@
   "detail.deleteWarning": "W Jira nie można tego cofnąć. Kopia jest zapisywana lokalnie w koszu i można ją przywrócić.",
   "dev.codeStatus": "Jira podaje stan kodu dla tego zgłoszenia: {pr} pull requestów, {br} gałęzi, {co} commitów, {bu} buildów.",
   "board.allSprints": "Wszystkie sprinty",
+  "board.scopeNoSprint": "Brak aktywnego sprintu – pokazuję backlog",
   "backlog.isEmpty": "pusty",
   "common.boardPrefix": "Tablica: ",
   "summary.noBoard": "Nie wybrano tablicy.",

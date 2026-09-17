@@ -509,6 +509,12 @@ Item {
   // Which sprint the Board view is scoped to, the way Jira's board is scoped
   // to the running sprint: "active" follows it, a sprint id pins one, and
   // "all" shows every issue on the board (what the old view always did).
+  //
+  // Utan aktiv sprint är Jiras egen tavla tom, men /board/{id}/issue innehåller
+  // de STÄNGDA sprintarnas ärenden - så en tavla utan pågående sprint blev bara
+  // gamla Done-kort medan arbetet (backloggen) var osynligt. "Aktiv" visar
+  // därför allt som fortfarande lever när ingen sprint kör: backloggen plus
+  // ärendena i planerade sprintar. Historiken finns kvar under "Alla".
   function boardScopeIssues(board) {
     var all = (board && board.issues) ? board.issues : []
     var scope = root.boardSprintScope
@@ -516,10 +522,24 @@ Item {
     var sprint = null
     if (scope === "active") sprint = board ? board.sprint : null
     else sprint = root.sprintById(scope)
+    if (!sprint && scope === "active") {
+      var closed = {}
+      var sps = (board && board.sprints) || []
+      for (var s = 0; s < sps.length; s++) {
+        if (String(sps[s].state) === "closed") closed[String(sps[s].id)] = true
+      }
+      var live = []
+      for (var i = 0; i < all.length; i++) {
+        if (!closed[String(all[i].sprintId || "")]) live.push(all[i])
+      }
+      var back = (board && board.backlog) || []
+      for (var b = 0; b < back.length; b++) live.push(back[b])
+      return live
+    }
     if (!sprint) return all
     var out = []
-    for (var i = 0; i < all.length; i++) {
-      if (String(all[i].sprintId) === String(sprint.id)) out.push(all[i])
+    for (var j = 0; j < all.length; j++) {
+      if (String(all[j].sprintId) === String(sprint.id)) out.push(all[j])
     }
     return out
   }
@@ -530,7 +550,10 @@ Item {
     var sprint = null
     if (scope === "active") sprint = board ? board.sprint : null
     else sprint = root.sprintById(scope)
-    if (!sprint) return (board && (board.sprints || []).length === 0) ? "Kanban" : ""
+    if (!sprint) {
+      if (board && (board.sprints || []).length === 0) return "Kanban"
+      return scope === "active" ? t("board.scopeNoSprint") : ""
+    }
     return root.sprintLabelOf(sprint)
   }
 

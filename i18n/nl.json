@@ -236,6 +236,7 @@
   "detail.deleteWarning": "Dat kan in Jira niet ongedaan worden gemaakt. Er wordt lokaal een kopie in de prullenbak bewaard die teruggezet kan worden.",
   "dev.codeStatus": "Jira meldt codestatus voor dit issue: {pr} pull requests, {br} branches, {co} commits, {bu} builds.",
   "board.allSprints": "Alle sprints",
+  "board.scopeNoSprint": "Geen actieve sprint – toont de backlog",
   "backlog.isEmpty": "leeg",
   "common.boardPrefix": "Bord: ",
   "summary.noBoard": "Geen bord geselecteerd.",

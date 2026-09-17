@@ -236,6 +236,7 @@
   "detail.deleteWarning": "C'est irréversible dans Jira. Une copie est enregistrée localement dans la corbeille et peut être restaurée.",
   "dev.codeStatus": "Jira signale l'état du code pour ce ticket : {pr} pull requests, {br} branches, {co} commits, {bu} builds.",
   "board.allSprints": "Tous les sprints",
+  "board.scopeNoSprint": "Aucun sprint actif – affiche le backlog",
   "backlog.isEmpty": "vide",
   "common.boardPrefix": "Tableau : ",
   "summary.noBoard": "Aucun tableau sélectionné.",
