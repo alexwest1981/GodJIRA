@@ -377,3 +377,13 @@ qmllint -I /usr/share/omarchy/shell -I /usr/lib/qt6/qml views/BoardView.qml Jira
 ```
 
 - Shell log for runtime errors: `journalctl --user -t omarchy-shell`.
+- A drag is carried by the card delegate that started it: `IssueCard`'s
+  MouseArea reports the release, and `build()` replaces every delegate (it hands
+  out fresh column objects). A drag in flight when that happens never sees its
+  release, so the ghost stayed frozen on the board and `dragging` stayed true -
+  every later drag was refused until the window was closed. That is why
+  `build()` calls `cancelDrag()` before it touches `cols`; keep that first line
+  if you add another path that replaces the columns (a poll whose answer differs
+  from what is on screen is the one that does it in practice). A rebuild is only
+  real when the data changed: assigning an equal-content array to the Repeater
+  changes nothing, QML skips the update and the delegates survive.

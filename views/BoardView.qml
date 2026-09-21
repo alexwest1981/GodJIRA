@@ -67,6 +67,14 @@ Item {
   }
 
   function build() {
+    // build() hands out a fresh set of column objects, so every card delegate
+    // is replaced. A drag rides on one of those delegates: when it goes away
+    // mid-drag its MouseArea is destroyed before it can report the release, so
+    // the ghost would sit frozen on the board and every later drag would be
+    // refused (dragging stays true). Drop the drag here instead - build() is
+    // the one place the delegates are known to be replaced.
+    cancelDrag()
+
     if (!app) { cols = []; boardTitle = ""; boardInfo = ""; canAdd = false; canDelete = false; return }
     var board = app.currentBoard()
     if (!board) { cols = []; boardTitle = ""; boardInfo = ""; canAdd = false; canDelete = false; return }
@@ -191,6 +199,15 @@ Item {
     dragGhost.visible = false
     dragHint.visible = false
     hoverIndex = -1
+  }
+
+  // Abandon an in-flight drag without moving anything. Only the drag is
+  // dropped: a drop that is already resolving (finalizeDrag -> dropTimer) keeps
+  // its own key and still lands.
+  function cancelDrag() {
+    dragging = false
+    dragKey = ""
+    clearDragVisuals()
   }
 
   function finalizeDrag() {
