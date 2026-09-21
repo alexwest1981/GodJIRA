@@ -332,6 +332,10 @@ Item {
       if (!parsed.ok && parsed.error) {
         root.statusError = parsed.error
       }
+      // Bryggan kan svara ok:true och ändå ha något att berätta ("Jira svarade
+      // 401 Unauthorized" är hela förklaringen till att inget laddas), så den
+      // texten ska upp i toasten i stället för att tigas ihjäl.
+      if (parsed.error) root.statusError = parsed.error
       root.mode = parsed.mode || "mock"
       root.connected = !!parsed.connected
       root.account = parsed.account || {}
@@ -1226,6 +1230,110 @@ Item {
       anchors.centerIn: parent
       width: 460
       color: "transparent"
+
+      // ---- låst anslutning: vad den är, och de två vägarna ut
+      // Formuläret är dolt just för att en fungerande anslutning inte ska
+      // skrivas över av misstag, men ett tomt fönster är en återvändsgränd när
+      // token har slutat fungera: Inställningarnas anslutningskort ligger
+      // bakom överlägget och går inte att nå. Samma kort som där, så att ett
+      // avvisat API-token fortfarande har en väg tillbaka.
+      Column {
+        width: parent.width
+        spacing: Style.space(12)
+        visible: root.connectionLockedView()
+
+        Text {
+          text: root.t("conn.heading")
+          color: Color.foreground
+          font.family: Style.font.family
+          font.pixelSize: Style.font.title
+          font.bold: true
+        }
+
+        Rectangle {
+          width: parent.width
+          height: lockedInfoCol.implicitHeight + 24
+          radius: 10
+          color: Qt.darker(Color.background, 1.15)
+          border.color: Util.alpha(Color.foreground, 0.08)
+          border.width: 1
+
+          Column {
+            id: lockedInfoCol
+            width: parent.width - 24
+            x: 12
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(6)
+
+            Text {
+              text: root.connectionInfo.siteUrl || root.account.siteUrl || ""
+              color: Color.foreground
+              font.family: Style.font.family
+              font.pixelSize: Style.font.bodySmall
+              font.bold: true
+            }
+            Text {
+              text: root.connectionInfo.email || root.account.email || ""
+              color: Qt.darker(Color.foreground, 1.3)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+            }
+            Text {
+              text: root.t("conn.token", {
+                state: root.connectionInfo.hasToken
+                  ? root.t("conn.tokenStored") : root.t("conn.tokenMissing") })
+              color: Qt.darker(Color.foreground, 1.3)
+              font.family: Style.font.family
+              font.pixelSize: Style.font.caption
+            }
+          }
+        }
+
+        Text {
+          width: parent.width
+          wrapMode: Text.Wrap
+          text: root.t("conn.locked")
+          color: Qt.darker(Color.foreground, 1.35)
+          font.family: Style.font.family
+          font.pixelSize: Style.font.caption
+        }
+
+        Row {
+          spacing: Style.space(8)
+
+          Button {
+            text: root.t("conn.create")
+            bordered: true
+            tooltipText: root.t("conn.createTooltip")
+            onClicked: root.beginNewConnection()
+          }
+
+          Button {
+            text: connectOverlay.disconnectConfirm
+              ? root.t("conn.disconnectArmed") : root.t("conn.disconnect")
+            bordered: true
+            selected: connectOverlay.disconnectConfirm
+            tooltipText: root.t("conn.disconnectTooltip")
+            onClicked: {
+              if (!connectOverlay.disconnectConfirm) {
+                connectOverlay.disconnectConfirm = true
+                return
+              }
+              connectOverlay.disconnectConfirm = false
+              root.logout()
+            }
+          }
+        }
+
+        Text {
+          width: parent.width
+          wrapMode: Text.Wrap
+          text: root.t("conn.disconnectHint")
+          color: Qt.darker(Color.foreground, 1.5)
+          font.family: Style.font.family
+          font.pixelSize: Style.font.caption
+        }
+      }
 
       // ---- formuläret: först när det inte finns något att skydda
       Column {
