@@ -6,6 +6,11 @@ run it as a task, IntelliJ as an external tool, and git calls it from a
 prepare-commit-msg hook. `jira_flow install <repo>` writes all four.
 
 Commands
+    login | logout
+        Keep the token in the machine's own store: DPAPI on Windows, the login
+        keychain on macOS, read from stdin so it stays out of the shell history.
+        On Linux this declines -- the Omarchy bridge or the 0600 config file
+        already owns it there.
     next [--project KEY] [--status "In Progress"] [--dry-run] [--json] [--expect KEY]
         Take the most critical not-started item (shared tasks first), assign it to
         you, move it to In Progress. With nothing of your own it proposes the most
@@ -224,10 +229,16 @@ def client():
     except ImportError:
         pass
 
+    import jira_secrets  # bara den här vägen behöver den; bryggan sköter token annars
+
     config = json.loads(CONFIG_FILE.read_text()) if CONFIG_FILE.exists() else {}
     site = os.environ.get("JIRA_SITE") or config.get("site") or ""
     email = os.environ.get("JIRA_EMAIL") or config.get("email") or ""
-    token = os.environ.get("JIRA_TOKEN") or config.get("token") or ""
+    try:
+        stored = jira_secrets.store_for().read()
+    except RuntimeError as exc:
+        raise SystemExit("jira_flow: {}".format(exc))
+    token = os.environ.get("JIRA_TOKEN") or stored or config.get("token") or ""
     missing = [name for name, value in
                (("JIRA_SITE", site), ("JIRA_EMAIL", email), ("JIRA_TOKEN", token)) if not value]
     if missing:
@@ -385,10 +396,20 @@ VSCODE_TASK = """{
 }
 """
 
+# Windows har ingen python3: py är Launcher-skapelsen, python finns i PATH-varianten.
+# if-satsen, inte &&-kedja: ett felaktigt körningsresultat får inte betyda "kör en gång till".
+LAUNCHER = ("@echo off\r\n"
+            "where py >nul 2>nul\r\n"
+            "if %errorlevel%==0 (\r\n"
+            "  py \"%~dp0jira_flow.py\" %*\r\n"
+            ") else (\r\n"
+            "  python \"%~dp0jira_flow.py\" %*\r\n"
+            ")\r\n")
+
 IDEA_TOOL = """<tool name="Jira: take next critical" description="Assign the most critical Jira item to me and start it" showInMainMenu="true" showInEditor="true" showInProject="true" showInSearchPopup="true" disabled="false" useConsole="true" showConsoleOnStdOut="true" showConsoleOnStdErr="true" synchronizeAfterRun="true">
   <exec>
-    <option name="COMMAND" value="python3" />
-    <option name="PARAMETERS" value="{self} next" />
+    <option name="COMMAND" value="{command}" />
+    <option name="PARAMETERS" value="{params}" />
     <option name="WORKING_DIRECTORY" value="$ProjectFileDir$" />
   </exec>
 </tool>
@@ -468,6 +489,48 @@ def write_once(path: Path, text: str, dry_run: bool) -> None:
     print("{}: {}".format("updated" if existed else "wrote", path))
 
 
+def cmd_login(args) -> int:
+    """Store the token in the machine's own store. Read from stdin, never as an
+    argument: arguments end up in shell history and in process lists."""
+    import jira_secrets
+
+    store = jira_secrets.store_for()
+    if isinstance(store, jira_secrets.NoStore):
+        print("jira_flow: " + _no_store_reason(), file=sys.stderr)
+        return 2
+    token = sys.stdin.read().strip()
+    if not token:
+        print("jira_flow: no token on stdin.", file=sys.stderr)
+        return 2
+    try:
+        store.write(token)
+    except RuntimeError as exc:
+        print("jira_flow: {}".format(exc), file=sys.stderr)
+        return 2
+    print("token stored in {} ({}).".format(type(store).__name__, jira_secrets.SECRET_FILE
+                                            if isinstance(store, jira_secrets.WindowsStore)
+                                            else "the login keychain"))
+    return 0
+
+
+def cmd_logout(args) -> int:
+    import jira_secrets
+
+    try:
+        gone = jira_secrets.store_for().delete()
+    except RuntimeError as exc:
+        print("jira_flow: {}".format(exc), file=sys.stderr)
+        return 2
+    print("token removed." if gone else "nothing stored here.")
+    return 0
+
+
+def _no_store_reason() -> str:
+    """Sagt en gång, på det system där det gäller."""
+    return ("på Linux sköts token av bryggans nyckelring (`jira_bridge.py login`) "
+            "eller av {} (chmod 600)".format(Path.home() / ".config/jira-flow/config.json"))
+
+
 def cmd_install(args) -> int:
     repo = Path(args.repo or ".").resolve()
     if not (repo / ".git").is_dir():
@@ -475,8 +538,16 @@ def cmd_install(args) -> int:
         return 2
 
     print("editor shims in {}".format(repo))
+    # Windows har inget python3 och IntelliJ har ingen per-OS-variant av ett externt
+    # verktyg, så där läggs en startfil i repot som verktyget pekar på i stället.
+    windows = os.name == "nt"
     write_once(repo / ".vscode/tasks.json", VSCODE_TASK.replace("{self}", str(SELF)), args.dry_run)
-    write_once(repo / ".idea/tools/jira-flow.xml", IDEA_TOOL.replace("{self}", str(SELF)), args.dry_run)
+    if windows:
+        write_once(repo / "jira-flow.cmd", LAUNCHER, args.dry_run)
+    write_once(repo / ".idea/tools/jira-flow.xml",
+               IDEA_TOOL.replace("{command}", str(repo / "jira-flow.cmd") if windows else "python3")
+                        .replace("{params}", "next" if windows else "{} next".format(SELF)),
+               args.dry_run)
     write_once(repo / ".agents/rules/jira.md",
                AGY_RULE.replace("{self}", str(SELF)).replace("{project}", args.project), args.dry_run)
     write_once(repo / ".git/hooks/prepare-commit-msg", HOOK.replace("{self}", str(SELF)), args.dry_run)
@@ -514,8 +585,15 @@ def selftest() -> int:
     assert prefix_subject("", "SCRUM-147") == "" and prefix_subject("fix", "") == "fix"
     assert prefix_subject("\n\nfix the list\n", "SCRUM-147") == "SCRUM-147: fix the list\n", "leading blanks"
     checks += 1
+    assert LAUNCHER.startswith("@echo off\r\n") and LAUNCHER.count("%~dp0") == 2, "cmd-filen"
+    assert "&&" not in LAUNCHER, "en &&-kedja hade kört skriptet två gånger vid felkod"
+    windows_idea = (IDEA_TOOL.replace("{command}", "C:/repo/jira-flow.cmd").replace("{params}", "next"))
+    unix_idea = IDEA_TOOL.replace("{command}", "python3").replace("{params}", "/x/y.py next")
+    assert "python3" not in windows_idea and "/x/y.py next" in unix_idea, "två system, två verktyg"
+    checks += 1
     for template in (VSCODE_TASK, IDEA_TOOL, AGY_RULE, HOOK):
-        filled = template.replace("{self}", "/x/y.py").replace("{project}", "SCRUM")
+        filled = (template.replace("{self}", "/x/y.py").replace("{project}", "SCRUM")
+                  .replace("{command}", "python3").replace("{params}", "/x/y.py next"))
         assert "{self}" not in filled and "{project}" not in filled, "template placeholder unfilled"
     json.loads(VSCODE_TASK.replace("{self}", "/x/y.py"))  # the task template stays valid JSON
     assert '\r' not in HOOK, "en hook med CRLF dör i Git for Windows' bash"
@@ -535,6 +613,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_next = sub.add_parser("next", help="take the most critical item and start it")
     p_cur = sub.add_parser("current", help="the key you are on right now")
     p_ins = sub.add_parser("install", help="write the editor shims and the commit hook into a repo")
+    sub.add_parser("login", help="store the Jira token in this machine's own store (reads stdin)")
+    sub.add_parser("logout", help="remove it again")
     for p in (p_next, p_cur):
         p.add_argument("--project", default=DEFAULT_PROJECT)
     p_next.add_argument("--status", default=DEFAULT_STATUS)
@@ -557,6 +637,10 @@ def main(argv) -> int:
         return 1
     if args.cmd == "install":
         return cmd_install(args)
+    if args.cmd == "login":
+        return cmd_login(args)
+    if args.cmd == "logout":
+        return cmd_logout(args)
     jira = client()
     return cmd_next(jira, args) if args.cmd == "next" else cmd_current(jira, args)
 

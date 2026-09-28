@@ -257,17 +257,22 @@ The CLI, the editor shims and the commit hook travel; the bar widget and the
 panel do not (they are Quickshell, i.e. this Linux desktop). Everything below is
 Python 3 standard library only, so a teammate clones the repo and runs it.
 
-- **Credentials without the bridge:** `JIRA_SITE`, `JIRA_EMAIL` and `JIRA_TOKEN`
-  in the environment, or `~/.config/jira-flow/config.json`. Atlassian's API
-  token (not a password) is what that expects.
+- **Credentials without the bridge:** `python3 bin/jira_flow.py login` reads the
+  token from stdin and hands it to the machine's own store — **DPAPI** on
+  Windows (bound to your user account), the **login keychain** on macOS — so it
+  is not lying in a file. `logout` removes it again. On Linux `login` declines
+  on purpose: the bridge's keyring, or `~/.config/jira-flow/config.json`, already
+  owns that there. `JIRA_SITE`, `JIRA_EMAIL` and `JIRA_TOKEN` in the environment
+  still win if you want a one-off. Atlassian's API token, never a password.
 - **The commit hook works as it is** on all three systems: Git for Windows ships
   its own bash and runs hooks through it, and the hook looks its interpreter up
   itself (`python3`, then `py`, then `python`).
 - **The VS Code / Antigravity task** carries a `"windows": { "command": "py" }`
   override, so the same file works on every platform.
-- **The IntelliJ external tool** names `python3`: on Windows, edit that one
-  field to `py` (Settings → Tools → External Tools). IntelliJ has no per-OS
-  variant of an external tool, so it is the one manual step.
+- **On Windows, `install` also writes `jira-flow.cmd`** in the repo and points
+  the IntelliJ external tool at it, because IntelliJ has no per-OS variant of an
+  external tool and Windows has no `python3`. The launcher tries `py`, then
+  `python`.
 - Written files are written with `\n`, not the platform's newline: a hook with
   CRLF dies in Git for Windows' bash.
 
