@@ -43,6 +43,7 @@ Credentials, two ways, picked automatically:
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import re
@@ -298,7 +299,12 @@ class Bridge:
                 (self.jb.real_issue_types(self.cfg, project) or []) if r.get("name")]
 
     def create(self, board: dict, item: dict) -> dict:
-        return self.jb.real_create(self.cfg, board, dict(item, typeName=item.get("type", "Task")))
+        # Bryggan lämnar tillbaka nyckeln som en sträng, HTTP ett objekt: en form ut
+        # till anroparen, så ingen behöver veta vilken väg som användes.
+        answer = self.jb.real_create(self.cfg, board, dict(item, typeName=item.get("type", "Task")))
+        if isinstance(answer, dict):
+            return answer
+        return {"key": str(answer or "")}
 
 
 def client():
@@ -630,11 +636,13 @@ def cmd_plan(client_, args) -> int:
         say(args, {"ok": False, "error": message}, ["jira_flow: " + message])
         return 2
 
-    if args.json:
+    if args.json and not args.create:
+        # Med --create kommer ett enda dokument, längst ner, med både förslaget och
+        # nycklarna: en maskinläsare ska inte behöva tolka två JSON-dokument i rad.
         print(json.dumps({"ok": True, "created": False, "proposal": items,
                           "project": args.project, "agent": answered_by},
                          ensure_ascii=False))
-    else:
+    elif not args.json:
         print("{} issue(s) proposed for {} ({}):".format(len(items), args.project, answered_by[0]))
         for number, item in enumerate(items, 1):
             print("  {}. [{}] {}  ({})".format(number, item["type"], item["summary"],
@@ -648,21 +656,25 @@ def cmd_plan(client_, args) -> int:
     for item in items:
         try:
             answer = client_.create(board, item) or {}
-        except (SystemExit, RuntimeError) as exc:
+        except Exception as exc:  # noqa: BLE001 -- en krasch får inte dölja en halv skrivning
             # Stanna på första felet: hellre halv tavla med besked än tyst halv tavla.
-            message = "{} failed: {} ({} of {} written)".format(item["summary"][:40], exc,
-                                                               len(created), len(items))
+            message = "{} failed: {} ({} of {} written)".format(
+                item["summary"][:40], exc if str(exc) else type(exc).__name__,
+                len(created), len(items))
             say(args, {"ok": False, "error": message, "created": created},
                 ["jira_flow: " + message,
                  "           already written: " + ", ".join(c["key"] for c in created)])
             return 2
+        if isinstance(answer, str):
+            answer = {"key": answer}
         key = answer.get("key") or (answer.get("result") or {}).get("key") or ""
         created.append({"key": key, "summary": item["summary"]})
         if not args.json:
             print("created: {}  {}".format(key or "(no key back)", item["summary"]))
     for entry in created:
         client_.log("flow-plan", entry["key"], entry["summary"][:80])
-    say(args, {"ok": True, "created": created, "project": args.project}, [])
+    say(args, {"ok": True, "created": created, "proposal": items, "project": args.project,
+               "agent": answered_by}, [])
     return 0
 
 
@@ -977,10 +989,31 @@ def selftest() -> int:
         plan_argv.text = "kunden vill boka"
         assert cmd_plan(fake, plan_argv) == 0, "förslaget ska gå igenom utan att skriva"
         assert fake.written == [], "utan --create får ingenting skrivas"
+        assert fake.written == [], "utan --create får ingenting skrivas"
 
         plan_argv.create = True
-        assert cmd_plan(fake, plan_argv) == 0, "med --create ska listan skrivas"
+        captured = io.StringIO()
+        sys.stdout = captured
+        try:
+            assert cmd_plan(fake, plan_argv) == 0, "med --create ska listan skrivas"
+        finally:
+            sys.stdout = Quiet()
         assert len(fake.written) == 1 and fake.written[0]["summary"] == "Boka tid", fake.written
+        documents = json.loads(captured.getvalue())   # ett dokument, inte två
+        assert documents["created"] and documents["proposal"], documents
+
+        # En oväntad krasch mitt i skrivandet ska rapportera vad som redan skrivits
+        # (mätt: ett fel i nyckelutläsningen skapade SCRUM-175 och dog tyst om det).
+        class Cranky(FakeClient):
+            def create(self, board, item):
+                if self.written:
+                    raise ValueError("boom")
+                return FakeClient.create(self, board, item)
+
+        globals()["ask_agent"] = lambda prompt: '[{"summary": "A"}, {"summary": "B"}]'
+        cranky = Cranky()
+        assert cmd_plan(cranky, plan_argv) == 2, "en krasch ska ge fel, inte tyst halv tavla"
+        assert len(cranky.written) == 1, "och ska ha skrivit precis ett ärende"
     finally:
         globals()["ask_agent"], sys.stdin, sys.stdout = original_agent, original_stdin, original_stdout
     checks += 2
