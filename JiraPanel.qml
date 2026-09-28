@@ -658,6 +658,7 @@ Item {
     { key: "reports", label: "nav.reports", file: "views/ReportsView.qml" },
     { key: "dev", label: "nav.development", file: "views/DevelopmentView.qml" },
     { key: "activity", label: "nav.activity", file: "views/ActivityView.qml" },
+    { key: "plan", label: "nav.plan", file: "views/PlanView.qml" },
     { key: "settings", label: "nav.settings", file: "views/SettingsView.qml" }
   ]
 

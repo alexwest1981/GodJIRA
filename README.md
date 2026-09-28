@@ -222,6 +222,24 @@ workspace from `.agents/mcp_config.json`); any other MCP client works the same
 way. Self-check: `python3 bin/jira_mcp.py --selftest` (handshake, tool list,
 and a real backlog read through the bridge).
 
+### The customer's wish, in the panel
+
+The panel has a **Wish** tab: type what the customer asked for, press *Propose
+issues*, read the list, then press *Create* to write exactly that list. The same
+thing from a shell:
+
+```
+JIRA_FLOW_AGENT="claude -p" python3 bin/jira_flow.py plan --text "kunden vill kunna boka tid"
+JIRA_FLOW_AGENT="codex exec" python3 bin/jira_flow.py plan --file wish.md --create
+```
+
+GodJIRA never calls a model itself. `JIRA_FLOW_AGENT` is whatever CLI you have
+chosen -- claude, codex, agy, opencode, hermes, anything that reads a prompt on
+stdin and answers with JSON. No key to store here, no model list to keep, no bill
+of ours. Nothing is written until `--create` (or the second press), and the write
+goes through the same bridge call the panel already used, so Jira's own rules
+apply.
+
 ### Taking the next critical issue (Jira to you, and into the commit)
 
 `bin/jira_flow.py` picks the most critical not-started item, assigns it to you

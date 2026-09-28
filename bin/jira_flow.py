@@ -16,6 +16,12 @@ Commands
         you, move it to In Progress. With nothing of your own it proposes the most
         critical item that is someone else's and takes it only when the caller
         presses again with --expect KEY, naming that exact issue.
+    plan [--text TEXT | --file PATH] [--create] [--json] [--project KEY]
+        Hands the customer's wish to the agent you have chosen (JIRA_FLOW_AGENT,
+        "claude -p" by default -- any CLI that reads a prompt on stdin and answers
+        with JSON works) and gets issue proposals back. GodJIRA never calls a model
+        itself: no key, no model list, no bill. Nothing is written until --create,
+        and then exactly the list you just read.
     current
         The key of the item you are on right now (the commit hook reads this).
     install [repo] [--project KEY]
@@ -35,6 +41,8 @@ import argparse
 import json
 import os
 import re
+import shlex
+import subprocess
 import sys
 import urllib.error
 import urllib.parse
@@ -51,6 +59,27 @@ CONFIG_FILE = Path.home() / ".config/jira-flow/config.json"
 LOG_FILE = Path.home() / ".local/state/jira-flow/actions.log"
 DEFAULT_PROJECT = os.environ.get("JIRA_FLOW_PROJECT", "SCRUM")
 DEFAULT_STATUS = os.environ.get("JIRA_FLOW_STATUS", "In Progress")
+
+# Kundönskemålet blir ärenden genom *din* agent, inte genom en modell som GodJIRA
+# ringer. Ingen nyckel, ingen modellista, ingen räkning att hålla reda på: den CLI
+# du redan valt läser prompten på stdin och svarar med ärendena som JSON.
+AGENT = os.environ.get("JIRA_FLOW_AGENT", "claude -p")
+AGENT_TIMEOUT = int(os.environ.get("JIRA_FLOW_AGENT_TIMEOUT", "600"))
+PLAN_MAX = int(os.environ.get("JIRA_FLOW_PLAN_MAX", "10"))
+
+PLAN_PROMPT = """\
+You are a scrum master. Split the customer's wish below into Jira issues for project {project}.
+
+Only what the wish actually asks for. Do not invent scope, do not add epics, at most {limit} issues.
+Issue types that exist in this project: {types}.
+
+Answer with ONLY a JSON array -- no prose, no code fences, no explanation:
+[{{"summary": "<short imperative, at most 80 characters>", "type": "<one of the types above>", \
+"description": "<what to build, and how to know it is done>", "priority": "<Highest|High|Medium|Low>"}}]
+
+The customer's wish:
+{wish}
+"""
 
 
 # -------------------------------------------------------------- pure logic
@@ -185,6 +214,27 @@ class Http:
         raise SystemExit("jira_flow: {} cannot move to {!r} (offered: {})".format(
             key, status, offered or "none"))
 
+    def board(self, project: str) -> dict:
+        found = self.get("/rest/agile/1.0/board?projectKeyOrId={}".format(project)) or {}
+        boards = found.get("values") or []
+        return boards[0] if boards else {}
+
+    def types(self, project: str):
+        try:
+            found = self.get("/rest/api/3/issue/createmeta/{}/issuetypes".format(project)) or {}
+        except SystemExit:
+            return []
+        return [str(t.get("name", "")) for t in (found.get("issueTypes") or found.get("values") or [])]
+
+    def create(self, board: dict, item: dict) -> dict:
+        fields = {"project": {"key": (board or {}).get("projectKey") or DEFAULT_PROJECT},
+                  "summary": item["summary"], "issuetype": {"name": item.get("type") or "Task"}}
+        if item.get("description"):
+            fields["description"] = {"type": "doc", "version": 1, "content": [
+                {"type": "paragraph",
+                 "content": [{"type": "text", "text": item["description"]}]}]}
+        return self.request("POST", "/rest/api/3/issue", {"fields": fields})
+
     def log(self, action: str, key: str, detail: str = "", ok: bool = True) -> None:
         LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
         LOG_FILE.parent.chmod(0o700)
@@ -216,6 +266,22 @@ class Bridge:
 
     def log(self, action: str, key: str, detail: str = "", ok: bool = True) -> None:
         self.jb.log_action(self.cfg, action, key, detail=detail, ok=ok)
+
+    def board(self, project: str) -> dict:
+        """Tavlan på projektnyckel, samma väg som panelen och MCP:n går."""
+        snap = self.jb.real_snapshot(self.cfg) or {}
+        for board in snap.get("boards") or []:
+            if str(board.get("projectKey", "")).upper() == str(project).upper():
+                return board
+        boards = snap.get("boards") or []
+        return boards[0] if boards else {}
+
+    def types(self, project: str):
+        return [str(r.get("name", "")) for r in
+                (self.jb.real_issue_types(self.cfg, project) or []) if r.get("name")]
+
+    def create(self, board: dict, item: dict) -> dict:
+        return self.jb.real_create(self.cfg, board, dict(item, typeName=item.get("type", "Task")))
 
 
 def client():
@@ -354,6 +420,116 @@ def cmd_next(client_, args) -> int:
     if not args.json:
         for issue in rest:
             print("skipped: {}".format(describe(issue)))
+    return 0
+
+
+def parse_plan(text: str):
+    """Ärendena ur agentens svar. Hel array eller inget: en halv lista blir aldrig
+    några ärenden, och skräp ger fel i stället för halvskrivna tavlor."""
+    body = (text or "").strip()
+    if body.startswith("```"):
+        body = re.sub(r"^```[a-zA-Z]*\s*|```$", "", body).strip()
+    match = re.search(r"\[\s*\{.*\}\s*\]", body, re.S)
+    if not match:
+        raise ValueError("the agent answered without a JSON array of issues")
+    try:
+        items = json.loads(match.group(0))
+    except ValueError as exc:
+        raise ValueError("the agent's JSON does not parse: {}".format(exc))
+    out = []
+    for item in items:
+        summary = str((item or {}).get("summary") or "").strip()
+        if not summary:
+            raise ValueError("an issue came back without a summary")
+        out.append({"summary": summary[:250],
+                    "type": str(item.get("type") or "Task").strip() or "Task",
+                    "description": str(item.get("description") or "").strip(),
+                    "priority": str(item.get("priority") or "").strip()})
+    if not out:
+        raise ValueError("the agent proposed no issues at all")
+    if len(out) > PLAN_MAX:
+        raise ValueError("the agent proposed {} issues; the cap is {} "
+                         "(JIRA_FLOW_PLAN_MAX)".format(len(out), PLAN_MAX))
+    return out
+
+
+def ask_agent(prompt: str) -> str:
+    """Prompten in, svaret ut. Vilken CLI som helst som pratar stdin/stdout duger:
+    JIRA_FLOW_AGENT="claude -p" i grunden, byt till codex, agy, opencode eller hermes."""
+    argv = shlex.split(AGENT)
+    if not argv:
+        raise RuntimeError("JIRA_FLOW_AGENT is empty")
+    try:
+        done = subprocess.run(argv, input=prompt, capture_output=True, text=True,
+                              timeout=AGENT_TIMEOUT)
+    except FileNotFoundError:
+        raise RuntimeError("{} is not installed".format(argv[0]))
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("{} gave no answer in {}s".format(argv[0], AGENT_TIMEOUT))
+    if done.returncode != 0:
+        raise RuntimeError("{} exited {}: {}".format(
+            argv[0], done.returncode, (done.stderr or "").strip()[:200]))
+    return done.stdout
+
+
+def cmd_plan(client_, args) -> int:
+    """Kundens önskemål in, ärendeförslag ut. Ingenting skrivs förrän --create."""
+    if args.text:
+        # Panelen har texten i ett fält, inte i en fil: argv är oshellat, så
+        # inget kan citeras sönder på vägen.
+        wish = args.text
+    elif args.file:
+        wish = Path(args.file).read_text()
+    else:
+        wish = "" if sys.stdin.isatty() else sys.stdin.read()
+    if not wish.strip():
+        message = "No wish to work from (stdin, or --file PATH)."
+        say(args, {"ok": False, "error": message}, ["jira_flow: " + message])
+        return 2
+
+    board = client_.board(args.project)
+    types = client_.types(args.project)
+    prompt = PLAN_PROMPT.format(project=args.project, limit=PLAN_MAX,
+                                types=", ".join(types) or "Story, Task, Bug", wish=wish.strip())
+    try:
+        items = parse_plan(ask_agent(prompt))
+    except (ValueError, RuntimeError) as exc:
+        message = str(exc)
+        say(args, {"ok": False, "error": message}, ["jira_flow: " + message])
+        return 2
+
+    if args.json:
+        print(json.dumps({"ok": True, "created": False, "proposal": items,
+                          "project": args.project}, ensure_ascii=False))
+    else:
+        print("{} issue(s) proposed for {}:".format(len(items), args.project))
+        for number, item in enumerate(items, 1):
+            print("  {}. [{}] {}  ({})".format(number, item["type"], item["summary"],
+                                               item["priority"] or "no priority"))
+    if not args.create:
+        if not args.json:
+            print("nothing written. again with --create writes exactly this list.")
+        return 0
+
+    created = []
+    for item in items:
+        try:
+            answer = client_.create(board, item) or {}
+        except (SystemExit, RuntimeError) as exc:
+            # Stanna på första felet: hellre halv tavla med besked än tyst halv tavla.
+            message = "{} failed: {} ({} of {} written)".format(item["summary"][:40], exc,
+                                                               len(created), len(items))
+            say(args, {"ok": False, "error": message, "created": created},
+                ["jira_flow: " + message,
+                 "           already written: " + ", ".join(c["key"] for c in created)])
+            return 2
+        key = answer.get("key") or (answer.get("result") or {}).get("key") or ""
+        created.append({"key": key, "summary": item["summary"]})
+        if not args.json:
+            print("created: {}  {}".format(key or "(no key back)", item["summary"]))
+    for entry in created:
+        client_.log("flow-plan", entry["key"], entry["summary"][:80])
+    say(args, {"ok": True, "created": created, "project": args.project}, [])
     return 0
 
 
@@ -600,6 +776,68 @@ def selftest() -> int:
     assert "command -v" in HOOK, "hooken ska slå upp sin tolk (py på Windows, python3 annars)"
     assert '"windows"' in VSCODE_TASK, "VS Code-tasken behöver py på Windows"
     checks += 1
+    # plan: agentens svar tolkas helt eller inte alls, och inget skrivs utan --create.
+    fenced = "Här är förslagen:\n```json\n[{\"summary\": \"Boka tid\", \"type\": \"Story\", "\
+             "\"description\": \"kunden kan boka\", \"priority\": \"High\"}, "\
+             "{\"summary\": \"Bekräfta bokning\", \"type\": \"Task\"}]\n```\nHör av dig!"
+    items = parse_plan(fenced)
+    assert len(items) == 2 and items[0]["summary"] == "Boka tid", items
+    assert items[1]["type"] == "Task" and items[0]["priority"] == "High"
+    checks += 1
+    for bad, why in (("inga ärenden här, bara prat", "utan array"),
+                     ("[{\"type\": \"Task\"}]", "utan summary"),
+                     ("[]", "tom lista"),
+                     ("[{\"summary\": \"x\"}]" * (PLAN_MAX + 1), "över taket")):
+        try:
+            parse_plan(bad)
+            raise AssertionError("skulle ha vägrat: " + why)
+        except ValueError:
+            pass
+    checks += 1
+    prompt = PLAN_PROMPT.format(project="SCRUM", limit=PLAN_MAX, types="Story, Task", wish="kunden vill boka")
+    assert "SCRUM" in prompt and "kunden vill boka" in prompt, "prompten bär projekt och önskemål"
+    assert "{project}" not in prompt and "{wish}" not in prompt and "{limit}" not in prompt, "ofylld platshållare"
+
+    class FakeClient:
+        def __init__(self):
+            self.written = []
+        def board(self, project):
+            return {"id": "7", "projectKey": project}
+        def types(self, project):
+            return ["Story", "Task"]
+        def create(self, board, item):
+            self.written.append(item)
+            return {"key": "SCRUM-{}".format(900 + len(self.written))}
+        def log(self, *a, **k):
+            pass
+
+    fake = FakeClient()
+    plan_argv = argparse.Namespace(file="", create=False, json=True, project="SCRUM")
+    # Byt den globala agenten och önskemålet: ett självprov får aldrig starta en
+    # riktig agent, och aldrig läsa på en riktig stdin (den kan vara en pipe som
+    # aldrig tar slut). Båda anropen går mot samma fejkade agent.
+    class Quiet:
+        def write(self, *a):
+            return None
+
+        def flush(self):
+            return None
+
+    original_agent, original_stdin, original_stdout = ask_agent, sys.stdin, sys.stdout
+    try:
+        globals()["ask_agent"] = lambda prompt: '[{"summary": "Boka tid", "type": "Story"}]'
+        sys.stdin = type("S", (), {"isatty": lambda self: False, "read": lambda self: "kunden vill boka"})()
+        sys.stdout = Quiet()
+
+        assert cmd_plan(fake, plan_argv) == 0, "förslaget ska gå igenom utan att skriva"
+        assert fake.written == [], "utan --create får ingenting skrivas"
+
+        plan_argv.create = True
+        assert cmd_plan(fake, plan_argv) == 0, "med --create ska listan skrivas"
+        assert len(fake.written) == 1 and fake.written[0]["summary"] == "Boka tid", fake.written
+    finally:
+        globals()["ask_agent"], sys.stdin, sys.stdout = original_agent, original_stdin, original_stdout
+    checks += 2
     print("jira_flow self-check: {} checks, 0 failed".format(checks))
     return 0
 
@@ -622,6 +860,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_next.add_argument("--json", action="store_true", help="machine-readable result (for an agent)")
     p_next.add_argument("--expect", metavar="KEY", default="",
                         help="take exactly KEY, which a human confirmed (the second press)")
+    p_plan = sub.add_parser("plan", help="customer wish in, issue proposal out")
+    p_plan.add_argument("--file", default="", help="read the wish from a file (default: stdin)")
+    p_plan.add_argument("--text", default="", help="the wish as one argument (the panel sends it this way)")
+    p_plan.add_argument("--create", action="store_true",
+                        help="write exactly the proposed list (default: write nothing)")
+    p_plan.add_argument("--json", action="store_true", help="machine-readable result")
+    p_plan.add_argument("--project", default=DEFAULT_PROJECT)
     p_ins.add_argument("repo", nargs="?", help="repository root (default: here)")
     p_ins.add_argument("--project", default=DEFAULT_PROJECT)
     p_ins.add_argument("--dry-run", action="store_true")
@@ -642,6 +887,8 @@ def main(argv) -> int:
     if args.cmd == "logout":
         return cmd_logout(args)
     jira = client()
+    if args.cmd == "plan":
+        return cmd_plan(jira, args)
     return cmd_next(jira, args) if args.cmd == "next" else cmd_current(jira, args)
 
 
