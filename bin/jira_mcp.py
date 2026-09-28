@@ -25,6 +25,9 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BRIDGE = os.path.join(HERE, "jira_bridge.py")
+# Flödet (välj det kritiska, sätt mig, In Progress) bor i jira_flow, som i sin tur
+# använder bryggan för token när den finns. Ett verktyg till, ingen andra klient.
+FLOW = os.environ.get("JIRA_FLOW", os.path.expanduser("~/Projects/jira-flow/jira_flow.py"))
 PROTOCOL = "2024-11-05"
 SERVER = {"name": "godjira", "version": "0.1.0"}
 READ_TIMEOUT = 120
@@ -41,11 +44,12 @@ def trim(rows):
     return [{k: row.get(k) for k in KEEP if k in row} for row in rows or []]
 
 
-def run_bridge(argv, timeout=READ_TIMEOUT):
-    """Returnerar (ok, payload). Bryggans JSON går före returkoden: den sätter
-    ok:false med ett skäl i klartext, och det skälet är hela svaret."""
+def run_json(argv, timeout=READ_TIMEOUT):
+    """Returnerar (ok, payload) ur en underprocess som svarar JSON. Programmets eget
+    svar går före returkoden: det sätter ok:false med ett skäl i klartext, och det
+    skälet är hela svaret."""
     try:
-        done = subprocess.run([sys.executable, BRIDGE] + [str(a) for a in argv],
+        done = subprocess.run([sys.executable] + [str(a) for a in argv],
                               capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         return False, {"error": "bryggan svarade inte inom {}s".format(timeout)}
@@ -56,6 +60,10 @@ def run_bridge(argv, timeout=READ_TIMEOUT):
     if isinstance(data, dict) and data.get("ok") is False:
         return False, data
     return True, data
+
+
+def run_bridge(argv, timeout=READ_TIMEOUT):
+    return run_json([BRIDGE] + list(argv), timeout)
 
 
 def board_of(snap, want):
@@ -99,6 +107,21 @@ def t_backlog(args):
     rows = board.get("backlog") or []
     return True, {"board": board.get("name"), "project": board.get("projectKey"),
                   "count": len(rows), "backlog": trim(rows)}
+
+
+def t_next(args):
+    """Ta nästa kritiska ärende. skrivningen kvitteras och journalförs av bryggan."""
+    if not os.path.exists(FLOW):
+        return False, {"error": "jira_flow saknas: {}".format(FLOW),
+                       "hint": "klona jira-flow, eller sätt JIRA_FLOW till dess sökväg"}
+    argv = [FLOW, "next", "--json"]
+    if args.get("project"):
+        argv += ["--project", args["project"]]
+    if args.get("status"):
+        argv += ["--status", args["status"]]
+    if args.get("dryRun"):
+        argv += ["--dry-run"]
+    return run_json(argv)
 
 
 def t_board(args):
@@ -187,6 +210,13 @@ TOOLS = [
          run=t_status),
     tool("jira_backlog", "Backloggen för en tavla: ärenden som inte ligger i en sprint. "
                          "Detta är varje ärende utan sprintId.", PROJECT, run=t_backlog),
+    tool("jira_next", "Ta nästa kritiska ärende: högsta prioritet bland det som inte "
+                      "påbörjats och är oassignerat eller mitt, till mig och till In Progress. "
+                      "Flödet ägs av jira_flow (samma token via bryggan); svaret namnger ärendet "
+                      "och de överhoppade. Använd dryRun för att bara se valet.",
+         dict(PROJECT, status={"type": "string", "description": "Målstatus, t.ex. 'In Progress'"},
+              dryRun={"type": "boolean", "description": "Visa valet, skriv inget"}),
+         run=t_next),
     tool("jira_board", "Hela tavlan: kolumner, sprintar, backloggen och ärendena i sprint.",
          PROJECT, run=t_board),
     tool("jira_transitions", "Vilka statusbyten ärendet tillåter just nu.", KEY,
@@ -311,6 +341,13 @@ def selftest():
     assert "jira_backlog" in names and "jira_move" in names, names
     for gone in ("jira_delete", "jira_restore", "jira_login", "jira_logout"):
         assert gone not in names, "{} ska inte ligga ute".format(gone)
+
+    assert "jira_next" in names, names
+    peek = rpc({"jsonrpc": "2.0", "id": 5, "method": "tools/call",
+                "params": {"name": "jira_next", "arguments": {"dryRun": True}}})["result"]
+    assert peek["isError"] is False, peek
+    seen = json.loads(peek["content"][0]["text"])
+    assert seen.get("dryRun") is True and seen.get("wouldTake", {}).get("key"), seen
 
     err = rpc({"jsonrpc": "2.0", "id": 3, "method": "does/not/exist"})
     assert err["error"]["code"] == -32601, err
