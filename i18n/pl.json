@@ -16,6 +16,8 @@
   "nav.settings": "Ustawienia",
   "panel.bridgeError": "Mostek nie odpowiedział poprawnie.",
   "panel.refresh": "Odśwież",
+  "panel.takeNext": "Weź następne",
+  "panel.takeNextTooltip": "Weź następne krytyczne zgłoszenie i rozpocznij je",
   "panel.minimize": "Minimalizuj",
   "panel.close": "Zamknij",
   "panel.updatedAgo": "zaktualizowano {ago}",

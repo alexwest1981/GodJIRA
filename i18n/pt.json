@@ -16,6 +16,8 @@
   "nav.settings": "Configurações",
   "panel.bridgeError": "A ponte não respondeu corretamente.",
   "panel.refresh": "Atualizar",
+  "panel.takeNext": "Pegar o próximo",
+  "panel.takeNextTooltip": "Pegar o próximo item crítico e iniciá-lo",
   "panel.minimize": "Minimizar",
   "panel.close": "Fechar",
   "panel.updatedAgo": "atualizado {ago}",

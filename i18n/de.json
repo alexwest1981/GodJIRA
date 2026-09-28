@@ -16,6 +16,8 @@
   "nav.settings": "Einstellungen",
   "panel.bridgeError": "Die Bridge hat nicht korrekt geantwortet.",
   "panel.refresh": "Aktualisieren",
+  "panel.takeNext": "Nächstes nehmen",
+  "panel.takeNextTooltip": "Das nächste kritische Ticket nehmen und starten",
   "panel.minimize": "Minimieren",
   "panel.close": "Schließen",
   "panel.updatedAgo": "aktualisiert {ago}",

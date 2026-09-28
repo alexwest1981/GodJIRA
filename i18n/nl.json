@@ -16,6 +16,8 @@
   "nav.settings": "Instellingen",
   "panel.bridgeError": "De brug antwoordde niet correct.",
   "panel.refresh": "Vernieuwen",
+  "panel.takeNext": "Volgende nemen",
+  "panel.takeNextTooltip": "Het volgende kritieke ticket nemen en starten",
   "panel.minimize": "Minimaliseren",
   "panel.close": "Sluiten",
   "panel.updatedAgo": "bijgewerkt {ago}",

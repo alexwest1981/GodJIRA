@@ -1,6 +1,10 @@
 # GodJIRA
 
 <p align="center">
+  <img src="assets/godjira-jira-ide.jpg" alt="Jira och IDE:erna, sammanbundna av GodJIRA" width="760">
+</p>
+
+<p align="center">
   <img src="assets/godjira-logo.jpeg" alt="GodJIRA" width="320">
 </p>
 

@@ -126,6 +126,10 @@ Item {
   // ------------------------------------------------------------- config
   readonly property string configDir: Quickshell.env("HOME") + "/.config/omarchy"
   readonly property string bridgePath: configDir + "/plugins/custom.jira/bin/jira_bridge.py"
+  // Flödet (välj det kritiska, sätt mig, In Progress) ägs av jira-flow utanför
+  // pluginen, så kollegor utan Omarchy kan använda samma kod. Panelen kör den
+  // som en underprocess, precis som bryggan: QML rör aldrig HTTP.
+  readonly property string flowPath: Quickshell.env("HOME") + "/Projects/jira-flow/jira_flow.py"
   readonly property string pythonPath: "python3"
 
   property bool booted: false
@@ -306,6 +310,30 @@ Item {
     root.pumpBridge()
   }
 
+  function callFlow(args, onDone) {
+    // Samma kö och samma svarsväg som bryggan, men ett annat skript. Svaret är
+    // jira_flows JSON (ok/took/skipped), så anroparen läser samma fält.
+    var job = { args: args, env: {}, script: root.flowPath, onDone: onDone || function() {} }
+    var q = root.procQueue.slice()
+    q.push(job)
+    root.procQueue = q
+    root.pumpBridge()
+  }
+
+  function requestNext() {
+    // Den nästa kritiska uppgiften: högsta prioritet bland det som inte påbörjats
+    // och är oassignerat eller mitt. Panelen visar resultatet genom att läsa om
+    // tavlan; ett nej hamnar i felremsan med sitt eget skäl.
+    root.callFlow(["next", "--json"], function(parsed) {
+      if (!parsed || parsed.ok === false) {
+        root.statusError = (parsed && parsed.error) || root.t("panel.bridgeError")
+        return
+      }
+      root.statusError = ""
+      root.requestSnapshot()
+    })
+  }
+
   function pumpBridge() {
     if (root.procBusy || root.procQueue.length === 0) return
     var q = root.procQueue.slice()
@@ -313,7 +341,7 @@ Item {
     root.procQueue = q
     root.currentJob = job
     root.procBusy = true
-    var argv = [root.pythonPath, root.bridgePath].concat(job.args)
+    var argv = [root.pythonPath, job.script || root.bridgePath].concat(job.args)
     bridgeProc.environment = job.env
     bridgeProc.command = argv
     bridgeProc.running = true
@@ -1089,6 +1117,12 @@ Item {
               tooltipText: root.t("panel.settingsTooltip")
               selected: root.tabIndex === root.settingsIndex()
               onClicked: root.openSettings()
+            }
+            Button {
+              text: root.t("panel.takeNext")
+              tooltipText: root.t("panel.takeNextTooltip")
+              fontSize: Style.font.caption
+              onClicked: root.requestNext()
             }
             Button {
               text: root.t("panel.refresh")
