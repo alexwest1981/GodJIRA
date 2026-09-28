@@ -474,7 +474,7 @@ def ask_agent(prompt: str) -> str:
 
 def cmd_plan(client_, args) -> int:
     """Kundens önskemål in, ärendeförslag ut. Ingenting skrivs förrän --create."""
-    if args.text:
+    if getattr(args, "text", ""):
         # Panelen har texten i ett fält, inte i en fil: argv är oshellat, så
         # inget kan citeras sönder på vägen.
         wish = args.text
@@ -812,7 +812,7 @@ def selftest() -> int:
             pass
 
     fake = FakeClient()
-    plan_argv = argparse.Namespace(file="", create=False, json=True, project="SCRUM")
+    plan_argv = argparse.Namespace(file="", text="", create=False, json=True, project="SCRUM")
     # Byt den globala agenten och önskemålet: ett självprov får aldrig starta en
     # riktig agent, och aldrig läsa på en riktig stdin (den kan vara en pipe som
     # aldrig tar slut). Båda anropen går mot samma fejkade agent.
@@ -829,6 +829,7 @@ def selftest() -> int:
         sys.stdin = type("S", (), {"isatty": lambda self: False, "read": lambda self: "kunden vill boka"})()
         sys.stdout = Quiet()
 
+        plan_argv.text = "kunden vill boka"
         assert cmd_plan(fake, plan_argv) == 0, "förslaget ska gå igenom utan att skriva"
         assert fake.written == [], "utan --create får ingenting skrivas"
 
