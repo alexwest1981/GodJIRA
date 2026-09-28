@@ -998,7 +998,10 @@ def selftest() -> int:
         saved_file = CONFIG_FILE
         try:
             globals()["CONFIG_FILE"] = Path(tmp) / "config.json"
-            quiet_stdout, sys.stdout = sys.stdout, Quiet()   # ett självprov skriver en rad
+            # Ett självprov skriver en rad: både stdout och stderr tystas, annars ser
+            # en förväntad vägran ut som ett fel i en grön körning.
+            quiet_stdout, quiet_stderr = sys.stdout, sys.stderr
+            sys.stdout = sys.stderr = Quiet()
             try:
                 assert cmd_agent(argparse.Namespace(action="add", commands=["codex exec"])) == 0
                 assert load_flow_config()["agents"] == list(AGENT_CHAIN) + ["codex exec"]
@@ -1008,7 +1011,7 @@ def selftest() -> int:
                 assert load_flow_config()["agents"] == ["agy -p {prompt}"]
                 assert cmd_agent(argparse.Namespace(action="rm", commands=["agy"])) == 2, "tomt får inte gå"
             finally:
-                sys.stdout = quiet_stdout
+                sys.stdout, sys.stderr = quiet_stdout, quiet_stderr
             assert load_flow_config()["agents"] == ["agy -p {prompt}"], "inget skrevs vid vägran"
             if os.name != "nt":
                 assert (Path(tmp) / "config.json").stat().st_mode & 0o777 == 0o600, "0600"
