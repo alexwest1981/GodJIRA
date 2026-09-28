@@ -18,6 +18,7 @@
   "panel.refresh": "Atualizar",
   "panel.takeNext": "Pegar o próximo",
   "panel.takeNextTooltip": "Pegar o próximo item crítico e iniciá-lo",
+  "panel.takeOver": "Pegar {key} de {owner}",
   "panel.minimize": "Minimizar",
   "panel.close": "Fechar",
   "panel.updatedAgo": "atualizado {ago}",

@@ -18,6 +18,7 @@
   "panel.refresh": "Vernieuwen",
   "panel.takeNext": "Volgende nemen",
   "panel.takeNextTooltip": "Het volgende kritieke ticket nemen en starten",
+  "panel.takeOver": "{key} van {owner} nemen",
   "panel.minimize": "Minimaliseren",
   "panel.close": "Sluiten",
   "panel.updatedAgo": "bijgewerkt {ago}",

@@ -18,6 +18,7 @@
   "panel.refresh": "Aggiorna",
   "panel.takeNext": "Prendi il prossimo",
   "panel.takeNextTooltip": "Prendi la prossima segnalazione critica e avviala",
+  "panel.takeOver": "Prendi {key} da {owner}",
   "panel.minimize": "Riduci",
   "panel.close": "Chiudi",
   "panel.updatedAgo": "aggiornato {ago}",

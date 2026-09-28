@@ -18,6 +18,7 @@
   "panel.refresh": "Odśwież",
   "panel.takeNext": "Weź następne",
   "panel.takeNextTooltip": "Weź następne krytyczne zgłoszenie i rozpocznij je",
+  "panel.takeOver": "Weź {key} od {owner}",
   "panel.minimize": "Minimalizuj",
   "panel.close": "Zamknij",
   "panel.updatedAgo": "zaktualizowano {ago}",

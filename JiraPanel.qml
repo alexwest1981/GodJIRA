@@ -126,10 +126,10 @@ Item {
   // ------------------------------------------------------------- config
   readonly property string configDir: Quickshell.env("HOME") + "/.config/omarchy"
   readonly property string bridgePath: configDir + "/plugins/custom.jira/bin/jira_bridge.py"
-  // Flödet (välj det kritiska, sätt mig, In Progress) ägs av jira-flow utanför
-  // pluginen, så kollegor utan Omarchy kan använda samma kod. Panelen kör den
-  // som en underprocess, precis som bryggan: QML rör aldrig HTTP.
-  readonly property string flowPath: Quickshell.env("HOME") + "/Projects/jira-flow/jira_flow.py"
+  // Flödet (välj det kritiska, sätt mig, In Progress) ligger i samma bin/ som
+  // bryggan och körs som en underprocess, precis som den: QML rör aldrig HTTP.
+  // Repot är publikt, så en kollega får CLI:n, bryggan och MCP-servern i en klon.
+  readonly property string flowPath: configDir + "/plugins/custom.jira/bin/jira_flow.py"
   readonly property string pythonPath: "python3"
 
   property bool booted: false
@@ -320,17 +320,40 @@ Item {
     root.pumpBridge()
   }
 
+  property string takeOverKey: ""
+  property string takeOverOwner: ""
+
   function requestNext() {
-    // Den nästa kritiska uppgiften: högsta prioritet bland det som inte påbörjats
-    // och är oassignerat eller mitt. Panelen visar resultatet genom att läsa om
-    // tavlan; ett nej hamnar i felremsan med sitt eget skäl.
+    // Första trycket tar det mest kritiska som är gemensamt eller mitt. Finns inget
+    // sådant föreslår svaret någon annans ärende och knappen armar sig med nyckeln i
+    // etiketten: andra trycket tar exakt det ärendet. Ett omläst tavla avväpnar.
+    if (root.takeOverKey !== "") {
+      var key = root.takeOverKey
+      root.takeOverKey = ""
+      root.takeOverOwner = ""
+      root.callFlow(["next", "--json", "--expect", key], function(parsed) {
+        if (!parsed || parsed.ok === false) {
+          root.statusError = (parsed && parsed.error) || root.t("panel.bridgeError")
+          return
+        }
+        root.statusError = ""
+        root.requestSnapshot()
+      })
+      return
+    }
     root.callFlow(["next", "--json"], function(parsed) {
-      if (!parsed || parsed.ok === false) {
-        root.statusError = (parsed && parsed.error) || root.t("panel.bridgeError")
+      if (parsed && parsed.ok) {
+        root.statusError = ""
+        root.requestSnapshot()
         return
       }
-      root.statusError = ""
-      root.requestSnapshot()
+      if (parsed && parsed.proposal && parsed.proposal.key) {
+        root.takeOverKey = parsed.proposal.key
+        root.takeOverOwner = parsed.proposal.assignee || ""
+        root.statusError = ""
+        return
+      }
+      root.statusError = (parsed && parsed.error) || root.t("panel.bridgeError")
     })
   }
 
@@ -396,6 +419,9 @@ Item {
 
   // ------------------------------------------------------------- snapshot
   function requestSnapshot() {
+    // En omläst tavla avväpnar ett övertagande: nyckeln gällde den läsningen.
+    root.takeOverKey = ""
+    root.takeOverOwner = ""
     if (root.snapshotQueued) return
     if (!root.connected && root.mode !== "mock") return
     root.snapshotQueued = true
@@ -1119,8 +1145,11 @@ Item {
               onClicked: root.openSettings()
             }
             Button {
-              text: root.t("panel.takeNext")
+              text: root.takeOverKey !== ""
+                ? root.t("panel.takeOver", { key: root.takeOverKey, owner: root.takeOverOwner })
+                : root.t("panel.takeNext")
               tooltipText: root.t("panel.takeNextTooltip")
+              selected: root.takeOverKey !== ""
               fontSize: Style.font.caption
               onClicked: root.requestNext()
             }

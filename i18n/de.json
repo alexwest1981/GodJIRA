@@ -18,6 +18,7 @@
   "panel.refresh": "Aktualisieren",
   "panel.takeNext": "Nächstes nehmen",
   "panel.takeNextTooltip": "Das nächste kritische Ticket nehmen und starten",
+  "panel.takeOver": "{key} von {owner} nehmen",
   "panel.minimize": "Minimieren",
   "panel.close": "Schließen",
   "panel.updatedAgo": "aktualisiert {ago}",

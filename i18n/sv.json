@@ -18,6 +18,7 @@
   "panel.refresh": "Uppdatera",
   "panel.takeNext": "Ta nästa",
   "panel.takeNextTooltip": "Ta nästa kritiska ärende och starta det",
+  "panel.takeOver": "Ta {key} från {owner}",
   "panel.minimize": "Minimera",
   "panel.close": "Stäng",
   "panel.updatedAgo": "uppdaterad {ago}",

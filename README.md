@@ -152,6 +152,8 @@ custom.jira/
 ├── i18n/                    en.json (source) + sv, de, fr, es, it, pt, nl, pl
 ├── window-rule.lua          Hyprland rule that floats the Jira window (see README)
 └── bin/jira_bridge.py       everything network/credential related (Python stdlib only)
+    bin/jira_mcp.py          the same, over MCP, for an agent in an editor
+    bin/jira_flow.py         take the next critical issue; editor shims + commit rule
     bin/i18n_check.py        translation check: same keys, same placeholders
 ```
 
@@ -202,7 +204,8 @@ watch a notification appear without a second user.
 
 `bin/jira_mcp.py` exposes the bridge over MCP (stdio, JSON-RPC), so a coding
 agent can read the backlog and move issues without a second Jira client:
-fourteen tools, and every one of them shells out to `jira_bridge.py` — the
+fifteen tools (`jira_next` among them), and every one of them shells out to
+`jira_bridge.py` — the
 credential, the read-back verification and the journal/trash nets stay in one
 place. `delete`, `restore`, `configure`, `login` and `logout` are deliberately
 **not** exposed.
@@ -218,6 +221,41 @@ Antigravity reads that globally from `~/.gemini/config/mcp_config.json` (or per
 workspace from `.agents/mcp_config.json`); any other MCP client works the same
 way. Self-check: `python3 bin/jira_mcp.py --selftest` (handshake, tool list,
 and a real backlog read through the bridge).
+
+### Taking the next critical issue (Jira to you, and into the commit)
+
+`bin/jira_flow.py` picks the most critical not-started item, assigns it to you
+and moves it to *In Progress*. Shared tasks (`GEMENSAMT:`) come first, then your
+own and unassigned work; only when there is none of either does it propose the
+most critical item that is **someone else's** — and that one is taken only on a
+second press, naming the key it was shown with. The panel's button is that
+gesture.
+
+```
+python3 bin/jira_flow.py next                       # take it; print the runners-up skipped
+python3 bin/jira_flow.py next --dry-run             # show the pick and the move, write nothing
+python3 bin/jira_flow.py next --expect SCRUM-147    # the second press: exactly that issue
+python3 bin/jira_flow.py current                    # the key you are on right now
+python3 bin/jira_flow.py --selftest
+```
+
+From an editor, and into the commits:
+
+```
+python3 bin/jira_flow.py install /path/to/repo
+```
+
+writes a VS Code / Antigravity task, an IntelliJ external tool, an Antigravity
+rule and a `prepare-commit-msg` hook that names the issue in the commit subject
+(from the branch name, or from `current`). Files that are not the tool's own are
+left alone; its own are updated, so a moved `jira_flow.py` never leaves a shim
+pointing at the old path.
+
+Credentials come from the bridge's keyring whenever the bridge is there — which
+it is, inside this plugin. Outside Omarchy (a plain clone for a teammate) the
+same script reads `JIRA_SITE`/`JIRA_EMAIL`/`JIRA_TOKEN`, or
+`~/.config/jira-flow/config.json`. Every write is read back from the site and
+compared, and a mismatch exits non-zero instead of reporting success.
 
 ## Real Jira Cloud
 

@@ -18,6 +18,7 @@
   "panel.refresh": "Actualizar",
   "panel.takeNext": "Tomar el siguiente",
   "panel.takeNextTooltip": "Tomar la siguiente incidencia crítica y empezarla",
+  "panel.takeOver": "Tomar {key} de {owner}",
   "panel.minimize": "Minimizar",
   "panel.close": "Cerrar",
   "panel.updatedAgo": "actualizado {ago}",

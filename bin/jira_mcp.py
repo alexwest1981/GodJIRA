@@ -27,7 +27,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 BRIDGE = os.path.join(HERE, "jira_bridge.py")
 # Flödet (välj det kritiska, sätt mig, In Progress) bor i jira_flow, som i sin tur
 # använder bryggan för token när den finns. Ett verktyg till, ingen andra klient.
-FLOW = os.environ.get("JIRA_FLOW", os.path.expanduser("~/Projects/jira-flow/jira_flow.py"))
+FLOW = os.environ.get("JIRA_FLOW", os.path.join(HERE, "jira_flow.py"))
 PROTOCOL = "2024-11-05"
 SERVER = {"name": "godjira", "version": "0.1.0"}
 READ_TIMEOUT = 120
@@ -113,7 +113,7 @@ def t_next(args):
     """Ta nästa kritiska ärende. skrivningen kvitteras och journalförs av bryggan."""
     if not os.path.exists(FLOW):
         return False, {"error": "jira_flow saknas: {}".format(FLOW),
-                       "hint": "klona jira-flow, eller sätt JIRA_FLOW till dess sökväg"}
+                       "hint": "filen ligger i samma bin/ som bryggan; sätt JIRA_FLOW om den flyttats"}
     argv = [FLOW, "next", "--json"]
     if args.get("project"):
         argv += ["--project", args["project"]]
