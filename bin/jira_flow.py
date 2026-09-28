@@ -16,6 +16,11 @@ Commands
         you, move it to In Progress. With nothing of your own it proposes the most
         critical item that is someone else's and takes it only when the caller
         presses again with --expect KEY, naming that exact issue.
+    agent [list | add CMD | set CMD... | rm N|NAME]
+        Your own list of agents, tried in order, first installed one answers.
+        Kept in ~/.config/jira-flow/config.json ("agents"), so every user has
+        their own and nobody's choice depends on someone else's. Shipped list:
+        hermes, then agy. JIRA_FLOW_AGENT overrides it for one run.
     plan [--text TEXT | --file PATH] [--create] [--json] [--project KEY]
         Hands the customer's wish to the agent you have chosen (JIRA_FLOW_AGENT,
         "claude -p" by default -- any CLI that reads a prompt on stdin and answers
@@ -42,6 +47,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import urllib.error
@@ -63,7 +69,13 @@ DEFAULT_STATUS = os.environ.get("JIRA_FLOW_STATUS", "In Progress")
 # Kundönskemålet blir ärenden genom *din* agent, inte genom en modell som GodJIRA
 # ringer. Ingen nyckel, ingen modellista, ingen räkning att hålla reda på: den CLI
 # du redan valt läser prompten på stdin och svarar med ärendena som JSON.
-AGENT = os.environ.get("JIRA_FLOW_AGENT", "claude -p")
+AGENT = os.environ.get("JIRA_FLOW_AGENT", "")  # tom = användarens lista, sedan den skeppade
+# Den skeppade listan, i tur och ordning. Var och en har sin egen i
+# ~/.config/jira-flow/config.json ("agents") och ändrar den med
+# `jira_flow agent add|set|rm` -- ingen behöver vara beroende av någon annans val.
+# {prompt} i ett kommando betyder att CLI:t vill ha texten som argument; annars går
+# den på stdin (Hermes läser den därifrån).
+AGENT_CHAIN = ("hermes chat --query-file -", "agy -p {prompt}")
 AGENT_TIMEOUT = int(os.environ.get("JIRA_FLOW_AGENT_TIMEOUT", "600"))
 PLAN_MAX = int(os.environ.get("JIRA_FLOW_PLAN_MAX", "10"))
 
@@ -73,9 +85,14 @@ You are a scrum master. Split the customer's wish below into Jira issues for pro
 Only what the wish actually asks for. Do not invent scope, do not add epics, at most {limit} issues.
 Issue types that exist in this project: {types}.
 
-Answer with ONLY a JSON array -- no prose, no code fences, no explanation:
-[{{"summary": "<short imperative, at most 80 characters>", "type": "<one of the types above>", \
-"description": "<what to build, and how to know it is done>", "priority": "<Highest|High|Medium|Low>"}}]
+Answer with one JSON array of objects and nothing else -- no prose, no explanation,
+no code fences. Every object has exactly these four fields:
+  "summary"       a short imperative for this project, at most 80 characters
+  "type"          one of the issue types listed above
+  "description"   what to build, and how to know it is done
+  "priority"      one of: Highest, High, Medium, Low
+Write them in the language the customer wrote in -- a Swedish wish gets Swedish
+issues, because that is the language the team reads on the board.
 
 The customer's wish:
 {wish}
@@ -429,18 +446,32 @@ def parse_plan(text: str):
     body = (text or "").strip()
     if body.startswith("```"):
         body = re.sub(r"^```[a-zA-Z]*\s*|```$", "", body).strip()
-    match = re.search(r"\[\s*\{.*\}\s*\]", body, re.S)
-    if not match:
+    # raw_decode från första "[" och framåt: den stannar vid slutet av första
+    # giltiga värdet. En regex från första till sista klammerparentesen klistrade
+    # ihop två arrayer när modellen skrev ett exempel och sedan svaret (mätt).
+    # strict=False: modeller skickar ofta ett literalt radbryt inuti en sträng,
+    # vilket inte är giltig JSON men är precis vad de menade.
+    decoder = json.JSONDecoder(strict=False)
+    items, index = None, body.find("[")
+    while index >= 0:
+        try:
+            items, _ = decoder.raw_decode(body[index:])
+            break
+        except ValueError:
+            index = body.find("[", index + 1)
+    if items is None:
         raise ValueError("the agent answered without a JSON array of issues")
-    try:
-        items = json.loads(match.group(0))
-    except ValueError as exc:
-        raise ValueError("the agent's JSON does not parse: {}".format(exc))
+    if not isinstance(items, list):
+        raise ValueError("the agent answered with JSON, but not a list of issues")
     out = []
     for item in items:
         summary = str((item or {}).get("summary") or "").strip()
         if not summary:
             raise ValueError("an issue came back without a summary")
+        if "<" in summary or ">" in summary:
+            # Modellen ekade schemat i stället för att svara (mätt 2026-09-28, Hermes).
+            raise ValueError("the agent echoed the field description instead of answering: "
+                             "{}".format(summary[:80]))
         out.append({"summary": summary[:250],
                     "type": str(item.get("type") or "Task").strip() or "Task",
                     "description": str(item.get("description") or "").strip(),
@@ -453,14 +484,56 @@ def parse_plan(text: str):
     return out
 
 
+def agents_from(config, override: str = ""):
+    """Användarens lista, annars den skeppade. Miljövariabeln går före allt."""
+    if override.strip():
+        return [override.strip()]
+    listed = (config or {}).get("agents")
+    if isinstance(listed, list):
+        commands = [str(c).strip() for c in listed if str(c).strip()]
+        if commands:
+            return commands
+    return list(AGENT_CHAIN)
+
+
+def load_flow_config() -> dict:
+    return json.loads(CONFIG_FILE.read_text()) if CONFIG_FILE.exists() else {}
+
+
+def save_flow_config(data: dict) -> None:
+    CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG_FILE.parent.chmod(0o700)
+    with CONFIG_FILE.open("w", newline="\n") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=2)
+        fh.write("\n")
+    CONFIG_FILE.chmod(0o600)
+
+
+def agent_argv(prompt: str):
+    """Vilken CLI som ska svara, och hur den vill ha texten.
+
+    Kedjan i tur och ordning: första installerade vinner. JIRA_FLOW_AGENT överstyr
+    hela kedjan. Ett kommando med {prompt} får texten som argument; annars går den
+    på stdin -- och stängs, så en CLI som väntar på mer input inte kan hänga panelen.
+    """
+    commands = agents_from(load_flow_config(), AGENT)
+    for command in commands:
+        argv = shlex.split(command)
+        if not argv or not shutil.which(argv[0]):
+            continue
+        if "{prompt}" in command:
+            return [piece.replace("{prompt}", prompt) for piece in argv], ""
+        return argv, prompt
+    raise RuntimeError("no agent installed; tried {} (set JIRA_FLOW_AGENT)".format(
+        ", ".join(shlex.split(c)[0] for c in commands if shlex.split(c))))
+
+
 def ask_agent(prompt: str) -> str:
-    """Prompten in, svaret ut. Vilken CLI som helst som pratar stdin/stdout duger:
-    JIRA_FLOW_AGENT="claude -p" i grunden, byt till codex, agy, opencode eller hermes."""
-    argv = shlex.split(AGENT)
-    if not argv:
-        raise RuntimeError("JIRA_FLOW_AGENT is empty")
+    """Prompten in, svaret ut. Hermes i grunden, sedan Antigravity; JIRA_FLOW_AGENT
+    pekar på vilken CLI som helst som pratar stdin/stdout."""
+    argv, stdin_text = agent_argv(prompt)
     try:
-        done = subprocess.run(argv, input=prompt, capture_output=True, text=True,
+        done = subprocess.run(argv, input=stdin_text, capture_output=True, text=True,
                               timeout=AGENT_TIMEOUT)
     except FileNotFoundError:
         raise RuntimeError("{} is not installed".format(argv[0]))
@@ -470,6 +543,64 @@ def ask_agent(prompt: str) -> str:
         raise RuntimeError("{} exited {}: {}".format(
             argv[0], done.returncode, (done.stderr or "").strip()[:200]))
     return done.stdout
+
+
+def cmd_agent(args) -> int:
+    """Användarens egen lista: visa, lägg till, byt ut, ta bort."""
+    config = load_flow_config()
+    listed = agents_from(config, "")
+    shipped = list(AGENT_CHAIN)
+    action = args.action or "list"
+
+    if action == "list":
+        for number, command in enumerate(listed, 1):
+            first = shlex.split(command)[0] if shlex.split(command) else ""
+            mark = "installed" if shutil.which(first) else "NOT installed"
+            print("{}. {:<28} {}".format(number, command, mark))
+        if "agents" not in config:
+            print("(the shipped list; your own is written here with `agent add` or `agent set`)")
+        elif not any(shutil.which(shlex.split(c)[0]) for c in listed if shlex.split(c)):
+            print("none of them is installed -- nothing would answer.")
+            return 2
+        return 0
+
+    commands = listed if ("agents" in config or args.action in ("add", "rm")) else shipped
+    if action == "add":
+        if not args.commands:
+            print("jira_flow: agent add needs a command.", file=sys.stderr)
+            return 2
+        commands = commands + list(args.commands)
+    elif action == "set":
+        if not args.commands:
+            print("jira_flow: agent set needs at least one command.", file=sys.stderr)
+            return 2
+        commands = list(args.commands)
+    elif action == "rm":
+        if not args.commands:
+            print("jira_flow: agent rm needs a number or a name.", file=sys.stderr)
+            return 2
+        for target in args.commands:
+            match = None
+            for index, command in enumerate(commands, 1):
+                if str(index) == target or shlex.split(command)[0] == target:
+                    match = index
+                    break
+            if match is None:
+                print("jira_flow: {} is not in your list.".format(target), file=sys.stderr)
+                return 2
+            commands = commands[:match - 1] + commands[match:]
+    else:
+        print("jira_flow: agent {}? list, add, set or rm.".format(action), file=sys.stderr)
+        return 2
+
+    if not commands:
+        print("jira_flow: that would leave no agent at all; use `agent set <command>`.", file=sys.stderr)
+        return 2
+    config["agents"] = commands
+    save_flow_config(config)
+    for number, command in enumerate(commands, 1):
+        print("{}. {}".format(number, command))
+    return 0
 
 
 def cmd_plan(client_, args) -> int:
@@ -492,6 +623,7 @@ def cmd_plan(client_, args) -> int:
     prompt = PLAN_PROMPT.format(project=args.project, limit=PLAN_MAX,
                                 types=", ".join(types) or "Story, Task, Bug", wish=wish.strip())
     try:
+        answered_by = agent_argv(prompt)[0]
         items = parse_plan(ask_agent(prompt))
     except (ValueError, RuntimeError) as exc:
         message = str(exc)
@@ -500,9 +632,10 @@ def cmd_plan(client_, args) -> int:
 
     if args.json:
         print(json.dumps({"ok": True, "created": False, "proposal": items,
-                          "project": args.project}, ensure_ascii=False))
+                          "project": args.project, "agent": answered_by},
+                         ensure_ascii=False))
     else:
-        print("{} issue(s) proposed for {}:".format(len(items), args.project))
+        print("{} issue(s) proposed for {} ({}):".format(len(items), args.project, answered_by[0]))
         for number, item in enumerate(items, 1):
             print("  {}. [{}] {}  ({})".format(number, item["type"], item["summary"],
                                                item["priority"] or "no priority"))
@@ -784,10 +917,22 @@ def selftest() -> int:
     assert len(items) == 2 and items[0]["summary"] == "Boka tid", items
     assert items[1]["type"] == "Task" and items[0]["priority"] == "High"
     checks += 1
+    raw_newline = '[{"summary": "Boka tid", "description": "rad ett\nrad två", "type": "Task"}]'
+    assert parse_plan(raw_newline)[0]["description"] == "rad ett\nrad två", "literalt radbryt"
+    two_arrays = 'Jag tänker [så här]:\n[{"summary": "A", "type": "Task"}]\n[{"summary": "B"}]'
+    assert [i["summary"] for i in parse_plan(two_arrays)] == ["A"], \
+        "första arrayen, inte två hopklistrade"
+    try:
+        parse_plan('[{"summary": "<short imperative>", "type": "Story"}]')
+        raise AssertionError("platshållartext skulle ha vägrats")
+    except ValueError as exc:
+        assert "echoed" in str(exc), exc
     for bad, why in (("inga ärenden här, bara prat", "utan array"),
+                     ('{"summary": "inte en lista"}', "objekt i stället för lista"),
                      ("[{\"type\": \"Task\"}]", "utan summary"),
                      ("[]", "tom lista"),
-                     ("[{\"summary\": \"x\"}]" * (PLAN_MAX + 1), "över taket")):
+                     ("[" + ",".join('{"summary": "x"}' for _ in range(PLAN_MAX + 1)) + "]",
+                      "över taket")):
         try:
             parse_plan(bad)
             raise AssertionError("skulle ha vägrat: " + why)
@@ -839,6 +984,60 @@ def selftest() -> int:
     finally:
         globals()["ask_agent"], sys.stdin, sys.stdout = original_agent, original_stdin, original_stdout
     checks += 2
+    # Listan är användarens: egen lista vinner, miljövariabeln vinner över allt,
+    # och en tom lista faller tillbaka på den skeppade i stället för på ingenting.
+    assert agents_from({}, "") == list(AGENT_CHAIN), "utan egen lista gäller den skeppade"
+    assert agents_from({"agents": ["x -p {prompt}"]}, "") == ["x -p {prompt}"]
+    assert agents_from({"agents": []}, "") == list(AGENT_CHAIN), "tom lista = skeppad"
+    assert agents_from({"agents": ["x"]}, "y") == ["y"], "miljövariabeln går före"
+    checks += 1
+
+    # add/set/rm mot en config i scratch: den riktiga får aldrig röras av ett prov.
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        saved_file = CONFIG_FILE
+        try:
+            globals()["CONFIG_FILE"] = Path(tmp) / "config.json"
+            quiet_stdout, sys.stdout = sys.stdout, Quiet()   # ett självprov skriver en rad
+            try:
+                assert cmd_agent(argparse.Namespace(action="add", commands=["codex exec"])) == 0
+                assert load_flow_config()["agents"] == list(AGENT_CHAIN) + ["codex exec"]
+                assert cmd_agent(argparse.Namespace(action="rm", commands=["1"])) == 0
+                assert load_flow_config()["agents"] == list(AGENT_CHAIN)[1:] + ["codex exec"]
+                assert cmd_agent(argparse.Namespace(action="set", commands=["agy -p {prompt}"])) == 0
+                assert load_flow_config()["agents"] == ["agy -p {prompt}"]
+                assert cmd_agent(argparse.Namespace(action="rm", commands=["agy"])) == 2, "tomt får inte gå"
+            finally:
+                sys.stdout = quiet_stdout
+            assert load_flow_config()["agents"] == ["agy -p {prompt}"], "inget skrevs vid vägran"
+            if os.name != "nt":
+                assert (Path(tmp) / "config.json").stat().st_mode & 0o777 == 0o600, "0600"
+        finally:
+            globals()["CONFIG_FILE"] = saved_file
+    checks += 1
+
+    # Kommandotolken: Hermes läser förfrågan på stdin, agy vill ha den som argument,
+    # och en okänd CLI ger fel i stället för tyst ingenting. Båda formerna prövas med
+    # sys.executable, så provet inte hänger på vad som är installerat på maskinen.
+    saved_agent = AGENT
+    try:
+        assert AGENT_CHAIN[0].startswith("hermes ") and AGENT_CHAIN[1].startswith("agy "), AGENT_CHAIN
+        globals()["AGENT"] = sys.executable
+        argv, on_stdin = agent_argv("hej")
+        assert argv == [sys.executable] and on_stdin == "hej", "utan {prompt} går texten på stdin"
+        globals()["AGENT"] = "{} {{prompt}}".format(sys.executable)
+        argv, on_stdin = agent_argv("hej")
+        assert argv == [sys.executable, "hej"] and on_stdin == "", "med {prompt} blir den ett argument"
+        globals()["AGENT"] = "no-such-agent-3f9c"
+        try:
+            agent_argv("hej")
+            raise AssertionError("okänd agent skulle ha vägrat")
+        except RuntimeError:
+            pass
+    finally:
+        globals()["AGENT"] = saved_agent
+    checks += 1
+
     print("jira_flow self-check: {} checks, 0 failed".format(checks))
     return 0
 
@@ -861,6 +1060,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_next.add_argument("--json", action="store_true", help="machine-readable result (for an agent)")
     p_next.add_argument("--expect", metavar="KEY", default="",
                         help="take exactly KEY, which a human confirmed (the second press)")
+    p_agent = sub.add_parser("agent", help="your own agent list: list, add, set, rm")
+    p_agent.add_argument("action", nargs="?", default="list",
+                         choices=["list", "add", "set", "rm"])
+    p_agent.add_argument("commands", nargs="*")
     p_plan = sub.add_parser("plan", help="customer wish in, issue proposal out")
     p_plan.add_argument("--file", default="", help="read the wish from a file (default: stdin)")
     p_plan.add_argument("--text", default="", help="the wish as one argument (the panel sends it this way)")
@@ -887,6 +1090,8 @@ def main(argv) -> int:
         return cmd_login(args)
     if args.cmd == "logout":
         return cmd_logout(args)
+    if args.cmd == "agent":
+        return cmd_agent(args)
     jira = client()
     if args.cmd == "plan":
         return cmd_plan(jira, args)

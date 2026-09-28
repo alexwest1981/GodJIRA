@@ -229,16 +229,28 @@ issues*, read the list, then press *Create* to write exactly that list. The same
 thing from a shell:
 
 ```
-JIRA_FLOW_AGENT="claude -p" python3 bin/jira_flow.py plan --text "kunden vill kunna boka tid"
-JIRA_FLOW_AGENT="codex exec" python3 bin/jira_flow.py plan --file wish.md --create
+python3 bin/jira_flow.py plan --text "kunden vill kunna boka tid"
+python3 bin/jira_flow.py plan --file wish.md --create
 ```
 
-GodJIRA never calls a model itself. `JIRA_FLOW_AGENT` is whatever CLI you have
-chosen -- claude, codex, agy, opencode, hermes, anything that reads a prompt on
-stdin and answers with JSON. No key to store here, no model list to keep, no bill
-of ours. Nothing is written until `--create` (or the second press), and the write
-goes through the same bridge call the panel already used, so Jira's own rules
-apply.
+GodJIRA never calls a model itself, and nobody's choice is anyone else's problem.
+Every user keeps their own list of agents, tried in order, first installed one
+answers:
+
+```
+python3 bin/jira_flow.py agent                    # your list, and what is installed
+python3 bin/jira_flow.py agent add "codex exec"   # append
+python3 bin/jira_flow.py agent set "hermes chat --query-file -" "agy -p {prompt}"
+python3 bin/jira_flow.py agent rm 2               # by position or by name
+```
+
+It is kept in `~/.config/jira-flow/config.json` (`"agents"`), so it travels with
+the user, not with the repo. The shipped list is **hermes, then agy**;
+`JIRA_FLOW_AGENT` overrides it for a single run. A command containing `{prompt}`
+gets the wish as an argument, anything else gets it on stdin. No key to store
+here, no model list to keep, no bill of ours. Nothing is written until `--create`
+(or the second press), and the write goes through the same bridge call the panel
+already used, so Jira's own rules apply.
 
 ### Taking the next critical issue (Jira to you, and into the commit)
 
