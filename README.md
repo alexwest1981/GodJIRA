@@ -251,6 +251,29 @@ rule and a `prepare-commit-msg` hook that names the issue in the commit subject
 left alone; its own are updated, so a moved `jira_flow.py` never leaves a shim
 pointing at the old path.
 
+#### Windows and macOS
+
+The CLI, the editor shims and the commit hook travel; the bar widget and the
+panel do not (they are Quickshell, i.e. this Linux desktop). Everything below is
+Python 3 standard library only, so a teammate clones the repo and runs it.
+
+- **Credentials without the bridge:** `JIRA_SITE`, `JIRA_EMAIL` and `JIRA_TOKEN`
+  in the environment, or `~/.config/jira-flow/config.json`. Atlassian's API
+  token (not a password) is what that expects.
+- **The commit hook works as it is** on all three systems: Git for Windows ships
+  its own bash and runs hooks through it, and the hook looks its interpreter up
+  itself (`python3`, then `py`, then `python`).
+- **The VS Code / Antigravity task** carries a `"windows": { "command": "py" }`
+  override, so the same file works on every platform.
+- **The IntelliJ external tool** names `python3`: on Windows, edit that one
+  field to `py` (Settings → Tools → External Tools). IntelliJ has no per-OS
+  variant of an external tool, so it is the one manual step.
+- Written files are written with `\n`, not the platform's newline: a hook with
+  CRLF dies in Git for Windows' bash.
+
+Verified on Linux; the Windows and macOS specifics above are reasoned from Git
+for Windows' bundled bash and VS Code's own per-OS override, not run there.
+
 Credentials come from the bridge's keyring whenever the bridge is there — which
 it is, inside this plugin. Outside Omarchy (a plain clone for a teammate) the
 same script reads `JIRA_SITE`/`JIRA_EMAIL`/`JIRA_TOKEN`, or

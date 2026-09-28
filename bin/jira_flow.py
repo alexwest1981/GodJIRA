@@ -367,6 +367,7 @@ VSCODE_TASK = """{
       "type": "shell",
       "command": "python3",
       "args": ["{self}", "next"],
+      "windows": { "command": "py" },
       "options": { "cwd": "${workspaceFolder}" },
       "presentation": { "reveal": "always", "panel": "shared" },
       "problemMatcher": []
@@ -425,7 +426,16 @@ grep -qE '[A-Z][A-Z0-9]+-[0-9]+' "$1" && exit 0
 
 key=$(git branch --show-current 2>/dev/null | grep -oE '[A-Z][A-Z0-9]+-[0-9]+' | head -1)
 if [ -z "$key" ]; then
-  key=$(python3 {self} current 2>/dev/null | grep -oE '[A-Z][A-Z0-9]+-[0-9]+' | head -1)
+  # Git for Windows kör hooks genom sin egen bash, så den här filen fungerar på alla
+  # tre systemen. Tolken är det som skiljer: python3 på macOS/Linux, py eller python
+  # på Windows. Slå upp den vid körning i stället för att skriva in en sökväg.
+  py=""
+  for kandidat in python3 py python; do
+    command -v "$kandidat" >/dev/null 2>&1 && py="$kandidat" && break
+  done
+  if [ -n "$py" ]; then
+    key=$("$py" {self} current 2>/dev/null | grep -oE '[A-Z][A-Z0-9]+-[0-9]+' | head -1)
+  fi
 fi
 [ -z "$key" ] && exit 0
 
@@ -449,7 +459,10 @@ def write_once(path: Path, text: str, dry_run: bool) -> None:
         print("{}: {}".format("would update" if existed else "would write", path))
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text)
+    # newline="\n" med flit: Windows textläge skriver \r\n, och en sh-hook med CRLF
+    # dör på "\r: command not found" i Git for Windows' bash.
+    with path.open("w", newline="\n") as fh:
+        fh.write(text)
     if path.name == "prepare-commit-msg":
         path.chmod(0o755)
     print("{}: {}".format("updated" if existed else "wrote", path))
@@ -505,6 +518,9 @@ def selftest() -> int:
         filled = template.replace("{self}", "/x/y.py").replace("{project}", "SCRUM")
         assert "{self}" not in filled and "{project}" not in filled, "template placeholder unfilled"
     json.loads(VSCODE_TASK.replace("{self}", "/x/y.py"))  # the task template stays valid JSON
+    assert '\r' not in HOOK, "en hook med CRLF dör i Git for Windows' bash"
+    assert "command -v" in HOOK, "hooken ska slå upp sin tolk (py på Windows, python3 annars)"
+    assert '"windows"' in VSCODE_TASK, "VS Code-tasken behöver py på Windows"
     checks += 1
     print("jira_flow self-check: {} checks, 0 failed".format(checks))
     return 0
