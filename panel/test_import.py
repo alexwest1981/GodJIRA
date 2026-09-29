@@ -44,7 +44,10 @@ def check(label: str, condition: bool, detail: object = None) -> None:
 
 def main() -> int:
     base = (sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8788").rstrip("/")
-    document = Path(sys.argv[2] if len(sys.argv) > 2 else "bestallarkrav.pdf")
+    # Fixturen bor i panel/fixtures (den flyttade dit när appen flyttade ur
+    # plugin-katalogen), och sökvägen räknas från provfilen så provet kan köras
+    # varifrån som helst.
+    document = Path(sys.argv[2]) if len(sys.argv) > 2 else Path(__file__).resolve().parent / "fixtures" / "bestallarkrav.pdf"
     if not document.is_file():
         print("FAIL no document at {}".format(document))
         return 1
