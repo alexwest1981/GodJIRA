@@ -255,6 +255,36 @@ python3 bin/jira_flow.py plan --text "kunden vill kunna boka tid"
 python3 bin/jira_flow.py plan --file wish.md --create
 ```
 
+### The papers and the history, before the issues
+
+An issue that guesses where the project stands becomes wrong work. Two flags hand
+the agent what the wish came with and where the code is today, so the proposal
+lands *on top of* the project instead of beside it:
+
+```
+python3 bin/jira_flow.py plan --file wish.md \
+  --context ~/Documents/krav/kravspec.pdf \
+  --context ~/Documents/krav/motanteckningar \
+  --repo ~/Documents/Skolgrejer/Systemarkitektur
+```
+
+* `--context PATH` (repeatable) reads **pdf** (via `pdftotext`/poppler),
+  **docx/odt/xlsx/pptx** (zip + XML, no dependency), or anything textual; a
+  *folder* reads the files in it. 6000 characters per document, 20000 in total,
+  and what is cut is said so in the prompt — a short answer must never look like a
+  complete basis. An unknown format is read as text, but binary garbage is refused
+  with a message instead of being fed to the agent as mojibake.
+* `--repo DIR` adds the branch, the 30 newest commits, the uncommitted count and,
+  when the remote is GitHub and `gh` is signed in, the open PRs and issues. The
+  local clone alone is enough for the direction; a missing `gh` never stops a wish.
+* The prompt also tells the agent to read the board first when its Jira tools are
+  within reach, so it proposes what is *missing* and lets each description say
+  which existing issue it rests on.
+
+Both flags are read-only: `--create` is still what writes, and exactly the list you
+read. With `--json` the answer carries a `context` block saying what was read and
+how much of it was shown.
+
 GodJIRA never calls a model itself, and nobody's choice is anyone else's problem.
 Every user keeps their own list of agents, tried in order, first installed one
 answers:

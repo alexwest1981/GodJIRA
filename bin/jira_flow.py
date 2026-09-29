@@ -21,12 +21,17 @@ Commands
         Kept in ~/.config/jira-flow/config.json ("agents"), so every user has
         their own and nobody's choice depends on someone else's. Shipped list:
         hermes, then agy. JIRA_FLOW_AGENT overrides it for one run.
-    plan [--text TEXT | --file PATH] [--create] [--json] [--project KEY]
+    plan [--text TEXT | --file PATH] [--context PATH]... [--repo DIR]
+         [--create] [--json] [--project KEY]
         Hands the customer's wish to the agent you have chosen (JIRA_FLOW_AGENT,
         "claude -p" by default -- any CLI that reads a prompt on stdin and answers
         with JSON works) and gets issue proposals back. GodJIRA never calls a model
         itself: no key, no model list, no bill. Nothing is written until --create,
         and then exactly the list you just read.
+        --context hands over the papers the wish came with (pdf, docx/odt/xlsx,
+        text, or a folder of them) and --repo the project's own history (branch,
+        recent commits, open PRs and issues via gh when the remote is GitHub), so
+        the issues land where the project actually is instead of beside it.
     current
         The key of the item you are on right now (the commit hook reads this).
     install [repo] [--project KEY]
@@ -54,7 +59,9 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 from base64 import b64encode
+from html import unescape
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -80,9 +87,19 @@ AGENT_CHAIN = ("hermes chat --query-file -", "agy -p {prompt}")
 AGENT_TIMEOUT = int(os.environ.get("JIRA_FLOW_AGENT_TIMEOUT", "600"))
 PLAN_MAX = int(os.environ.get("JIRA_FLOW_PLAN_MAX", "10"))
 
+# Underlaget agenten får utöver själva önskemålet. Taken finns för att en agent
+# som får 300 000 tecken slutar läsa och börjar gissa; allt som klipps bort sägs
+# det om i prompten, så ett kort svar aldrig ser ut som ett fullständigt underlag.
+DOC_CHARS = 6000        # per dokument
+TOTAL_CHARS = 20000     # alla dokument tillsammans
+MAX_FILES = 20          # filer ur en mapp, fler än så är inte ett önskemål
+COMMITS = 30            # rader ur git-historiken
+
 PLAN_PROMPT = """\
 You are a scrum master. Split the customer's wish below into Jira issues for project {project}.
-
+If the board's own tools are within reach (jira_board, jira_backlog, jira_activity), read them
+first: the proposal has to fit what is already there, not duplicate it.
+{context}
 Only what the wish actually asks for. Do not invent scope, do not add epics, at most {limit} issues.
 Issue types that exist in this project: {types}.
 
@@ -98,6 +115,180 @@ issues, because that is the language the team reads on the board.
 The customer's wish:
 {wish}
 """
+
+
+# ------------------------------------------------------------------ kontext
+#
+# Ett ärende som gissar var projektet står blir fel arbete. Därför får agenten
+# önskemålet OCH underlaget: dokumenten (pdf, docx, text ...) och historiken
+# (grenen, de senaste commitarna, öppna PR:er). Allt klipps med ett synligt
+# besked — en tyst trunkering ser ut som ett fullständigt svar.
+
+ZIP_TEXT_SUFFIXES = (".docx", ".odt", ".xlsx", ".pptx")
+
+
+def xml_text(xml: str) -> str:
+    """XML -> läsbar text: stycken blir rader, taggarna bort."""
+    xml = re.sub(r"</(w:p|w:tr|text:p|text:h|a:p|row|si)>", "\n", xml)
+    return unescape(re.sub(r"<[^>]+>", "", xml))
+
+
+def zip_text(path) -> str:
+    """Texten ur docx/odt/xlsx/pptx: zip + XML ur stdlib, inget mer beroende."""
+    with zipfile.ZipFile(path) as z:
+        names = z.namelist()
+        if "word/document.xml" in names:
+            wanted = ["word/document.xml"]
+        elif "content.xml" in names:
+            wanted = ["content.xml"]
+        elif "xl/sharedStrings.xml" in names:
+            wanted = ["xl/sharedStrings.xml"]
+        else:
+            wanted = sorted(n for n in names
+                            if n.startswith("ppt/slides/slide") and n.endswith(".xml"))
+        return "\n".join(xml_text(z.read(n).decode("utf-8", "replace")) for n in wanted)
+
+
+def pdf_text(path) -> str:
+    """PDF via poppler (pdftotext). En egen PDF-tolkare vore ett projekt i sig."""
+    tool = shutil.which("pdftotext")
+    if not tool:
+        raise RuntimeError("reading {} needs pdftotext on PATH (install poppler)"
+                           .format(os.path.basename(str(path))))
+    done = subprocess.run([tool, "-enc", "UTF-8", str(path), "-"],
+                          capture_output=True, text=True, timeout=120)
+    if done.returncode != 0:
+        raise RuntimeError("pdftotext could not read {}: {}".format(
+            os.path.basename(str(path)), (done.stderr or "").strip()[:200]))
+    return done.stdout
+
+
+def read_document(path) -> str:
+    """Ett dokument som text. Ett okänt format läses som text — men skräp nekas:
+    en agent som får mojibake skriver ärenden om ingenting."""
+    p = Path(path).expanduser()
+    if not p.is_file():
+        raise RuntimeError("no such file: {}".format(path))
+    suffix = p.suffix.lower()
+    if suffix == ".pdf":
+        return pdf_text(p)
+    if suffix in ZIP_TEXT_SUFFIXES:
+        return zip_text(p)
+    text = p.read_bytes().decode("utf-8", "replace")
+    if text.count("\ufffd") > max(50, len(text) // 5):
+        raise RuntimeError("{} is not text (binary?); supported: pdf, {}, plain text"
+                           .format(p.name, ", ".join(x.lstrip(".") for x in ZIP_TEXT_SUFFIXES)))
+    return text
+
+
+def read_context(raw_paths):
+    """Dokumenten som text och vad som lästes. En namngiven fil som inte går att
+    läsa är ett fel; en fil som hittas i en mapp får hoppas över med besked."""
+    chunks, notes, used = [], [], 0
+    for raw in raw_paths or []:
+        p = Path(raw).expanduser()
+        if p.is_dir():
+            found = [f for f in sorted(p.iterdir())
+                     if f.is_file() and not f.name.startswith(".")][:MAX_FILES]
+            if not found:
+                notes.append({"path": str(p), "chars": 0, "error": "folder is empty"})
+            pairs = [(f, False) for f in found]
+        else:
+            pairs = [(p, True)]
+        for path, named in pairs:
+            try:
+                text = read_document(path)
+            except (RuntimeError, OSError, zipfile.BadZipFile) as exc:
+                if named:
+                    raise RuntimeError(str(exc))
+                notes.append({"path": str(path), "chars": 0, "error": str(exc)})
+                continue
+            text = re.sub(r"[ \t]+\n", "\n", text.replace("\r\n", "\n"))
+            text = re.sub(r"\n{3,}", "\n\n", text).strip()
+            whole = len(text)
+            keep = min(whole, DOC_CHARS, max(0, TOTAL_CHARS - used))
+            shown = text[:keep]
+            note = {"path": str(path), "chars": len(shown), "documentChars": whole}
+            if keep < whole:
+                note["truncated"] = True
+                shown += "\n[... {} of {} characters shown]".format(len(shown), whole)
+            used += len(shown)
+            chunks.append("### {}\n{}".format(path.name, shown))
+            notes.append(note)
+    return "\n\n".join(chunks), notes
+
+
+def git_out(root, *argv, timeout=30) -> str:
+    done = subprocess.run(["git", "-C", str(root)] + list(argv),
+                          capture_output=True, text=True, timeout=timeout)
+    return done.stdout.strip() if done.returncode == 0 else ""
+
+
+def gh_open(root, what: str, limit: int = 10):
+    """Öppna PR:er eller ärenden ur gh. Kastar om gh inte svarar."""
+    done = subprocess.run(["gh", what, "list", "--state", "open", "--limit", str(limit),
+                           "--json", "number,title,updatedAt"],
+                          cwd=str(root), capture_output=True, text=True, timeout=60)
+    if done.returncode != 0:
+        lines = [l for l in (done.stderr or "gh failed").strip().splitlines() if l.strip()]
+        raise RuntimeError(lines[-1][:200] if lines else "gh failed")
+    return json.loads(done.stdout or "[]")
+
+
+def repo_context(raw) -> tuple:
+    """Var projektet står: gren, senaste commitarna, öppna PR:er och ärenden.
+
+    Bara läsning, inget skrivs och inget nätverk utom gh:s egna API-anrop. Ett
+    saknat gh (eller en fjärr som inte är GitHub) ska inte stoppa ett önskemål:
+    historiken i den lokala klonen bär riktningen ändå.
+    """
+    root = Path(raw).expanduser()
+    if not root.is_dir():
+        return "", {"repo": str(root), "error": "not a directory"}
+    if not git_out(root, "rev-parse", "--is-inside-work-tree"):
+        return "", {"repo": str(root), "error": "not a git repository"}
+    branch = git_out(root, "rev-parse", "--abbrev-ref", "HEAD")
+    remote = git_out(root, "remote", "get-url", "origin")
+    log = [row for row in git_out(root, "log", "--date=short", "--pretty=%h %ad %s",
+                                  "-n", str(COMMITS)).splitlines() if row.strip()]
+    dirty = [row for row in git_out(root, "status", "--porcelain").splitlines() if row.strip()]
+    info = {"repo": str(root), "branch": branch, "remote": remote,
+            "commits": len(log), "uncommitted": len(dirty)}
+    lines = ["branch: {}".format(branch or "?"),
+             "uncommitted files: {}".format(len(dirty)),
+             "last {} commits (newest first):".format(len(log))]
+    lines += ["  " + row for row in log]
+    if "github.com" in (remote or "") and shutil.which("gh"):
+        for what, label in (("pr", "open pull requests"), ("issue", "open issues")):
+            try:
+                rows = gh_open(root, what)
+            except (RuntimeError, ValueError) as exc:
+                info[what] = "unreadable"
+                lines.append("{}: could not be read ({})".format(label, exc))
+                continue
+            info[what] = len(rows)
+            lines.append("{}: {}".format(label, len(rows)))
+            lines += ["  #{} {}{}".format(r.get("number"), r.get("title") or "",
+                                          " ({})".format((r.get("updatedAt") or "")[:10]))
+                      for r in rows]
+    elif remote:
+        lines.append("remote is not github.com ({}) — local history only".format(remote))
+    return "\n".join(lines), info
+
+
+def build_context(docs_text: str, repo_text: str, notes) -> str:
+    """Kontextblocket i prompten. Tomt när inget underlag gavs."""
+    if not (docs_text or repo_text):
+        return ""
+    parts = ["Context for the project as it stands — read it before you split the wish:",
+             "build on what is already there, and let each description say what it rests on."]
+    if docs_text:
+        parts += ["", "Papers handed in with the wish:", "", docs_text]
+    if repo_text:
+        parts += ["", "Where the code is today:", "", repo_text]
+    if any(note.get("truncated") for note in notes or []):
+        parts += ["", "Text above was cut to fit; the whole documents are on disk."]
+    return "\n".join(parts) + "\n"
 
 
 # -------------------------------------------------------------- pure logic
@@ -624,10 +815,24 @@ def cmd_plan(client_, args) -> int:
         say(args, {"ok": False, "error": message}, ["jira_flow: " + message])
         return 2
 
+    try:
+        docs_text, docs_notes = read_context(getattr(args, "context", []) or [])
+        repo_text, repo_info = ("", {})
+        if getattr(args, "repo", ""):
+            repo_text, repo_info = repo_context(args.repo)
+            if repo_info.get("error"):
+                raise RuntimeError("--repo {}: {}".format(args.repo, repo_info["error"]))
+    except (RuntimeError, OSError) as exc:
+        message = "the papers could not be read: {}".format(exc)
+        say(args, {"ok": False, "error": message}, ["jira_flow: " + message])
+        return 2
+
     board = client_.board(args.project)
     types = client_.types(args.project)
     prompt = PLAN_PROMPT.format(project=args.project, limit=PLAN_MAX,
-                                types=", ".join(types) or "Story, Task, Bug", wish=wish.strip())
+                                types=", ".join(types) or "Story, Task, Bug",
+                                context=build_context(docs_text, repo_text, docs_notes),
+                                wish=wish.strip())
     try:
         answered_by = agent_argv(prompt)[0]
         items = parse_plan(ask_agent(prompt))
@@ -636,13 +841,23 @@ def cmd_plan(client_, args) -> int:
         say(args, {"ok": False, "error": message}, ["jira_flow: " + message])
         return 2
 
+    context_note = {"documents": docs_notes, "repo": repo_info}
     if args.json and not args.create:
         # Med --create kommer ett enda dokument, längst ner, med både förslaget och
         # nycklarna: en maskinläsare ska inte behöva tolka två JSON-dokument i rad.
         print(json.dumps({"ok": True, "created": False, "proposal": items,
-                          "project": args.project, "agent": answered_by},
-                         ensure_ascii=False))
+                          "project": args.project, "agent": answered_by,
+                          "context": context_note}, ensure_ascii=False))
     elif not args.json:
+        if docs_notes or repo_info:
+            print("read with the wish: {} document(s) ({} chars){}".format(
+                len(docs_notes), sum(n.get("chars") or 0 for n in docs_notes),
+                ", repo {} ({})".format(repo_info.get("branch"), repo_info.get("repo"))
+                if repo_info.get("repo") else ""))
+            for note in docs_notes:
+                print("  {}{}{}".format(note["path"], "" if not note.get("error") else " — " + note["error"],
+                                        " [{} of {} chars]".format(note["chars"], note["documentChars"])
+                                        if note.get("truncated") else ""))
         print("{} issue(s) proposed for {} ({}):".format(len(items), args.project, answered_by[0]))
         for number, item in enumerate(items, 1):
             print("  {}. [{}] {}  ({})".format(number, item["type"], item["summary"],
@@ -674,7 +889,7 @@ def cmd_plan(client_, args) -> int:
     for entry in created:
         client_.log("flow-plan", entry["key"], entry["summary"][:80])
     say(args, {"ok": True, "created": created, "proposal": items, "project": args.project,
-               "agent": answered_by}, [])
+               "agent": answered_by, "context": context_note}, [])
     return 0
 
 
@@ -951,9 +1166,86 @@ def selftest() -> int:
         except ValueError:
             pass
     checks += 1
-    prompt = PLAN_PROMPT.format(project="SCRUM", limit=PLAN_MAX, types="Story, Task", wish="kunden vill boka")
+    prompt = PLAN_PROMPT.format(project="SCRUM", limit=PLAN_MAX, types="Story, Task",
+                                context="", wish="kunden vill boka")
     assert "SCRUM" in prompt and "kunden vill boka" in prompt, "prompten bär projekt och önskemål"
-    assert "{project}" not in prompt and "{wish}" not in prompt and "{limit}" not in prompt, "ofylld platshållare"
+    for filler in ("{project}", "{wish}", "{limit}", "{context}", "{types}"):
+        assert filler not in prompt, "ofylld platshållare: " + filler
+    checks += 1
+
+    # Underlaget: dokument läses, klipps med besked, och skräp nekas.
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp)
+        (base / "krav.txt").write_text("Krav: kunden ska kunna spara.\n")
+        with zipfile.ZipFile(base / "krav.docx", "w") as z:
+            z.writestr("word/document.xml",
+                       "<w:document><w:body><w:p><w:t>Krav: knappen ska spara kunden"
+                       "</w:t></w:p><w:p><w:t>Rad två</w:t></w:p></w:body></w:document>")
+        (base / "stor.txt").write_text("x" * (DOC_CHARS + 500))
+        (base / "bild.bin").write_bytes(bytes(range(256)) * 60)
+        (base / "anteckningar").mkdir()
+        (base / "anteckningar" / "mote.txt").write_text("Möte: vi fryser priset i oktober.")
+        (base / "anteckningar" / "trasig.bin").write_bytes(bytes(range(256)) * 60)
+
+        docs, notes = read_context([str(base / "krav.txt"), str(base / "krav.docx"),
+                                   str(base / "stor.txt"), str(base / "anteckningar")])
+        by_name = {note["path"].split("/")[-1]: note for note in notes}
+        assert "Krav: kunden ska kunna spara." in docs, "textfilen lästes"
+        assert "knappen ska spara kunden" in docs and "Rad två" in docs, "docx-texten lästes"
+        assert by_name["stor.txt"]["truncated"] and by_name["stor.txt"]["chars"] == DOC_CHARS
+        assert "characters shown]" in docs, "klippet syns i texten"
+        assert by_name["mote.txt"]["chars"] > 0, "filen i mappen lästes"
+        assert by_name["trasig.bin"].get("error"), "skräp i en mapp hoppas över med besked"
+        assert sum(n["chars"] for n in notes) <= TOTAL_CHARS + 100
+        for needed in ("krav.pdf", "nonsense.png", "finns-inte.txt"):
+            target = base / needed
+            if needed != "finns-inte.txt" and not target.exists():
+                if needed.endswith(".pdf"):
+                    target.write_bytes(b"%PDF-1.4 inte en riktig pdf")
+                else:
+                    target.write_bytes(bytes(range(256)) * 60)
+            try:
+                read_context([str(target)])
+                raise AssertionError("skulle ha vägrat: " + needed)
+            except (RuntimeError, OSError):
+                pass
+        assert build_context("", "", notes) == "", "inget underlag ger inget block"
+        block = build_context(docs, "", notes)
+        assert "knappen ska spara kunden" in block, "blocket bär underlaget"
+        filled = PLAN_PROMPT.format(project="S", limit=1, types="T", context=block, wish="w")
+        assert "knappen ska spara kunden" in filled, "underlaget hamnar i prompten"
+        assert "Context for the project as it stands" in filled, filled[:200]
+    checks += 1
+
+    # Historiken: en riktig klon i scratch, och ett tydligt nej för allt annat.
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp) / "prov-repo"
+        repo.mkdir()
+        env = dict(os.environ, GIT_AUTHOR_NAME="prov", GIT_AUTHOR_EMAIL="prov@local",
+                   GIT_COMMITTER_NAME="prov", GIT_COMMITTER_EMAIL="prov@local")
+        def git(*argv):
+            return subprocess.run(["git", "-C", str(repo)] + list(argv), env=env,
+                                  capture_output=True, text=True)
+        git("init", "-q", "-b", "main")
+        (repo / "a.txt").write_text("hej")
+        git("add", "a.txt")
+        git("commit", "-q", "-m", "SCRUM-101 bygg knappen som sparar")
+        text, info = repo_context(str(repo))
+        assert info["branch"] == "main" and info["commits"] == 1, info
+        assert "SCRUM-101 bygg knappen som sparar" in text, text
+        assert "uncommitted files: 0" in text, text
+        assert repo_context(str(Path(tmp) / "finns-inte"))[1].get("error"), "saknad mapp"
+        assert repo_context(str(base / "krav.txt"))[1].get("error"), "en fil är inte ett repo"
+        (Path(tmp) / "inte-repo").mkdir()
+        probe = Path(tmp) / "inte-repo"
+        if git_out(probe, "rev-parse", "--is-inside-work-tree"):
+            # En temp-mapp kan ligga inuti ett annat repo (scratch-katalogen gör det
+            # här): då läser git historiken uppåt, vilket är gits egen regel.
+            print("note: the temp dir sits inside a work tree; no-repo case not exercised")
+        else:
+            assert repo_context(str(probe))[1].get("error"), "mapp utanför repo"
+    checks += 1
 
     class FakeClient:
         def __init__(self):
@@ -1026,7 +1318,6 @@ def selftest() -> int:
     checks += 1
 
     # add/set/rm mot en config i scratch: den riktiga får aldrig röras av ett prov.
-    import tempfile
     with tempfile.TemporaryDirectory() as tmp:
         saved_file = CONFIG_FILE
         try:
@@ -1107,6 +1398,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="write exactly the proposed list (default: write nothing)")
     p_plan.add_argument("--json", action="store_true", help="machine-readable result")
     p_plan.add_argument("--project", default=DEFAULT_PROJECT)
+    p_plan.add_argument("--context", action="append", default=[], metavar="PATH",
+                        help="papers the wish came with: a file or a folder (repeatable)")
+    p_plan.add_argument("--repo", default="", metavar="DIR",
+                        help="the project's repo: branch, recent commits, open PRs/issues")
     p_ins.add_argument("repo", nargs="?", help="repository root (default: here)")
     p_ins.add_argument("--project", default=DEFAULT_PROJECT)
     p_ins.add_argument("--dry-run", action="store_true")
