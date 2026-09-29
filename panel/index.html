@@ -114,7 +114,8 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
 
   /* ------------------------------------------------------------ icon rail */
   .rail {
-    width: 58px; flex: 0 0 58px; background: var(--rail); border-right: 1px solid var(--line);
+    /* 78 = 58 + 20: ikonerna är kvar på 46 px, så luften runt dem växer. */
+    width: 78px; flex: 0 0 78px; background: var(--rail); border-right: 1px solid var(--line);
     align-items: center; gap: 12px; padding: 12px 0; height: 100%;
   }
   .rail .mark {
@@ -125,7 +126,9 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
     background: var(--panel) url(/godjira.svg) center top / auto 39px no-repeat;
   }
   .railitem {
-    width: 46px; display: grid; place-items: center; gap: 3px; padding: 6px 0; border-radius: 8px;
+    /* 64 = bredaste etiketten ("Importera" 56,6 px) + luft: vid 46 px spillde tre av
+       fem etiketter över sin egen ruta, alltså var hover-ytan smalare än sin text. */
+    width: 64px; display: grid; place-items: center; gap: 3px; padding: 6px 0; border-radius: 8px;
     color: var(--muted); cursor: pointer; font-size: 9px; letter-spacing: .04em; text-transform: uppercase;
   }
   .railitem .g { font-size: 15px; line-height: 1; }
