@@ -116,11 +116,13 @@
   .wl .r .tside { margin-left: auto; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11.5px; white-space: nowrap; }
 
   /* ----------------------------------------------------------------- board */
-  .cols { display: flex; gap: 14px; overflow-x: auto; padding-bottom: 4px; align-items: flex-start; }
-  .bcol { flex: 0 0 296px; }
+  .cols { display: flex; flex-direction: column; gap: 20px; }
   .bcol > h3 { margin: 0 0 9px; padding: 0 4px; display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; }
   .bcol > h3 .c { color: var(--muted); font-weight: 400; font-size: 12px; }
-  .bcol .stack { display: flex; flex-direction: column; gap: 8px; max-height: 68vh; overflow-y: auto; padding: 1px; }
+  .bgrid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(264px, 1fr));
+    gap: 8px; padding: 1px; align-items: start;
+  }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 11px; }
   .card:hover { background: var(--card-hi); border-color: var(--line-2); }
   .card .c1 { display: flex; align-items: center; gap: 7px; }
@@ -155,7 +157,7 @@
   .cardflag { font-size: 11px; color: var(--amber); }
 
   /* ----------------------------------------------------------------- table */
-  .tablewrap { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: auto; max-height: 72vh; }
+  .tablewrap { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; }
   /* Fixed layout so the header widths hold: a long sprint name clips in its cell
      instead of wrapping and stretching one row taller than its neighbours. */
   table { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
@@ -164,7 +166,7 @@
   td.muted { color: var(--text-2); }
   th {
     color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
-    background: var(--panel); position: sticky; top: 0; z-index: 1;
+    background: var(--panel);
   }
   tr:hover td { background: #ffffff06; }
   td .t { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 460px; }
@@ -434,11 +436,11 @@ function renderBoard() {
   const byStatus = {};
   boardItems().forEach(i => (byStatus[i.statusId] = byStatus[i.statusId] || []).push(i));
   document.getElementById("cols").innerHTML = (b.columns || []).map(c => {
-    const list = (byStatus[c.statusId] || []).filter(matches), shown = list.slice(0, 60);
+    const list = (byStatus[c.statusId] || []).filter(matches);
     const cat = list.length ? list[0].statusCategory : "new";
-    return `<div class="bcol"><h3>${stateDot(cat)}${esc(c.name)}<span class="c">${list.length}</span></h3>
-      <div class="stack">${shown.map(card).join("") || `<div class="empty">${TEXT.empty}</div>`}
-      ${list.length > shown.length ? `<div class="empty">+${list.length - shown.length} äldre</div>` : ""}</div></div>`;
+    const head = `<h3>${stateDot(cat)}${esc(c.name)}<span class="c">${list.length}</span>` +
+      (list.length ? "" : `<span class="empty" style="font-size:12px">· ${TEXT.empty.toLowerCase()}</span>`) + `</h3>`;
+    return `<div class="bcol">${head}${list.length ? `<div class="bgrid">${list.map(card).join("")}</div>` : ""}</div>`;
   }).join("");
 }
 
@@ -504,7 +506,9 @@ function render() {
 async function load(refresh) {
   try {
     const r = await fetch(refresh ? "/api/refresh" : "/api/state", { cache: "no-store" });
-    STATE = await r.json(); render();
+    const next = await r.json();
+    if (!refresh && STATE && next.generatedAt === STATE.generatedAt) return;   // same answer, leave the page alone
+    STATE = next; render();
   } catch (e) {
     document.getElementById("crumbs").innerHTML = `<span class="err">ingen kontakt med panelen på :8788</span>`;
   }
