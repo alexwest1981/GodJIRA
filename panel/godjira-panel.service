@@ -5,8 +5,8 @@ After=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/alex/.config/omarchy/plugins/custom.jira
-ExecStart=/usr/bin/python3 /home/alex/.config/omarchy/plugins/custom.jira/panel/server.py
+WorkingDirectory=/home/alex/Projects/godjira
+ExecStart=/usr/bin/python3 /home/alex/Projects/godjira/panel/server.py
 # The panel reads `gh` and the Jira token: gh lives in ~/.local/bin, and the token
 # in the session keyring (without the two variables below it answers err.noTokenKeyring).
 Environment=PANEL_PORT=8788

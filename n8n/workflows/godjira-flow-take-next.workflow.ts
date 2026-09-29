@@ -86,7 +86,7 @@ One press of *Execute workflow* is the whole gesture. The panel still needs two;
                 {
                     id: 'c24a9475-c5c0-4f22-b80b-d1732367d398',
                     name: 'repo',
-                    value: '/home/alex/.config/omarchy/plugins/custom.jira',
+                    value: '/home/alex/Projects/godjira',
                     type: 'string',
                 },
                 {

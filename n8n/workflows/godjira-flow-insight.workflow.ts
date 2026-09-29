@@ -39,7 +39,6 @@ import { workflow, node, links } from '@n8n-as-code/transformer';
     name: 'GodJIRA — the flow: insight',
     active: true,
     isArchived: false,
-    projectId: 'xb5Q4TajmScCltIA',
     settings: { executionOrder: 'v1', binaryMode: 'separate' },
 })
 export class GodjiraTheFlowInsightWorkflow {
@@ -107,7 +106,7 @@ The commands carry no project key: the CLI takes it from the repo link, so this 
                 {
                     id: '57df65fa-26d0-4a09-94ab-72d48519ddef',
                     name: 'repo',
-                    value: '/home/alex/.config/omarchy/plugins/custom.jira',
+                    value: '/home/alex/Projects/godjira',
                     type: 'string',
                 },
                 {

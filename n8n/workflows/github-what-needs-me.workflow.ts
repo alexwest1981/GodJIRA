@@ -83,7 +83,7 @@ Empty is a real answer: "nothing waiting" is what a quiet week looks like.
                 {
                     id: 'd8e3f04c-b216-4f20-9d5c-4e7fab3c9f43',
                     name: 'repo',
-                    value: '/home/alex/.config/omarchy/plugins/custom.jira',
+                    value: '/home/alex/Projects/godjira',
                     type: 'string',
                 },
                 {

@@ -80,7 +80,7 @@ from pathlib import Path
 
 SELF = Path(__file__).resolve()
 BRIDGE_DIR = Path(
-    os.environ.get("JIRA_BRIDGE_DIR", str(Path.home() / ".config/omarchy/plugins/custom.jira/bin"))
+    os.environ.get("JIRA_BRIDGE_DIR", str(Path(__file__).resolve().parent))
 )
 CONFIG_FILE = Path.home() / ".config/jira-flow/config.json"
 # Repots Jira-koppling. Ingen hemlighet (ingen token), men den hör i samma stängda

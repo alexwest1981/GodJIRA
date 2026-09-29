@@ -65,17 +65,23 @@ delete issues when you have the right permissions.
 
 ## Install (Omarchy)
 
-Add the plugin from git. `manifest.json` declares the id `custom.jira`, so the
-repo is cloned into `~/.config/omarchy/plugins/custom.jira/` automatically:
+This repo is the application (panel, CLI, n8n flows) **and** the source of the
+bar plugin. Clone it where you keep code, then let the installer copy the
+shell's files into the plugin folder:
 
 ```
-omarchy plugin add https://github.com/alexwest1981/GodJIRA.git --enable
+git clone https://github.com/alexwest1981/GodJIRA.git ~/Projects/godjira
+~/Projects/godjira/install.sh
+omarchy plugin enable custom.jira     # put the Jira widget in the right section
 ```
 
-This validates the manifest, then enables the plugin and places the **Jira**
-bar widget in the right bar section by default. Click the widget in the bar to
-open the panel. A restart of the shell is not needed; plugin code hot-reloads
-on save.
+`install.sh` copies manifest + QML + views/components + i18n + assets, validates
+the manifest and rescans the shell. It also writes one generated shim per CLI
+(`bin/jira_bridge.py`, `bin/jira_flow.py`) into the plugin folder; the shims hand
+the work to this repo. That is deliberate: the shell hot-reloads a local plugin
+on *any* file change inside its folder, so the app must not be edited there. Run
+`install.sh` again after pulling changes to QML, i18n or the manifest — edits to
+`bin/`, `panel/` or `n8n/` need no reinstall (the panel reads them live).
 
 ### Floating window (Hyprland)
 
@@ -104,17 +110,15 @@ omarchy plugin remove custom.jira             # uninstall (removes the folder)
 
 ### Updating
 
-When a new commit is published to the git repo, pull it into the installed copy:
-
 ```
-omarchy plugin update custom.jira
+cd ~/Projects/godjira && git pull
+./install.sh                                    # only if QML/i18n/manifest changed
+systemctl --user restart godjira-panel.service    # the hub's front door
 ```
 
-This runs a `git pull` inside the plugin folder (same as
-`git -C ~/.config/omarchy/plugins/custom.jira pull`). QML edits are hot-reloaded
-by the shell; if the open window still looks stale after an update, restart the
-shell and reopen it (`omarchy-restart-shell`, see Development notes). Updates
-need the same prerequisites as install: `git` and `python3` on PATH.
+`omarchy plugin update custom.jira` no longer applies: the plugin folder is a
+copy, not a git checkout, so it has nothing to pull. QML edits land when
+`install.sh` re-copies them (the shell hot-reloads the folder on the write).
 
 Requires `git` and `python3` on PATH (the bridge is Python stdlib-only; `secret-tool`
 is only needed for the real Jira Cloud mode, see below).
