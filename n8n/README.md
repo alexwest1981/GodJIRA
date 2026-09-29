@@ -12,7 +12,7 @@ hit, så tavlan kan aldrig visa en annan sanning än den panelen skriver.
 | Adress | http://127.0.0.1:5678 (bara localhost) |
 | Tjänst | `systemctl --user status n8n` · `restart` · `stop` |
 | Enhet | `~/.config/systemd/user/n8n.service` — kopian i `n8n/n8n.service` är samma fil (startar vid inloggning, `loginctl enable-linger` är satt) |
-| Node | 22.23.3 ur mise — **inte** maskinens 26: n8n:s egna beroenden bygger en nativ modul utan färdig binär för 26, och ett misslyckat bygge tar hela den globala installationen med sig |
+| Node | 22.23.3 ur mise — **inte** maskinens 26: n8n:s egna beroenden bygger en nativ modul utan färdig binär för 26, och ett misslyckat bygge tar hela den globala installationen med sig. I skalet är `n8n` en rad i `~/.local/bin/n8n` som pekar dit |
 | Ägarlösenord | `secret-tool lookup service n8n-godjira account owner` |
 | API-nyckel | `secret-tool lookup service n8n-godjira account api-key` (samma som `n8nac` använder) |
 
