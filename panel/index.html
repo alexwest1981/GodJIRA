@@ -493,7 +493,10 @@ let STATE = null, view = "board";
 const SHARED_PREFIX = "GEMENSAMT";
 const isShared = i => String(i.summary || "").trim().toUpperCase().startsWith(SHARED_PREFIX);
 const RANK = { highest: 0, high: 1, medium: 2, low: 3 };
-const F = { scope: "all", prio: new Set() };   // prio empty = no priority filter at all
+// pool = vilken hög tabellen visar. "backlog" är ärendena utan aktiv sprint -- de
+// ligger inte på tavlan, och Backlog-raden i sidofältet ledde förut till tavlan
+// eftersom den hade samma data-v som den. Samma tabell, bara en annan hög.
+const F = { scope: "all", prio: new Set(), pool: "" };
 
 /* ---------------------------------------------------------------- bitar --- */
 const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -602,7 +605,7 @@ function priorities() {
 }
 
 function renderFilters() {
-  const work = boardItems().concat(ghItems());
+  const work = viewRows();
   const chip = (label, on, attrs, count) =>
     `<button class="chip ${on ? "on" : ""}" ${attrs}>${esc(label)}${count != null ? `<span class="c">${count}</span>` : ""}</button>`;
   document.getElementById("filters").innerHTML =
@@ -649,13 +652,13 @@ function renderSide() {
     <div class="head"><b>GodJIRA</b><span class="grow"></span>
       <button class="ghost" title="hämta färskt" data-act="refresh">↻</button></div>
     <div class="item ${view === "overview" ? "on" : ""}" data-v="overview"><span class="g">◫</span>Översikt</div>
-    <div class="item ${view === "items" ? "on" : ""}" data-v="items"><span class="g">☰</span>${TEXT.allTasks}<span class="c">${all + ghItems().length}</span></div>
+    <div class="item ${view === "items" && F.pool !== "backlog" ? "on" : ""}" data-v="items"><span class="g">☰</span>${TEXT.allTasks}<span class="c">${all + ghItems().length}</span></div>
     <div class="item ${view === "import" ? "on" : ""}" data-v="import"><span class="g">⇪</span>Importera<span class="c">${IMP.created.length || ""}</span></div>
     <div class="sect">Jira</div>
     <div class="item" data-v="items"><span class="g">◆</span>${esc(proj.key || "Jira")}<span class="c">${all}</span></div>
     <div class="sub">
       <div class="item ${view === "board" ? "on" : ""}" data-v="board"><span class="g">▤</span>${esc(b.name || "Tavlan")}<span class="c">${open}</span></div>
-      <div class="item" data-v="board"><span class="g">↓</span>Backlog<span class="c">${backlog().length}</span></div>
+      <div class="item ${view === "items" && F.pool === "backlog" ? "on" : ""}" data-v="items" data-pool="backlog"><span class="g">↓</span>Backlog<span class="c">${backlog().length}</span></div>
       <div class="item" data-v="items"><span class="g">✓</span>Klara<span class="c">${all - open}</span></div>
     </div>
     <div class="sect">GitHub</div>
@@ -673,7 +676,9 @@ function renderCrumbs() {
     overview: ["GodJIRA", "Översikt",
       (STATE.project && STATE.project.key ? STATE.project.key + " · " + (STATE.project.repo ? "ur länken " + STATE.project.repo : "standarden") : "")],
     board: ["Jira", b.name || "Tavlan", ""],
-    items: ["GodJIRA", TEXT.allTasks, boardItems().length + ghItems().length + " st"],
+    items: F.pool === "backlog"
+      ? ["Jira", "Backlog", backlog().length + " i backloggen"]
+      : ["GodJIRA", TEXT.allTasks, boardItems().length + ghItems().length + " st"],
     repos: ["GitHub", g.login || "GitHub", g.repos.length + " " + TEXT.repos],
     automatik: ["Godjira", "Automatik", "n8n:s egen tavla"],
     import: ["GodJIRA", "Importera", "underlag in, ärenden ut"],
@@ -1053,9 +1058,18 @@ function renderBoard() {
   }).join("");
 }
 
+// Raderna vyn arbetar med: hela högen, eller bara backloggen. Både tabellen och
+// filterflikarnas tal räknas härifrån, så flikarnas siffror hör till det man ser.
+function viewRows() {
+  if (F.pool === "backlog") {
+    return backlog().map(i => ({ ...i, source: "JIRA", when: new Date(i.updatedMs || 0).toISOString() }));
+  }
+  return boardItems().map(i => ({ ...i, source: "JIRA", when: new Date(i.updatedMs || 0).toISOString() }))
+    .concat(ghItems());
+}
+
 function renderItems() {
-  const rows = boardItems().map(i => ({ ...i, source: "JIRA", when: new Date(i.updatedMs || 0).toISOString() }))
-    .concat(ghItems()).filter(matches)
+  const rows = viewRows().filter(matches)
     .sort((a, c) => (Date.parse(c.when) || 0) - (Date.parse(a.when) || 0));
   document.getElementById("itemsTable").innerHTML =
     `<thead><tr><th style="width:60px">Källa</th><th style="width:152px">ID</th><th>Titel</th>
@@ -1477,12 +1491,14 @@ function readHash() {
   const p = new URLSearchParams(query || "");
   F.scope = TEXT.scope[p.get("scope")] ? p.get("scope") : "all";
   F.prio = new Set((p.get("prio") || "").split(",").filter(Boolean));
+  F.pool = p.get("pool") === "backlog" ? "backlog" : "";
   return TEXT.views[v] ? v : "board";
 }
 function writeHash() {
   const q = new URLSearchParams();
   if (F.scope !== "all") q.set("scope", F.scope);
   if (F.prio.size) q.set("prio", [...F.prio].join(","));
+  if (F.pool) q.set("pool", F.pool);
   location.hash = view + (q.toString() ? "?" + q : "");
 }
 function show(v) {
@@ -1525,7 +1541,7 @@ document.addEventListener("click", e => {
   // syntes ingenting hända (mätt: vyn stod kvar på Uppgifter medan repot laddades).
   if (repo) { show("repos"); return repoOpen(repo.dataset.repo); }
   const t = e.target.closest("[data-v]"); if (!t) return;
-  e.preventDefault(); show(t.dataset.v);
+  e.preventDefault(); F.pool = t.dataset.pool || ""; show(t.dataset.v);
 });
 document.getElementById("refresh").addEventListener("click", () => load(true));
 
