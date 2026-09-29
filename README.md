@@ -193,10 +193,13 @@ python3 panel/check.py                     # one check: answers, and numbers agr
 ### Five views, Plane's anatomy
 
 The hub is modelled on Plane (`makeplane/plane`), which is the reference for how it
-should read — the *anatomy*, not the colours: the palette comes from the mark
-(`assets/godjira.svg`), so the accent is the logo's own teal (measured 5.47:1 on the
-background) and the status colours were moved off it rather than near it. Plane's
-blue belongs to Plane. The anatomy is still Plane's: an icon rail plus a nav sidebar with
+should read — the anatomy, and the *surfaces*: the surface ramp, borders and text
+ladder are Plane's own dark tokens (`@makeplane/propel` 0.9.2, `@variant dark`,
+oklch converted to hex in the `:root` block), because our own values had the rail
+*darker* than the canvas and everything read as one black mass. The accent is
+ours — the mark's teal (`assets/godjira.svg`), measured 5.33:1 on that canvas — and
+the status colours were moved off it rather than near it. The tinted state chips
+and the scrollbar treatment are Plane's too. Plane's blue belongs to Plane. The anatomy is still Plane's: an icon rail plus a nav sidebar with
 section labels, a breadcrumb header
 with a view switcher, columns whose heading is a state dot + name + count, and work-item
 cards carrying a type glyph, the id, the title, then one row of priority indicator,

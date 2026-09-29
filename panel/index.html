@@ -12,9 +12,16 @@
      due date) and avatars, plus a table of every work item across both sources.
      No writes: the panel reads the same CLI the flow uses, and never decides. */
   :root {
-    --bg: #0b0b0e; --rail: #08080a; --side: #101014; --panel: #16161b;
-    --card: #1b1b21; --card-hi: #212128; --line: #26262e; --line-2: #33333d;
-    --text: #ececf1; --text-2: #a5a5b3; --muted: #71717f;
+    /* Ytorna är Plane:s mörka ramp (@makeplane/propel 0.9.2, @variant dark, oklch
+       omräknat till hex): neutral-black #0f0f10, 100 #141415, 200 #181a1b, 300 #1d1f20,
+       400 #222425, 500 #2c2e30, 600 #36393a, 1000 #afb3b6, 1100 #cacdce, 1200 #e4e6e7.
+       Skälet att byta: vår kanvas var #0b0b0e och rälen #08080a -- rälen låg UNDER
+       kanvasen, så kromet flöt ihop till en svart massa i stället för att klättra.
+       Nu stiger varje steg ett snäpp: kanvas (#0f0f10) -> räl -> sidofält -> panel och
+       kort -> kort vid hover, med en synlig ram emellan. Det är formen Plane har. */
+    --bg: #0f0f10; --rail: #141415; --side: #181a1b; --panel: #1d1f20;
+    --card: #1d1f20; --card-hi: #222425; --line: #222425; --line-2: #2c2e30; --line-3: #36393a;
+    --text: #e4e6e7; --text-2: #cacdce; --muted: #afb3b6;
     /* Paletten kommer ur märket (assets/godjira.svg): teal #04997a och marin
        #0b3656. Accenten ÄR märkets teal -- mätt 5,47:1 mot bakgrunden, alltså
        läsbar som text/länk och inte en påhittad granne till märket. Den gamla
@@ -57,6 +64,19 @@
   .key { font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
   a { color: inherit; text-decoration: none; }
   button { font: inherit; }
+  /* Rullister enligt Plane (@plane/tailwind-config): spåret transparent, tummen rundad
+     vit-alpha som klättrar 20 -> 50 % vid hover, indragen 3 px via genomskinlig ram.
+     Fällan de skriver om själva: scrollbar-width/scrollbar-color STÄNGER AV
+     ::-webkit-scrollbar i Chromium 121+, så bara webkit-reglerna sätts här. Panelen
+     körs i Brave, där de gäller. */
+  ::-webkit-scrollbar { width: 11px; height: 11px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: oklch(1 0 0 / 20%); border: 3px solid transparent; background-clip: padding-box;
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: oklch(1 0 0 / 50%); background-clip: padding-box; }
+  ::-webkit-scrollbar-corner { background: transparent; }
   /* --------------------------------------------------------- import ---- */
   .impfile { cursor: pointer; }
   .impitem { display: flex; gap: 8px; align-items: flex-start; padding: 7px 0; border-top: 1px solid var(--line); }
@@ -106,7 +126,7 @@
     background: transparent; border: 1px solid var(--line-2); color: var(--text-2);
     border-radius: var(--r); padding: 3px 8px; font-size: 12px; cursor: pointer;
   }
-  .ghost:hover { border-color: #4a4a58; color: var(--text); }
+  .ghost:hover { border-color: var(--line-3); color: var(--text); }
   .item {
     display: flex; align-items: center; gap: 9px; padding: 6.5px 9px; border-radius: var(--r);
     color: var(--text-2); cursor: pointer; font-size: 13px;
@@ -124,6 +144,9 @@
   header.top {
     display: flex; align-items: center; gap: 10px; padding: 10px 18px; border-bottom: 1px solid var(--line);
     background: var(--bg); position: sticky; top: 0; z-index: 5;
+    /* Filtreringen växer med antalet chip. Utan wrap klipptes sista chipen ("Low")
+       i stället för att flytta ned till nästa rad. */
+    flex-wrap: wrap; row-gap: 8px;
   }
   .crumbs { display: flex; align-items: center; gap: 7px; font-size: 13px; }
   .crumbs .sep { color: var(--muted); }
@@ -132,13 +155,16 @@
   .seg button { background: transparent; border: 0; color: var(--muted); padding: 4px 9px; cursor: pointer; font-size: 13px; }
   .seg button:hover { color: var(--text); background: var(--panel); }
   .seg button.on { background: var(--card-hi); color: var(--text); }
-  .filters { display: flex; align-items: center; gap: 4px; }
+  .filters { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
   .chip {
     border: 1px solid var(--line-2); background: transparent; color: var(--text-2);
     border-radius: 999px; padding: 2px 9px; font-size: 11.5px; cursor: pointer; white-space: nowrap;
   }
-  .chip:hover { color: var(--text); border-color: #4a4a58; }
-  .chip.on { background: var(--card-hi); color: var(--text); border-color: #4a4a58; }
+  .chip:hover { color: var(--text); border-color: var(--line-3); }
+  .chip.on {
+    background: color-mix(in oklch, var(--accent) 22%, transparent);
+    border-color: color-mix(in oklch, var(--accent) 45%, transparent); color: var(--text);
+  }
   .chip.sep { border: 0; color: var(--line-2); padding: 0 2px; cursor: default; }
   .chip .c { color: var(--muted); margin-left: 4px; }
   input[type="search"] {
@@ -200,9 +226,16 @@
 
   .avatar {
     width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
-    font-size: 10px; font-weight: 600; color: #0b0b0e; flex: 0 0 22px;
+    font-size: 10px; font-weight: 600; color: var(--bg); flex: 0 0 22px;
   }
   .avatar.sm { width: 20px; height: 20px; flex-basis: 20px; }
+  /* Plane:s tintade state-chip: samma hue i ytan som i pricken, svag styrka. Utan den
+     blir tavlan en rad identiska gråa piller -- vilket är precis vad den var. */
+  .pill.tint {
+    background: color-mix(in oklch, var(--tint) 20%, transparent);
+    border-color: color-mix(in oklch, var(--tint) 45%, transparent);
+    color: var(--text);
+  }
   .pill {
     display: inline-flex; align-items: center; gap: 5px; padding: 1.5px 7px; border: 1px solid var(--line-2);
     border-radius: 5px; font-size: 11.5px; color: var(--text-2); background: #ffffff08;
@@ -369,14 +402,16 @@ const TYPE = [["epic", "◆", css("--navy")], ["story", "▣", css("--green")], 
               ["bug", "●", css("--red")], ["subtask", "↳", css("--muted")]];
 function typeGlyph(name) {
   const k = String(name || "").toLowerCase();
-  const hit = TYPE.find(([key]) => k.includes(key)) || ["", "▫", "#a5a5b3"];
+  const hit = TYPE.find(([key]) => k.includes(key)) || ["", "▫", css("--muted")];
   return `<span class="typeg" style="color:${hit[2]}" title="${esc(name || "")}">${hit[1]}</span>`;
 }
 // Plane's state icon: hollow for new, amber for in-flight, green for done.
+const stateColor = cat => cat === "done" ? "var(--green)" : cat === "indeterminate" ? "var(--amber)" : "var(--muted)";
 function stateDot(cat) {
-  const c = cat === "done" ? "var(--green)" : cat === "indeterminate" ? "var(--amber)" : "var(--muted)";
-  return `<span class="dot" style="background:${c}"></span>`;
+  return `<span class="dot" style="background:${stateColor(cat)}"></span>`;
 }
+const statePill = (cat, text) =>
+  `<span class="pill tint" style="--tint:${stateColor(cat)}">${stateDot(cat)}${esc(text)}</span>`;
 // Plane's priority icon: signal bars for High/Medium/Low, a red box for Highest/Urgent.
 function prio(name) {
   const p = String(name || "").toLowerCase();
@@ -524,7 +559,7 @@ function renderFlowPick() {
     <div class="card" style="border-left:2px solid var(--accent)">
       <div class="c1">${typeGlyph("Task")}<span class="key">${esc(p.key)}</span><span class="grow"></span>${prio(p.priority)}</div>
       <div class="t">${esc(p.summary)}</div>
-      <div class="c2"><span class="pill">${stateDot("new")}${esc(p.status || "")}</span>
+      <div class="c2">${statePill("new", p.status || "")}
         ${p.assignee ? `<span class="pill">${avatar(p.assignee, true)}${esc(p.assignee)}</span>` : `<span class="pill">oassignerat</span>`}</div>
     </div>
     ${f.someoneElses ? `<div class="empty" style="margin-top:9px"><span class="key">${esc(f.someoneElses.key)}</span> ${TEXT.someoneElses}</div>` : ""}
@@ -560,7 +595,6 @@ function card(i) {
       <span class="grow"></span>${i.assigneeName ? avatar(i.assigneeName, true) : ""}</div>
     <div class="t">${esc(i.summary)}</div>
     <div class="c2">${prio(i.priorityName)}
-      ${i.statusName ? `<span class="pill">${stateDot(i.statusCategory)}${esc(i.statusName)}</span>` : ""}
       ${i.dueMs ? `<span class="pill">📅 ${dt(i.dueMs)}</span>` : ""}
       ${i.storyPoints ? `<span class="pill">${i.storyPoints} p</span>` : ""}
       ${i.sprintName ? `<span class="pill">${esc(i.sprintName)}</span>` : ""}
@@ -600,7 +634,7 @@ function renderItems() {
        <td><span class="src">${i.source}</span></td>
        <td>${link(i.url, typeGlyph(i.typeName) + ` <span class="key">${esc(i.key)}</span>`)}</td>
        <td>${link(i.url, `<span class="t">${esc(i.summary)}</span>`)}</td>
-       <td>${i.statusName ? `<span class="pill">${stateDot(i.statusCategory)}${esc(i.statusName)}</span>` : ""}</td>
+       <td>${i.statusName ? statePill(i.statusCategory, i.statusName) : ""}</td>
        <td>${prio(i.priorityName)}</td>
        <td>${i.assigneeName ? avatar(i.assigneeName, true) : ""}</td>
        <td class="muted">${esc(i.sprintName || "")}</td>
