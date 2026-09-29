@@ -47,9 +47,21 @@ def main() -> int:
     todo = [i for i in issues + backlog if i.get("statusId") == str((b["columns"][0])["statusId"])]
     assert todo, "the first column would render as empty"
 
+    # The panel's filters rest on two things it cannot invent: the shared-task marker
+    # in the summary (same rule as jira_flow.py) and a priority name on the issue.
+    # If either convention dies in Jira, the chips silently go to zero -- say so here.
+    shared = [i for i in issues + backlog if (i.get("summary") or "").strip().upper().startswith("GEMENSAMT")]
+    assert shared, "no issue carries the GEMENSAMT marker: the Gemensamma chip would be empty"
+    known = sorted({i["priorityName"] for i in issues + backlog if i.get("priorityName")})
+    assert known, "no issue carries a priority: the severity chips would be empty"
+    without = [i["key"] for i in issues + backlog if not i.get("priorityName")]
+
     print("panel ok: {} repon | {} klara + {} öppna ({} i {}) | nästa: {}".format(
         len(gh["repos"]), len(issues), len(todo), len(todo), (b["columns"][0])["name"],
         (flow.get("pick") or {}).get("key", "-")))
+    print("filter: {} gemensamma, {} egna | prioriteter: {} | utan prioritet: {}".format(
+        len(shared), len(issues) + len(backlog) - len(shared), ", ".join(known),
+        ", ".join(without) or "-"))
     return 0
 
 

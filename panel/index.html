@@ -87,6 +87,15 @@
   .seg button { background: transparent; border: 0; color: var(--muted); padding: 4px 9px; cursor: pointer; font-size: 13px; }
   .seg button:hover { color: var(--text); background: var(--panel); }
   .seg button.on { background: var(--card-hi); color: var(--text); }
+  .filters { display: flex; align-items: center; gap: 4px; }
+  .chip {
+    border: 1px solid var(--line-2); background: transparent; color: var(--text-2);
+    border-radius: 999px; padding: 2px 9px; font-size: 11.5px; cursor: pointer; white-space: nowrap;
+  }
+  .chip:hover { color: var(--text); border-color: #4a4a58; }
+  .chip.on { background: var(--card-hi); color: var(--text); border-color: #4a4a58; }
+  .chip.sep { border: 0; color: var(--line-2); padding: 0 2px; cursor: default; }
+  .chip .c { color: var(--muted); margin-left: 4px; }
   input[type="search"] {
     background: var(--panel); border: 1px solid var(--line-2); border-radius: var(--r); color: var(--text);
     padding: 5px 10px; font: inherit; font-size: 12.5px; min-width: 200px;
@@ -117,20 +126,31 @@
 
   /* ----------------------------------------------------------------- board */
   .cols { display: flex; flex-direction: column; gap: 20px; }
-  .bcol > h3 { margin: 0 0 9px; padding: 0 4px; display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; }
-  .bcol > h3 .c { color: var(--muted); font-weight: 400; font-size: 12px; }
-  .bgrid {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(264px, 1fr));
-    gap: 8px; padding: 1px; align-items: start;
+  .bcol > summary {
+    margin: 0 0 9px; padding: 0 4px; display: flex; align-items: center; gap: 7px;
+    font-size: 13px; font-weight: 600; cursor: pointer; list-style: none;
   }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 11px; }
+  .bcol > summary::-webkit-details-marker { display: none; }
+  .bcol > summary::before { content: "▾"; color: var(--muted); font-size: 10px; }
+  .bcol:not([open]) > summary { margin-bottom: 0; }
+  .bcol:not([open]) > summary::before { content: "▸"; }
+  .bcol > summary .c { color: var(--muted); font-weight: 400; font-size: 12px; }
+  /* fr-rows: every row is as tall as the tallest card, so the grid reads as a board
+     instead of a ragged wall. The card fills its row and keeps its metadata at the
+     bottom, which is what makes two rows of unequal titles still line up. */
+  .bgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(264px, 1fr)); gap: 8px; padding: 1px; grid-auto-rows: 1fr; }
+  .bgrid > a { display: block; height: 100%; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 11px;
+    height: 100%; display: flex; flex-direction: column;
+  }
   .card:hover { background: var(--card-hi); border-color: var(--line-2); }
   .card .c1 { display: flex; align-items: center; gap: 7px; }
   .card .t {
     margin: 5px 0 9px; font-size: 13px; line-height: 1.35;
     display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
   }
-  .card .c2 { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; min-width: 0; }
+  .card .c2 { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; min-width: 0; margin-top: auto; }
   .typeg { font-size: 12px; line-height: 1; }
 
   .avatar {
@@ -183,6 +203,7 @@
     <div class="crumbs" id="crumbs"></div>
     <span class="grow"></span>
     <div class="seg" id="seg"></div>
+    <div class="filters" id="filters"></div>
     <input type="search" id="filter" placeholder="filtrera">
     <button class="ghost" id="refresh">Uppdatera</button>
   </header>
@@ -239,8 +260,15 @@ const TEXT = {
   runnersUp: "därefter", noSprint: "ingen aktiv sprint — det som är kvar står i backloggen och ligger i To Do här",
   open: "öppna", settled: "klara", backlog: "i backloggen", repos: "repon", waiting: "väntar på dig",
   allTasks: "Alla uppgifter", sources: "Jira + GitHub",
+  scope: { all: "Alla", shared: "Gemensamma", mine: "Egna" },
+  none: "utan",
 };
 let STATE = null, view = "board";
+// Same rule as jira_flow.py (SHARED_PREFIX): a shared task is marked in the summary.
+const SHARED_PREFIX = "GEMENSAMT";
+const isShared = i => String(i.summary || "").trim().toUpperCase().startsWith(SHARED_PREFIX);
+const RANK = { highest: 0, high: 1, medium: 2, low: 3 };
+const F = { scope: "all", prio: new Set() };   // prio empty = no priority filter at all
 
 /* ---------------------------------------------------------------- bitar --- */
 const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -312,10 +340,37 @@ function ghItems() {
   }));
   return out;
 }
-const matches = x => {
+const textOk = x => {
   const q = (document.getElementById("filter").value || "").toLowerCase();
   return !q || (x.key + " " + (x.summary || "") + " " + (x.assigneeName || "")).toLowerCase().includes(q);
 };
+const scopeOk = (x, v) => v === "all" || isShared(x) === (v === "shared");
+// GitHub rows carry no Jira priority, so they fall under "utan" rather than sneaking
+// past a severity choice -- a filter that quietly ignores half the table is a lie.
+const prioOk = x => !F.prio.size || F.prio.has(x.priorityName || "utan");
+const matches = x => textOk(x) && scopeOk(x, F.scope) && prioOk(x);
+// Built from the data, so a priority Alex adds in Jira shows up without a code change.
+function priorities() {
+  const seen = new Map();
+  boardItems().concat(ghItems()).forEach(x => {
+    const name = x.priorityName || "";
+    if (name && !seen.has(name)) seen.set(name, RANK[name.toLowerCase()] ?? 9);
+  });
+  return [...seen.keys()].sort((a, c) => seen.get(a) - seen.get(c));
+}
+
+function renderFilters() {
+  const work = boardItems().concat(ghItems());
+  const chip = (label, on, attrs, count) =>
+    `<button class="chip ${on ? "on" : ""}" ${attrs}>${esc(label)}${count != null ? `<span class="c">${count}</span>` : ""}</button>`;
+  document.getElementById("filters").innerHTML =
+    Object.entries(TEXT.scope).map(([v, label]) =>
+      chip(label, F.scope === v, `data-scope="${v}"`, work.filter(textOk).filter(x => scopeOk(x, v)).length)
+    ).join("") +
+    `<span class="chip sep">·</span>` +
+    priorities().map(name => chip(name, F.prio.has(name), `data-prio="${esc(name)}"`)).join("") +
+    chip(TEXT.none, F.prio.has("utan"), `data-prio="utan"`);
+}
 const link = (url, inner) => url ? `<a href="${esc(url)}" target="_blank" rel="noreferrer">${inner}</a>` : inner;
 
 /* ------------------------------------------------------------- render ---- */
@@ -435,12 +490,17 @@ function renderBoard() {
   document.getElementById("sprintNote").textContent = b.sprint ? "aktiv sprint: " + b.sprint.name : TEXT.noSprint;
   const byStatus = {};
   boardItems().forEach(i => (byStatus[i.statusId] = byStatus[i.statusId] || []).push(i));
+  // Keep what Alex has folded open or shut: read it off the DOM before it is replaced.
+  const wasOpen = new Set([...document.querySelectorAll(".bcol[open]")].map(d => d.dataset.id));
+  const first = !document.querySelector(".bcol");
   document.getElementById("cols").innerHTML = (b.columns || []).map(c => {
     const list = (byStatus[c.statusId] || []).filter(matches);
     const cat = list.length ? list[0].statusCategory : "new";
-    const head = `<h3>${stateDot(cat)}${esc(c.name)}<span class="c">${list.length}</span>` +
-      (list.length ? "" : `<span class="empty" style="font-size:12px">· ${TEXT.empty.toLowerCase()}</span>`) + `</h3>`;
-    return `<div class="bcol">${head}${list.length ? `<div class="bgrid">${list.map(card).join("")}</div>` : ""}</div>`;
+    const open = first ? true : wasOpen.has(String(c.statusId));   // all open on first paint
+    return `<details class="bcol" data-id="${esc(String(c.statusId))}" ${open ? "open" : ""}>
+      <summary>${stateDot(cat)}${esc(c.name)}<span class="c">${list.length}</span>` +
+      (list.length ? "" : `<span class="empty" style="font-size:12px">· ${TEXT.empty.toLowerCase()}</span>`) +
+      `</summary>${list.length ? `<div class="bgrid">${list.map(card).join("")}</div>` : ""}</details>`;
   }).join("");
 }
 
@@ -495,7 +555,9 @@ function renderRepos() {
 
 function render() {
   if (!STATE) return;
-  renderRail(); renderSide(); renderCrumbs();
+  renderRail(); renderSide(); renderCrumbs(); renderFilters();
+  const filters = document.getElementById("filters");
+  filters.hidden = view === "overview";
   document.getElementById("filter").hidden = !(view === "items" || view === "repos");
   if (view === "overview") { renderStats(); renderFlowPick(); renderJournal(); renderRecent(); }
   if (view === "board") renderBoard();
@@ -514,21 +576,46 @@ async function load(refresh) {
   }
 }
 
+// "#items?scope=shared&prio=High": the view and its filters travel together, so a
+// refresh (or a link to Alex's phone) lands on the same screen.
+function readHash() {
+  const [v, query] = (location.hash || "").slice(1).split("?");
+  const p = new URLSearchParams(query || "");
+  F.scope = TEXT.scope[p.get("scope")] ? p.get("scope") : "all";
+  F.prio = new Set((p.get("prio") || "").split(",").filter(Boolean));
+  return TEXT.views[v] ? v : "board";
+}
+function writeHash() {
+  const q = new URLSearchParams();
+  if (F.scope !== "all") q.set("scope", F.scope);
+  if (F.prio.size) q.set("prio", [...F.prio].join(","));
+  location.hash = view + (q.toString() ? "?" + q : "");
+}
 function show(v) {
   view = TEXT.views[v] ? v : "board";
   document.querySelectorAll(".view").forEach(el => el.classList.toggle("on", el.id === "v-" + view));
-  location.hash = view;
+  writeHash();
   render();
 }
 document.addEventListener("click", e => {
   if (e.target.closest('[data-act="refresh"]')) return load(true);
+  const scope = e.target.closest("[data-scope]");
+  if (scope) { F.scope = scope.dataset.scope; writeHash(); return render(); }
+  const prio = e.target.closest("[data-prio]");
+  if (prio) {
+    const v = prio.dataset.prio;
+    if (F.prio.has(v)) F.prio.delete(v);
+    else if (F.prio.size && (F.prio.has("utan") || v === "utan")) F.prio.clear(), F.prio.add(v);   // "utan" is not a severity
+    else F.prio.add(v);
+    writeHash(); return render();
+  }
   const t = e.target.closest("[data-v]"); if (!t) return;
   e.preventDefault(); show(t.dataset.v);
 });
 document.getElementById("refresh").addEventListener("click", () => load(true));
 document.getElementById("filter").addEventListener("input", render);
-window.addEventListener("hashchange", () => show(location.hash.slice(1)));
-show((location.hash || "").slice(1) || "board");
+window.addEventListener("hashchange", () => show(readHash()));
+show(readHash());
 load(false);
 setInterval(() => load(false), 60000);
 </script>
