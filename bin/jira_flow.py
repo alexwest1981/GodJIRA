@@ -909,8 +909,15 @@ def cmd_pick(args) -> int:
 
 
 def cmd_plan(client_, args) -> int:
-    """Kundens önskemål in, ärendeförslag ut. Ingenting skrivs förrän --create."""
-    if getattr(args, "text", ""):
+    """Kundens önskemål in, ärendeförslag ut. Ingenting skrivs förrän --create.
+
+    Med --proposal PATH läses listan ur en fil i stället för ur agentens svar:
+    panelen visar förslaget, människan bockar av, och exakt den listan skrivs.
+    Agenten tillfrågas inte en gång till -- den svarar olika varje gång -- så det
+    som godkändes är det som hamnar på tavlan.
+    """
+    approved = getattr(args, "proposal", "") or ""
+    if not approved and getattr(args, "text", ""):
         # Panelen har texten i ett fält, inte i en fil: argv är oshellat, så
         # inget kan citeras sönder på vägen.
         wish = args.text
@@ -918,54 +925,68 @@ def cmd_plan(client_, args) -> int:
         wish = Path(args.file).read_text()
     else:
         wish = "" if sys.stdin.isatty() else sys.stdin.read()
-    if not wish.strip():
-        message = "No wish to work from (stdin, or --file PATH)."
+    if not approved and not wish.strip():
+        message = "No wish to work from (stdin, --file PATH or --proposal PATH)."
         say(args, {"ok": False, "error": message}, ["jira_flow: " + message])
         return 2
 
-    try:
-        docs_text, docs_notes = read_context(getattr(args, "context", []) or [])
-        repo_text, repo_info = ("", {})
-        if getattr(args, "repo", ""):
-            repo_text, repo_info = repo_context(args.repo)
-            if repo_info.get("error"):
-                raise RuntimeError("--repo {}: {}".format(args.repo, repo_info["error"]))
-    except (RuntimeError, OSError) as exc:
-        message = "the papers could not be read: {}".format(exc)
-        say(args, {"ok": False, "error": message}, ["jira_flow: " + message])
-        return 2
+    docs_text, docs_notes, repo_text, repo_info = "", [], "", {}
+    if not approved:
+        try:
+            docs_text, docs_notes = read_context(getattr(args, "context", []) or [])
+            if getattr(args, "repo", ""):
+                repo_text, repo_info = repo_context(args.repo)
+                if repo_info.get("error"):
+                    raise RuntimeError("--repo {}: {}".format(args.repo, repo_info["error"]))
+        except (RuntimeError, OSError) as exc:
+            message = "the papers could not be read: {}".format(exc)
+            say(args, {"ok": False, "error": message}, ["jira_flow: " + message])
+            return 2
 
     board = client_.board(args.project)
-    types = client_.types(args.project)
-    prompt = PLAN_PROMPT.format(project=args.project, limit=PLAN_MAX,
-                                types=", ".join(types) or "Story, Task, Bug",
-                                context=build_context(docs_text, repo_text, docs_notes),
-                                wish=wish.strip())
-    answer = ""
-    try:
-        answered_by = agent_argv(prompt)[0]
-        answer = ask_agent(prompt)
-        items = parse_plan(answer)
-    except (ValueError, RuntimeError) as exc:
-        # Ett svar som inte går att tolka sparas: annars är det borta för alltid och
-        # den som felsöker har bara felet att gå på. Svaret kan innehålla kundtext,
-        # så filen är 0600 och ligger i användarens egen state-katalog.
-        kept = ""
-        if answer and isinstance(exc, ValueError):
-            try:
-                os.makedirs(os.path.dirname(ANSWER_LOG), mode=0o700, exist_ok=True)
-                with open(ANSWER_LOG, "a", encoding="utf-8") as fh:
-                    os.chmod(ANSWER_LOG, 0o600)
-                    fh.write("\n--- {} | {} | {} chars\n{}\n".format(
-                        time.strftime("%Y-%m-%d %H:%M:%S"), answered_by, len(answer), answer))
-                kept = " -- the answer is kept in {}".format(ANSWER_LOG)
-            except OSError as keep_exc:
-                kept = " -- the answer could not be kept ({})".format(keep_exc)
-        message = str(exc) + kept
-        say(args, {"ok": False, "error": message}, ["jira_flow: " + message])
-        return 2
+    if approved:
+        # Samma kontroll som agentens svar går igenom: en lista någon har redigerat i
+        # är inte mer pålitlig än en modell, och en halv lista ska bli noll ärenden.
+        answered_by, items = ["the approved list"], []
+        try:
+            items = parse_plan(Path(approved).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            message = "the approved list could not be used: {}".format(exc)
+            say(args, {"ok": False, "error": message}, ["jira_flow: " + message])
+            return 2
+    else:
+        # Agenten får hela underlaget: önskemålet, dokumenten och repot.
+        prompt = PLAN_PROMPT.format(project=args.project, limit=PLAN_MAX,
+                                    types=", ".join(client_.types(args.project)) or "Story, Task, Bug",
+                                    context=build_context(docs_text, repo_text, docs_notes),
+                                    wish=wish.strip())
+        answered_by, answer, items = ["(no agent answered)"], "", []
+        try:
+            answered_by = agent_argv(prompt)[0]
+            answer = ask_agent(prompt)
+            items = parse_plan(answer)
+        except (ValueError, RuntimeError) as exc:
+            # Ett svar som inte går att tolka sparas: annars är det borta för alltid och
+            # den som felsöker har bara felet att gå på. Svaret kan innehålla kundtext,
+            # så filen är 0600 och ligger i användarens egen state-katalog.
+            kept = ""
+            if answer and isinstance(exc, ValueError):
+                try:
+                    os.makedirs(os.path.dirname(ANSWER_LOG), mode=0o700, exist_ok=True)
+                    with open(ANSWER_LOG, "a", encoding="utf-8") as fh:
+                        os.chmod(ANSWER_LOG, 0o600)
+                        fh.write("\n--- {} | {} | {} chars\n{}\n".format(
+                            time.strftime("%Y-%m-%d %H:%M:%S"), answered_by, len(answer), answer))
+                    kept = " -- the answer is kept in {}".format(ANSWER_LOG)
+                except OSError as keep_exc:
+                    kept = " -- the answer could not be kept ({})".format(keep_exc)
+            message = str(exc) + kept
+            say(args, {"ok": False, "error": message}, ["jira_flow: " + message])
+            return 2
 
     context_note = {"documents": docs_notes, "repo": repo_info}
+    if approved:
+        context_note["approved"] = approved
     if args.json and not args.create:
         # Med --create kommer ett enda dokument, längst ner, med både förslaget och
         # nycklarna: en maskinläsare ska inte behöva tolka två JSON-dokument i rad.
@@ -1547,6 +1568,47 @@ def selftest() -> int:
         cranky = Cranky()
         assert cmd_plan(cranky, plan_argv) == 2, "en krasch ska ge fel, inte tyst halv tavla"
         assert len(cranky.written) == 1, "och ska ha skrivit precis ett ärende"
+
+        # Den godkända listan: panelen visar ett förslag, människan bockar av, och
+        # exakt den listan skrivs -- agenten ska inte tillfrågas en andra gång, för
+        # den svarar olika varje gång och då är det som godkändes inte det som skrivs.
+        scratch = Path(tempfile.mkdtemp(prefix="jira-flow-selftest-"))
+        approved = scratch / "approved.json"
+        approved.write_text(json.dumps([{"summary": "Godkänd A", "type": "Story"},
+                                       {"summary": "Godkänd B", "type": "Task"},
+                                       {"summary": "Ej godkänd C", "type": "Task"}]), encoding="utf-8")
+        approved_argv = argparse.Namespace(file="", text="", create=False, json=True,
+                                           project="SCRUM", proposal=str(approved))
+
+        def no_agent(prompt):
+            raise AssertionError("med --proposal ska agenten inte frågas")
+
+        globals()["ask_agent"] = no_agent
+        fake2 = FakeClient()
+        assert cmd_plan(fake2, approved_argv) == 0, "en godkänd lista ska gå igenom utan att skriva"
+        assert fake2.written == [], "utan --create får ingenting skrivas"
+        approved_argv.create = True
+        captured = io.StringIO()
+        sys.stdout = captured
+        try:
+            assert cmd_plan(fake2, approved_argv) == 0, "med --create ska listan skrivas"
+        finally:
+            sys.stdout = Quiet()
+        assert [w["summary"] for w in fake2.written] == ["Godkänd A", "Godkänd B", "Ej godkänd C"], \
+            "exakt den godkända listan, i den ordningen: " + repr(fake2.written)
+
+        # En fil någon har redigerat i är inte mer pålitlig än en modell: halv lista
+        # blir noll ärenden, och ingenting skrivs.
+        broken = scratch / "broken.json"
+        broken.write_text('[{"type": "Story"}]', encoding="utf-8")
+        broken_argv = argparse.Namespace(file="", text="", create=True, json=True,
+                                         project="SCRUM", proposal=str(broken))
+        fake3 = FakeClient()
+        assert cmd_plan(fake3, broken_argv) == 2, "en halv lista ska ge fel"
+        assert fake3.written == [], "och ingenting ska skrivas"
+        missing_argv = argparse.Namespace(file="", text="", create=True, json=True,
+                                          project="SCRUM", proposal=str(scratch / "finns-inte.json"))
+        assert cmd_plan(FakeClient(), missing_argv) == 2, "en fil som inte finns ska ge fel"
     finally:
         globals()["ask_agent"], sys.stdin, sys.stdout = original_agent, original_stdin, original_stdout
     checks += 2
@@ -1648,6 +1710,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="papers the wish came with: a file or a folder (repeatable)")
     p_plan.add_argument("--repo", default="", metavar="DIR",
                         help="the project's repo: branch, recent commits, open PRs/issues")
+    p_plan.add_argument("--proposal", default="", metavar="PATH",
+                        help="an already-approved list of issues: skips the agent (the panel sends this)")
     p_ins.add_argument("repo", nargs="?", help="repository root (default: here)")
     p_ins.add_argument("--project", default=DEFAULT_PROJECT)
     p_ins.add_argument("--dry-run", action="store_true")
@@ -1672,9 +1736,18 @@ def main(argv) -> int:
     if args.cmd == "pick":
         return cmd_pick(args)
     jira = client()
-    if args.cmd == "plan":
-        return cmd_plan(jira, args)
-    return cmd_next(jira, args) if args.cmd == "next" else cmd_current(jira, args)
+    try:
+        if args.cmd == "plan":
+            return cmd_plan(jira, args)
+        return cmd_next(jira, args) if args.cmd == "next" else cmd_current(jira, args)
+    except (RuntimeError, OSError, KeyError, urllib.error.URLError) as exc:
+        # Allt som går mot Jira går genom här: en trasig token, en tavla som inte
+        # svarar eller ett svar i fel form blir ett svar panelen kan visa i stället
+        # för en stacktrace -- panelen visar bara första raden, och den är alltid
+        # "Traceback (most recent call last):", vilket inte säger någonting.
+        message = "{}: {}".format(type(exc).__name__, exc) if str(exc) else type(exc).__name__
+        say(args, {"ok": False, "error": message}, ["jira_flow: " + message])
+        return 2
 
 
 if __name__ == "__main__":

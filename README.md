@@ -148,7 +148,9 @@ custom.jira/
 ├── i18n/                    en.json (source) + sv, de, fr, es, it, pt, nl, pl
 ├── window-rule.lua          Hyprland rule that floats the Jira window (see README)
 ├── panel/                   the hub's front door: server.py + index.html (no deps,
-│                            no build step) + check.py
+│                            no build step) + check.py + test_import.py (the upload
+│                            door: a document in, a proposal out, nothing written)
+├── panel/fixtures/          bestallarkrav.pdf, the 860-byte document the check parses
 ├── n8n/                     the flow on a canvas: bin/flow-call.sh (the seam),
 │                            workflows/*.workflow.ts, README.md
 └── bin/jira_bridge.py       everything network/credential related (Python stdlib only)
@@ -183,7 +185,7 @@ systemctl --user status godjira-panel      # alive, and starts at login
 python3 panel/check.py                     # one check: answers, and numbers agree
 ```
 
-### Four views, Plane's anatomy
+### Five views, Plane's anatomy
 
 The hub is modelled on Plane (`makeplane/plane`), which is the reference for how it
 should read: an icon rail plus a nav sidebar with section labels, a breadcrumb header
@@ -197,10 +199,43 @@ state pill and teammate avatar.
 | Tavlan | the board: `issues` + `backlog` merged, because the live work sits in the backlog whenever no sprint is active |
 | Uppgifter | Plane's table: every work item from **both** sources in one place, with source, id, status, priority, assignee, sprint |
 | Repon | all repositories, their visibility, language, and any open PRs/issues on them |
+| Importera | a document in, a proposal out, and nothing written until a human has ticked off what should be there |
 
 The table is where the two sources actually meet, so GitHub's PRs and issues are shaped
-like work items rather than given their own screen. There are no write affordances: the
-hub reads, and the flow decides.
+like work items rather than given their own screen. Reading is what the hub does; the
+one write it has is *Importera*, and only ever the list Alex himself ticked off (below).
+
+### A document in, issues out — but nothing is written until it is approved
+
+*Importera* exists because reading a spec and typing twelve issues is where work goes
+to die — and because a model's first answer is not a decision. Drop a **pdf, docx, odt,
+xlsx, pptx** or a text file (or several) on the view, say what the document is for, and
+press *Tolka → förslag*. What comes back is a **proposal**, not issues: each row shows
+type, summary and the whole description, all rows ticked, and under them a button that
+says exactly what it will do — `Skapa 4 ärenden i SCRUM (skarpt läge)`. Untick what is
+wrong, press it, confirm the count, and *then* the flow writes. Nothing is sent to Jira
+by the parse step, so a bad proposal costs a second parse, not a cleanup.
+
+Two server-side rules make that stick (`panel/server.py`):
+
+* the client may only send **which** of the proposed items to write, by number —
+  never issue text of its own, and the list it picks from lives in the server's
+  memory, not in the page;
+* the token from a parse is **one-shot** and lives an hour. An approval is used
+  once, so a half-written run cannot be replayed, and an unknown token is a 404.
+
+The runnable check is `panel/test_import.py`:
+
+```sh
+python3 panel/test_import.py                    # parses panel/fixtures/bestallarkrav.pdf,
+                                                # checks the guards, writes nothing
+GODJIRA_ALLOW_WRITE=1 python3 panel/test_import.py   # also writes -- only on a board
+                                                     # you are willing to see issues on
+```
+
+The core's own part of the same path — `plan --proposal FILE --create`, the list the
+panel approved, without asking the agent a second time — is covered by
+`python3 bin/jira_flow.py --selftest` (16 checks, offline).
 
 ### It is a window, not a floating box
 

@@ -24,11 +24,39 @@
     font: 13.5px/1.45 ui-sans-serif, system-ui, "Inter", "Segoe UI", Roboto, sans-serif;
   }
   .col { display: flex; flex-direction: column; }
+  /* Loading screen. Shown by the markup alone, so it is up before the first fetch and
+     nobody has to guess whether the app is working. It also carries the failure: a
+     spinner that never stops is how a dead backend looks like a broken app. */
+  .splash {
+    position: fixed; inset: 0; z-index: 50; background: var(--bg);
+    display: grid; place-items: center; transition: opacity .35s ease;
+  }
+  .splash.gone { opacity: 0; pointer-events: none; }
+  .splash-box { display: flex; flex-direction: column; align-items: center; gap: 11px; text-align: center; }
+  .splash-box b { font-size: 15px; letter-spacing: .02em; }
+  .splash .note { color: var(--text-2); font-size: 12.5px; max-width: 330px; }
+  .spin {
+    width: 18px; height: 18px; border: 2px solid var(--line-2); border-top-color: var(--blue);
+    border-radius: 50%; animation: spin .9s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .mark.big { width: 38px; height: 38px; border-radius: 11px; font-size: 16px; }
   .grow { flex: 1; }
   .muted { color: var(--muted); }
   .key { font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
   a { color: inherit; text-decoration: none; }
   button { font: inherit; }
+  /* --------------------------------------------------------- import ---- */
+  .impfile { cursor: pointer; }
+  .impitem { display: flex; gap: 8px; align-items: flex-start; padding: 7px 0; border-top: 1px solid var(--line); }
+  .impitem:first-child { border-top: 0; }
+  .impitem input[type=checkbox] { margin-top: 3px; flex: 0 0 auto; }
+  .impitem .t2 { font-size: 13px; color: var(--text-2); margin-top: 2px; }
+  .impbar { display: flex; align-items: center; gap: 8px; padding-top: 10px; margin-top: 6px; border-top: 1px solid var(--line); }
+  #impWish { width: 100%; resize: vertical; background: var(--panel); color: var(--text);
+             border: 1px solid var(--line); border-radius: 6px; padding: 8px; font: inherit; }
+  #impNote.err { color: var(--red); }
+  #impNote.warn { color: var(--amber, #e0a33e); }
   .empty { color: var(--text-2); font-size: 12.5px; padding: 3px 0; }
   .err { color: var(--red); }
 
@@ -198,6 +226,15 @@
 </style>
 </head>
 <body>
+<div class="splash" id="splash">
+  <div class="splash-box">
+    <div class="mark big">G</div>
+    <b>GodJIRA</b>
+    <div class="spin"></div>
+    <div class="note" id="splashNote">hämtar Jira, GitHub och flödets nästa …</div>
+  </div>
+</div>
+
 <nav class="rail col" id="rail"></nav>
 <aside class="side col" id="side"></aside>
 
@@ -239,6 +276,31 @@
       <div class="tablewrap"><table id="itemsTable"></table></div>
     </section>
 
+    <section class="view" id="v-import">
+      <div class="panel">
+        <h3>Underlag in, ärenden ut <span class="meta">pdf, docx, odt, xlsx, pptx eller text</span></h3>
+        <div class="body">
+          <textarea id="impWish" rows="3"
+            placeholder="Vad ska bli ärenden? Lämna tomt för att utgå från dokumenten."></textarea>
+          <div class="improw">
+            <label class="chip impfile"><input type="file" id="impFiles" multiple hidden accept=".pdf,.docx,.odt,.xlsx,.pptx,.txt,.md,.csv,.json,.xml,.rst,.log,.html,.htm">välj filer</label>
+            <span class="meta" id="impFiles">inga filer valda</span>
+            <span class="grow"></span>
+            <button class="chip" data-act="imp-parse" id="impParse">Tolka → förslag</button>
+          </div>
+          <div class="meta" id="impNote"></div>
+        </div>
+      </div>
+      <div class="panel" id="impProposalPanel" hidden>
+        <h3>Förslag <span class="meta" id="impProposalMeta"></span></h3>
+        <div class="body" id="impProposal"></div>
+      </div>
+      <div class="panel" id="impDonePanel" hidden>
+        <h3>Skapade ärenden <span class="meta" id="impDoneMeta"></span></h3>
+        <div class="body wl" id="impDone"></div>
+      </div>
+    </section>
+
     <section class="view" id="v-repos">
       <div class="tablewrap"><table id="repoTable"></table></div>
       <div class="two">
@@ -257,7 +319,8 @@
 
 <script>
 const TEXT = {
-  views: { overview: ["Översikt", "◫"], board: ["Tavlan", "▤"], items: ["Uppgifter", "☰"], repos: ["Repon", "⌥"] },
+  views: { overview: ["Översikt", "◫"], board: ["Tavlan", "▤"], items: ["Uppgifter", "☰"], repos: ["Repon", "⌥"],
+           import: ["Importera", "⇪"] },
   next: "nästa", empty: "Inga ärenden", never: "aldrig", nothing: "inget",
   someoneElses: "är någon annans — tas från panelens andra tryck",
   runnersUp: "därefter", noSprint: "ingen aktiv sprint — det som är kvar står i backloggen och ligger i To Do här",
@@ -392,6 +455,7 @@ function renderSide() {
       <button class="ghost" title="hämta färskt" data-act="refresh">↻</button></div>
     <div class="item ${view === "overview" ? "on" : ""}" data-v="overview"><span class="g">◫</span>Översikt</div>
     <div class="item ${view === "items" ? "on" : ""}" data-v="items"><span class="g">☰</span>${TEXT.allTasks}<span class="c">${all + ghItems().length}</span></div>
+    <div class="item ${view === "import" ? "on" : ""}" data-v="import"><span class="g">⇪</span>Importera<span class="c">${IMP.created.length || ""}</span></div>
     <div class="sect">Jira</div>
     <div class="item" data-v="items"><span class="g">◆</span>${esc(proj.key || "Jira")}<span class="c">${all}</span></div>
     <div class="sub">
@@ -413,7 +477,8 @@ function renderCrumbs() {
     board: ["Jira", b.name || "Tavlan", ""],
     items: ["GodJIRA", TEXT.allTasks, boardItems().length + ghItems().length + " st"],
     repos: ["GitHub", g.login || "GitHub", g.repos.length + " " + TEXT.repos],
-  }[view];
+    import: ["GodJIRA", "Importera", "underlag in, ärenden ut"],
+  }[view] || ["GodJIRA", (TEXT.views[view] || ["?"])[0], ""];   // en ny vy får aldrig fälla hela ritningen
   document.getElementById("crumbs").innerHTML =
     `<span class="muted">${esc(c[0])}</span><span class="sep">›</span><b>${esc(c[1])}</b>` +
     (c[2] ? `<span class="sep">·</span><span class="muted">${esc(c[2])}</span>` : "") +
@@ -556,28 +621,176 @@ function renderRepos() {
   document.getElementById("issues").innerHTML = ghList(g.issues);
 }
 
+/* --------------------------------------------------------------- import ---- */
+// A document in, a proposal out, and nothing written to Jira until a human has
+// ticked off what should be there. The panel sends back only *which* of the
+// proposed items to write -- never issue text of its own.
+const IMP = { files: [], plan: [], token: "", spent: false, keep: new Set(), busy: false,
+              note: "", bad: false, created: [] };
+const projectKey = () => (board() || {}).projectKey || "SCRUM";
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+const jiraMode = () => (STATE && STATE.jira.mode === "real" ? "skarpt läge" : "provläge");
+// The key as a link to Jira, when one of the board's own issues tells us the site.
+function jiraOrigin() {
+  try { return new URL((issues()[0] || {}).url || "").origin; } catch { return ""; }
+}
+function b64(buffer) {   // chunked: one spread over a big file overflows the stack
+  const bytes = new Uint8Array(buffer); let out = "";
+  for (let i = 0; i < bytes.length; i += 8192) out += String.fromCharCode(...bytes.subarray(i, i + 8192));
+  return btoa(out);
+}
+const filesLabel = () => IMP.files.length
+  ? IMP.files.map(f => `${f.name} (${Math.max(1, Math.round(f.size / 1024))} kB)`).join(", ")
+  : "inga filer valda";
+
+// The wish box is deliberately not re-rendered: a refresh every 60 s must not eat
+// what Alex is in the middle of typing.
+function renderImport() {
+  document.getElementById("impFiles").textContent = filesLabel();
+  const note = document.getElementById("impNote");
+  note.className = "meta" + (IMP.note ? (IMP.bad ? " err" : "") : "");
+  note.textContent = IMP.note;
+  const parse = document.getElementById("impParse");
+  parse.disabled = IMP.busy || !IMP.files.length;
+  parse.textContent = IMP.busy ? "tolkar …" : "Tolka → förslag";
+
+  const host = document.getElementById("impProposal");
+  document.getElementById("impProposalPanel").hidden = !IMP.plan.length;
+  if (IMP.plan.length) {
+    document.getElementById("impProposalMeta").textContent =
+      `${IMP.plan.length} förslag · ${plural(IMP.keep.size, "ibockad", "ibockade")} · ingenting skrivet än`;
+    host.innerHTML = IMP.plan.map((item, i) => `
+      <label class="impitem">
+        <input type="checkbox" data-keep="${i}" ${IMP.keep.has(i) ? "checked" : ""}>
+        <span><span class="key">${esc(item.type || "Task")}</span> ${esc(item.summary || "")}
+          ${item.priority ? `<span class="meta">${esc(item.priority)}</span>` : ""}
+          ${item.description ? `<div class="t2">${esc(String(item.description).slice(0, 300))}</div>` : ""}
+        </span>
+      </label>`).join("") + `
+      <div class="impbar">
+        <button class="chip" data-act="imp-all">bocka alla</button>
+        <button class="chip" data-act="imp-none">bocka av alla</button>
+        <span class="grow"></span>
+        <button class="chip on" data-act="imp-apply" ${IMP.keep.size && !IMP.busy && !IMP.spent ? "" : "disabled"}>
+          Skapa ${plural(IMP.keep.size, "ärende", "ärenden")} i ${esc(projectKey())} (${jiraMode()})
+        </button>
+      </div>`;
+  }
+
+  const done = document.getElementById("impDonePanel");
+  done.hidden = !IMP.created.length;
+  if (IMP.created.length) {
+    document.getElementById("impDoneMeta").textContent = IMP.created.length + " skrivna i " + projectKey();
+    document.getElementById("impDone").innerHTML = IMP.created.map(c => `<div class="r">` +
+      link(jiraOrigin() ? `${jiraOrigin()}/browse/${c.key}` : "",
+           `<span class="key">${esc(c.key || "")}</span> <span class="t">${esc(c.summary || "")}</span>`) +
+      `</div>`).join("");
+  }
+}
+
+async function impParse() {
+  const wish = document.getElementById("impWish").value.trim();
+  if (!IMP.files.length || IMP.busy) return;
+  IMP.busy = true; IMP.bad = false; IMP.plan = []; IMP.token = ""; IMP.spent = false;
+  IMP.note = "tolkar underlaget — det tar några sekunder"; renderImport();
+  try {
+    const files = [];
+    for (const f of IMP.files) files.push({ name: f.name, b64: b64(await f.arrayBuffer()) });
+    const r = await fetch("/api/import", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ wish, files }) });
+    const answer = await r.json();
+    if (!answer.ok) throw new Error(answer.error || "svaret gick inte att läsa");
+    IMP.plan = answer.proposal || []; IMP.token = answer.token || "";
+    IMP.keep = new Set(IMP.plan.map((_, i) => i));
+    IMP.note = `${IMP.plan.length} förslag ur ${IMP.files.length} dokument — bocka av det du inte vill ha`;
+  } catch (e) {
+    IMP.bad = true; IMP.note = "kunde inte tolka: " + e.message;
+  } finally { IMP.busy = false; renderImport(); }
+}
+
+async function impApply() {
+  const keep = [...IMP.keep].sort((a, b) => a - b);
+  if (!keep.length || IMP.busy || IMP.spent) return;
+  const project = projectKey();
+  if (!window.confirm(`Skapa ${plural(keep.length, "ärende", "ärenden")} i ${project} (${jiraMode()})?`)) return;
+  IMP.busy = true; IMP.note = `skriver ${keep.length} ärenden i ${project} …`; renderImport();
+  try {
+    const r = await fetch("/api/import/apply", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: IMP.token, keep }) });
+    const answer = await r.json();
+    IMP.created = answer.created || [];
+    IMP.spent = true;                       // one approval, used once -- also when it failed
+    if (answer.ok) {
+      IMP.plan = []; IMP.keep = new Set();
+      IMP.bad = false; IMP.note = `${plural(IMP.created.length, "ärende", "ärenden")} skapade i ${project}`;
+      load(false);                          // the board changed: read it again
+    } else {
+      IMP.bad = true;
+      IMP.note = `stannade efter ${IMP.created.length} av ${keep.length}: ${answer.error || "okänt fel"}`;
+    }
+  } catch (e) { IMP.bad = true; IMP.note = "kunde inte skriva: " + e.message; }
+  finally { IMP.busy = false; renderImport(); }
+}
+
 function render() {
   if (!STATE) return;
   renderRail(); renderSide(); renderCrumbs(); renderFilters();
   const filters = document.getElementById("filters");
-  filters.hidden = view === "overview";
+  filters.hidden = view === "overview" || view === "import";
   document.getElementById("filter").hidden = !(view === "items" || view === "repos");
   if (view === "overview") { renderStats(); renderFlowPick(); renderJournal(); renderRecent(); }
   if (view === "board") renderBoard();
   if (view === "items") renderItems();
   if (view === "repos") renderRepos();
+  if (view === "import") renderImport();
 }
 
 async function load(refresh) {
+  let next;
   try {
     const r = await fetch(refresh ? "/api/refresh" : "/api/state", { cache: "no-store" });
-    const next = await r.json();
-    if (!refresh && STATE && next.generatedAt === STATE.generatedAt) return;   // same answer, leave the page alone
-    STATE = next; render();
+    next = await r.json();
   } catch (e) {
     document.getElementById("crumbs").innerHTML = `<span class="err">ingen kontakt med panelen på :8788</span>`;
+    return splashFail("ingen kontakt med panelen på :8788");
   }
+  if (!refresh && STATE && next.generatedAt === STATE.generatedAt) return;   // same answer, leave the page alone
+  STATE = next;
+  try {
+    render();
+  } catch (e) {
+    // Ett fel i ritningen är inte ett nätverksfel -- och splash-fönstret är det enda
+    // Alex ser, så det måste säga vad som small i stället för att skylla på sladden.
+    console.error(e);
+    document.getElementById("crumbs").innerHTML = `<span class="err">panelens ritning small: ${esc(e.message)}</span>`;
+    return splashFail("panelen small när den ritades: " + e.message);
+  }
+  splashHide();
 }
+
+// The first answer costs four CLI calls (see README: ~9 s). Say what is happening, and
+// say something different when it takes longer than usual.
+let splashDone = false, splashFailed = false;   // both stop the spinner's chatter
+function splashHide() {
+  if (splashDone) return;
+  splashDone = true;
+  const el = document.getElementById("splash");
+  el.classList.add("gone");
+  setTimeout(() => el.remove(), 500);
+}
+function splashFail(message) {
+  if (splashDone || splashFailed) return;
+  splashFailed = true;
+  document.getElementById("splashNote").innerHTML =
+    `<span class="err">${esc(message)}</span><br><br>` +
+    `<button class="chip" data-act="splash-retry">försök igen</button>`;
+  document.querySelector("#splash .spin").hidden = true;
+}
+[[6000, "fyra anrop: Jira, GitHub, flödets nästa och journalen"],
+ [16000, "tar längre tid än vanligt — Jira eller GitHub svarar långsamt"]]
+  .forEach(([ms, text]) => setTimeout(() => {
+    if (!splashDone && !splashFailed) document.getElementById("splashNote").textContent = text;
+  }, ms));
 
 // "#items?scope=shared&prio=High": the view and its filters travel together, so a
 // refresh (or a link to Alex's phone) lands on the same screen.
@@ -602,6 +815,14 @@ function show(v) {
 }
 document.addEventListener("click", e => {
   if (e.target.closest('[data-act="refresh"]')) return load(true);
+  if (e.target.closest('[data-act="imp-parse"]')) return impParse();
+  if (e.target.closest('[data-act="imp-apply"]')) return impApply();
+  if (e.target.closest('[data-act="imp-all"]')) { IMP.keep = new Set(IMP.plan.map((_, i) => i)); return renderImport(); }
+  if (e.target.closest('[data-act="imp-none"]')) { IMP.keep = new Set(); return renderImport(); }
+  if (e.target.closest('[data-act="splash-retry"]')) {
+    document.getElementById("splashNote").textContent = "hämtar igen …";
+    return load(true);
+  }
   const scope = e.target.closest("[data-scope]");
   if (scope) { F.scope = scope.dataset.scope; writeHash(); return render(); }
   const prio = e.target.closest("[data-prio]");
@@ -616,6 +837,16 @@ document.addEventListener("click", e => {
   e.preventDefault(); show(t.dataset.v);
 });
 document.getElementById("refresh").addEventListener("click", () => load(true));
+document.getElementById("impFiles").addEventListener("change", e => {
+  IMP.files = [...e.target.files]; IMP.note = ""; renderImport();
+});
+document.getElementById("impProposal").addEventListener("change", e => {
+  const box = e.target.closest("[data-keep]");
+  if (!box) return;
+  const i = Number(box.dataset.keep);
+  if (box.checked) IMP.keep.add(i); else IMP.keep.delete(i);
+  renderImport();
+});
 document.getElementById("filter").addEventListener("input", render);
 window.addEventListener("hashchange", () => show(readHash()));
 show(readHash());

@@ -15,9 +15,14 @@ Jira's snapshot is ~100 KB and a browser refresh should not cost an API call.
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
+import re
+import secrets
+import shutil
 import subprocess
+import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -29,9 +34,18 @@ UI = Path(__file__).resolve().parent / "index.html"
 PORT = int(os.environ.get("PANEL_PORT", "8788"))
 BIND = os.environ.get("PANEL_BIND", "0.0.0.0")
 TTL = int(os.environ.get("PANEL_TTL", "60"))
+PROJECT = os.environ.get("JIRA_FLOW_PROJECT", "SCRUM")
+MAX_BODY = int(os.environ.get("PANEL_MAX_BODY", str(40 * 1024 * 1024)))
+MAX_FILE = int(os.environ.get("PANEL_MAX_FILE", str(25 * 1024 * 1024)))
+DEFAULT_WISH = "Skapa ärenden för det som står i de bifogade dokumenten."
 
 _cache: dict[str, tuple[float, object]] = {}
 _lock = threading.Lock()
+# A proposal waiting for a human. The imported documents are gone by the time it
+# exists: what is kept is the list the panel showed, and the client may only name
+# which of *those* items to write -- it can never send issue text of its own.
+_imports: dict[str, dict] = {}
+IMPORT_TTL = 3600
 
 
 def seam(*args: str, timeout: int = 180) -> dict:
@@ -56,7 +70,19 @@ def cached(key: str, build, ttl: int = TTL):
 
 
 def first_line(env: dict) -> str:
-    return (env.get("raw") or "no answer").strip().split("\n")[0]
+    """Felet så en människa läser det: budskapet, inte toppen av en stacktrace.
+
+    En krasch skriver "Traceback (most recent call last):" först och orsaken sist,
+    så sista raden tas -- och en rad JSON hoppas över (det är själva svaret).
+    """
+    payload = env.get("payload")
+    if isinstance(payload, dict) and payload.get("error"):
+        return str(payload["error"]).strip().split("\n")[0]
+    for line in reversed((env.get("raw") or "").strip().split("\n")):
+        stripped = line.strip()
+        if stripped and not stripped.startswith(("{", "[")):
+            return stripped
+    return "no answer"
 
 
 def jira_state() -> dict:
@@ -135,6 +161,86 @@ def state() -> dict:
     }))
 
 
+def import_parse(payload: dict) -> tuple[int, dict]:
+    """A wish plus the papers it came with -> an issue proposal. Writes nothing."""
+    wish = (payload.get("wish") or "").strip() or DEFAULT_WISH
+    files = payload.get("files")
+    if not isinstance(files, list) or not files:
+        return 400, {"ok": False, "error": "inga dokument bifogades"}
+    now = time.time()
+    for token in [t for t, e in _imports.items() if now - e["at"] > IMPORT_TTL]:
+        _imports.pop(token, None)
+
+    folder = tempfile.mkdtemp(prefix="godjira-import-")
+    try:
+        paths = []
+        for index, entry in enumerate(files, 1):
+            if not isinstance(entry, dict):
+                return 400, {"ok": False, "error": "ett av dokumenten gick inte att läsa"}
+            try:
+                raw = base64.b64decode(str(entry.get("b64") or ""), validate=True)
+            except Exception:  # noqa: BLE001 -- any bad base64 is the same answer
+                return 400, {"ok": False, "error": "dokument {} kunde inte avkodas".format(index)}
+            if not raw or len(raw) > MAX_FILE:
+                return 400, {"ok": False, "error": "dokument {} är tomt eller större än {} MB".format(
+                    index, MAX_FILE // 1024 // 1024)}
+            # The client's name is never a path; only its extension is kept, and only
+            # characters that cannot leave the folder. The core reads the type and
+            # rejects what it cannot read, so there is no second whitelist here.
+            suffix = re.sub(r"[^A-Za-z0-9.]", "", Path(str(entry.get("name") or "")).suffix)[:10]
+            path = Path(folder) / "doc{}{}".format(index, suffix)
+            path.write_bytes(raw)
+            paths.append(path)
+
+        args = ["flow", "plan", "--text", wish, "--json", "--project", PROJECT]
+        for path in paths:
+            args += ["--context", str(path)]
+        env = seam(*args, timeout=600)
+        data = env.get("payload") or {}
+        if env.get("exitCode") != 0 or not isinstance(data.get("proposal"), list) or not data["proposal"]:
+            return 200, {"ok": False, "error": data.get("error") or first_line(env)}
+        token = secrets.token_urlsafe(9)
+        _imports[token] = {"proposal": data["proposal"], "at": time.time()}
+        return 200, {"ok": True, "token": token, "proposal": data["proposal"], "project": PROJECT,
+                     "agent": data.get("agent"), "context": data.get("context")}
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)   # the papers are not kept
+
+
+def import_apply(payload: dict) -> tuple[int, dict]:
+    """The ticked part of the proposal, and only that. One approval, used once."""
+    entry = _imports.pop(str(payload.get("token") or ""), None)
+    if not entry:
+        return 404, {"ok": False, "error": "godkännandet gäller inte längre (använt, eller äldre än en timme)"}
+    proposal = entry["proposal"]
+    keep = payload.get("keep")
+    if not isinstance(keep, list) or not keep:
+        return 400, {"ok": False, "error": "ingenting var ibockat"}
+    try:
+        items = [proposal[int(i)] for i in keep if 0 <= int(i) < len(proposal)]
+    except (TypeError, ValueError):
+        return 400, {"ok": False, "error": "ibockningen såg inte ut som ärendenummer"}
+    if not items:
+        return 400, {"ok": False, "error": "de ibockade ärendena fanns inte i förslaget"}
+
+    folder = tempfile.mkdtemp(prefix="godjira-approved-")
+    path = Path(folder) / "approved.json"
+    path.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
+    try:
+        env = seam("flow", "plan", "--proposal", str(path), "--create", "--json",
+                   "--project", PROJECT, timeout=600)
+        data = env.get("payload") or {}
+        if env.get("exitCode") != 0:
+            # A crash mid-list says how many were written: never a silent half board.
+            return 200, {"ok": False, "error": data.get("error") or first_line(env),
+                         "created": data.get("created") or []}
+        with _lock:
+            _cache.clear()      # the board changed: the next read must not be the old one
+        return 200, {"ok": True, "created": data.get("created") or [], "project": PROJECT}
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "godjira-panel"
 
@@ -166,6 +272,34 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, b"ok", "text/plain")
             return
         self._send(404, b"not found", "text/plain")
+
+    def _json(self, code: int, payload: dict) -> None:
+        self._send(code, json.dumps(payload, ensure_ascii=False).encode(), "application/json; charset=utf-8")
+
+    def do_POST(self) -> None:  # noqa: N802 -- http.server's own naming
+        handler = {"/api/import": import_parse, "/api/import/apply": import_apply}.get(self.path.split("?")[0])
+        if not handler:
+            self._send(404, b"not found", "text/plain")
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length <= 0 or length > MAX_BODY:
+            self._json(400, {"ok": False, "error": "ingen kropp, eller över {} MB".format(
+                MAX_BODY // 1024 // 1024)})
+            return
+        try:
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+            assert isinstance(payload, dict)
+        except Exception:  # noqa: BLE001 -- malformed body is malformed
+            self._json(400, {"ok": False, "error": "kroppen var inte ett JSON-objekt"})
+            return
+        try:
+            code, answer = handler(payload)
+        except Exception as exc:  # noqa: BLE001 -- a crash must not look like a dead panel
+            code, answer = 500, {"ok": False, "error": "{}: {}".format(type(exc).__name__, exc)}
+        self._json(code, answer)
 
     def log_message(self, format: str, *args) -> None:  # noqa: A002 -- the base class names it
         print("[panel] " + format % args, flush=True)
