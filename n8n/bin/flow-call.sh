@@ -9,24 +9,35 @@
 #   {"exitCode": 0, "payload": {...}, "raw": "..."}
 #
 # payload is the parsed JSON the CLI printed, or null when it printed lines
-# instead (journal, current). raw is the text either way -- a caller that sees
-# payload null and raw empty knows the command died before it could say anything.
+# instead (journal, current) or nothing at all. raw is the text either way -- a
+# caller that sees payload null and raw empty knows the command died before it
+# could say anything.
 #
 #   flow-call.sh flow   next --dry-run --json   -> jira_flow.py
 #   flow-call.sh bridge journal 20              -> jira_bridge.py
+#   flow-call.sh gh     search prs --author=@me -> gh, the hub's GitHub pane
 #
 # ponytail: shell + python3 rather than a Node client, because the CLIs are the
-# only writer and this must not grow a second opinion about the flow.
+# only writer and this must not grow a second opinion about the flow. gh carries
+# its own credential (the keyring), so it needs no config here either.
 set -u
 
 root=$(cd "$(dirname "$0")/../.." && pwd) || exit 0
-case "${1:-flow}" in
-	bridge) script=bin/jira_bridge.py ;;
-	*) script=bin/jira_flow.py ;;
-esac
-shift
 
-out=$(cd "$root" && python3 "$script" "$@" 2>&1)
+case "${1:-flow}" in
+	gh)
+		shift
+		out=$(gh "$@" 2>&1)
+		;;
+	bridge)
+		shift
+		out=$(cd "$root" && python3 bin/jira_bridge.py "$@" 2>&1)
+		;;
+	*)
+		shift
+		out=$(cd "$root" && python3 bin/jira_flow.py "$@" 2>&1)
+		;;
+esac
 code=$?
 
 printf '%s' "$out" | python3 -c '

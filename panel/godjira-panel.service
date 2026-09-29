@@ -1,0 +1,21 @@
+[Unit]
+Description=GodJIRA panel (the hub's front door: Jira, GitHub, the flow)
+Documentation=https://github.com/alexwest1981/GodJIRA
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/alex/.config/omarchy/plugins/custom.jira
+ExecStart=/usr/bin/python3 /home/alex/.config/omarchy/plugins/custom.jira/panel/server.py
+# The panel reads `gh` and the Jira token: gh lives in ~/.local/bin, and the token
+# in the session keyring (without the two variables below it answers err.noTokenKeyring).
+Environment=PANEL_PORT=8788
+Environment=PANEL_BIND=0.0.0.0
+Environment=PATH=/home/alex/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

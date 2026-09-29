@@ -147,6 +147,10 @@ custom.jira/
 ├── components/              IssueCard, IssueDetail
 ├── i18n/                    en.json (source) + sv, de, fr, es, it, pt, nl, pl
 ├── window-rule.lua          Hyprland rule that floats the Jira window (see README)
+├── panel/                   the hub's front door: server.py + index.html (no deps,
+│                            no build step) + check.py
+├── n8n/                     the flow on a canvas: bin/flow-call.sh (the seam),
+│                            workflows/*.workflow.ts, README.md
 └── bin/jira_bridge.py       everything network/credential related (Python stdlib only)
     bin/jira_mcp.py          the same, over MCP, for an agent in an editor
     bin/jira_flow.py         take the next critical issue; editor shims + commit rule
@@ -155,6 +159,33 @@ custom.jira/
 
 The QML never talks HTTP and never holds credentials: it shells out to
 `jira_bridge.py` and reads one JSON document from stdout.
+
+## The panel, and the doors around the same core
+
+The decisions live in one place (`jira_flow.py`, with `jira_bridge.py` as the only
+thing that touches Jira). Everything else is a door onto those files:
+
+| Door | What it is | Where it runs |
+|---|---|---|
+| the QML panel | the Omarchy bar widget | this desktop only |
+| `bin/jira_flow.py` | the CLI, and the editor shims/commit hook | anywhere (Python stdlib) |
+| `bin/jira_mcp.py` | MCP over stdio for an agent in an editor | anywhere |
+| `n8n/` | the flow on a canvas, with history and a schedule | this machine, at `http://omarchy.local:5678` |
+| `panel/` | **the hub**: Jira's board + backlog, GitHub's repos, the flow's next pick, in one page | this machine, at `http://omarchy.local:8788` |
+
+The panel reads the same two CLIs through the same seam n8n uses
+(`n8n/bin/flow-call.sh`), so it can show something new but never believe
+something new. Its first answer costs ~9 s (four CLI calls) and a browser refresh
+costs nothing for 60 s (`PANEL_TTL`).
+
+```sh
+systemctl --user status godjira-panel      # alive, and starts at login
+python3 panel/check.py                     # one check: answers, and numbers agree
+```
+
+`check.py` is the one worth keeping: it fails when the panel is alive but blank,
+which is exactly what happens if the board — settled work — is shown without the
+backlog that holds the live work during a sprint with no active sprint.
 
 ## Bridge commands
 

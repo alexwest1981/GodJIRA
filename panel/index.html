@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GodJIRA — hubben</title>
+<style>
+  :root {
+    --bg: #0d0d0f;
+    --rail: #121216;
+    --card: #17171c;
+    --card-2: #1d1d23;
+    --line: #26262e;
+    --text: #ececf1;
+    --muted: #8b8b98;
+    --accent: #6b8cff;
+    --accent-soft: #6b8cff22;
+    --ok: #4ec9a0;
+    --warn: #e9b949;
+    --bad: #f2707a;
+    --radius: 8px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--text); display: flex; min-height: 100vh;
+    font: 14px/1.45 ui-sans-serif, system-ui, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  a { color: inherit; text-decoration: none; }
+  code, .key { font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, monospace; font-size: 12px; }
+
+  /* ---------------------------------------------------------------- rail */
+  .rail {
+    width: 268px; flex: 0 0 268px; background: var(--rail); border-right: 1px solid var(--line);
+    display: flex; flex-direction: column; padding: 16px 12px; gap: 18px; position: sticky; top: 0; height: 100vh;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 0; }
+  .brand .dot { width: 22px; height: 22px; border-radius: 6px; background: linear-gradient(135deg, var(--accent), #9b6bff); }
+  .brand b { font-size: 15px; letter-spacing: .2px; }
+  .brand span { display: block; font-size: 11px; color: var(--muted); }
+  .nav { display: flex; flex-direction: column; gap: 2px; }
+  .nav a {
+    display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 6px;
+    color: var(--muted); font-weight: 500;
+  }
+  .nav a:hover { background: var(--card); color: var(--text); }
+  .nav a.on { background: var(--accent-soft); color: var(--text); }
+  .nav a .ic { width: 16px; text-align: center; opacity: .8; }
+  .rail h4 {
+    margin: 0 0 6px; padding: 0 10px; font-size: 10.5px; letter-spacing: .09em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  .ctx { display: flex; flex-direction: column; gap: 6px; }
+  .ctx .row {
+    display: flex; justify-content: space-between; gap: 8px; padding: 7px 10px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 6px; font-size: 12px;
+  }
+  .ctx .row span:last-child { color: var(--muted); }
+  .spacer { flex: 1; }
+  .who { padding: 10px; border-top: 1px solid var(--line); font-size: 11.5px; color: var(--muted); }
+  .who b { color: var(--text); font-weight: 500; display: block; overflow: hidden; text-overflow: ellipsis; }
+
+  /* --------------------------------------------------------------- main */
+  main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  header.top {
+    display: flex; align-items: center; gap: 14px; padding: 16px 22px;
+    border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); z-index: 5;
+  }
+  header.top h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header.top .sub { color: var(--muted); font-size: 12px; }
+  header.top .grow { flex: 1; }
+  button, .btn {
+    background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 6px;
+    padding: 6px 11px; font: inherit; font-size: 12.5px; cursor: pointer;
+  }
+  button:hover { border-color: #3a3a46; }
+  input[type="search"] {
+    background: var(--card); border: 1px solid var(--line); border-radius: 6px; color: var(--text);
+    padding: 6px 10px; font: inherit; font-size: 12.5px; min-width: 220px;
+  }
+  .wrap { padding: 20px 22px 40px; display: flex; flex-direction: column; gap: 20px; }
+  .view { display: none; flex-direction: column; gap: 20px; }
+  .view.on { display: flex; }
+
+  /* -------------------------------------------------------------- cards */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(178px, 1fr)); gap: 12px; }
+  .stat {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 13px 14px;
+  }
+  .stat .n { font-size: 24px; font-weight: 600; }
+  .stat .l { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .stat .x { color: var(--muted); font-size: 11.5px; margin-top: 6px; }
+  .panel {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden;
+  }
+  .panel > h3 {
+    margin: 0; padding: 12px 14px; border-bottom: 1px solid var(--line);
+    font-size: 12.5px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 8px;
+  }
+  .panel > h3 .meta { margin-left: auto; color: var(--muted); font-weight: 400; font-size: 11.5px; }
+  .panel .body { padding: 14px; }
+  .two { display: grid; grid-template-columns: 1.1fr .9fr; gap: 20px; align-items: start; }
+  @media (max-width: 1100px) { .two { grid-template-columns: 1fr; } }
+
+  .pick { border-left: 3px solid var(--accent); background: var(--card-2); border-radius: 6px; padding: 12px 14px; }
+  .pick .t { font-size: 15px; font-weight: 550; margin-bottom: 4px; }
+  .pick .m { color: var(--muted); font-size: 12px; display: flex; gap: 10px; flex-wrap: wrap; }
+  .pick.none { border-left-color: var(--line); }
+  .list { display: flex; flex-direction: column; }
+  .list .it {
+    display: flex; gap: 10px; align-items: baseline; padding: 8px 2px; border-bottom: 1px solid var(--line); font-size: 12.5px;
+  }
+  .list .it:last-child { border-bottom: 0; }
+  .list .it .k { color: var(--muted); flex: 0 0 auto; }
+  .list .it .s { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  td .muted { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .muted { color: var(--muted); }
+  .tag {
+    display: inline-block; padding: 1px 7px; border-radius: 20px; font-size: 11px;
+    border: 1px solid var(--line); background: var(--card-2); color: var(--muted);
+  }
+  .tag.priv { color: var(--warn); border-color: #4a3c17; background: #2a2410; }
+  .tag.pub { color: var(--ok); border-color: #1f4638; background: #102a22; }
+
+  /* -------------------------------------------------------------- board */
+  .cols { display: flex; gap: 14px; overflow-x: auto; padding-bottom: 6px; align-items: flex-start; }
+  .col { flex: 0 0 290px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); }
+  .col > h3 {
+    margin: 0; padding: 11px 13px; font-size: 12.5px; display: flex; align-items: center; gap: 8px;
+    border-bottom: 1px solid var(--line);
+  }
+  .col > h3 .c { margin-left: auto; color: var(--muted); font-size: 11.5px; }
+  .col .stack { padding: 10px; display: flex; flex-direction: column; gap: 8px; max-height: 62vh; overflow-y: auto; }
+  .card {
+    background: var(--card-2); border: 1px solid var(--line); border-radius: 6px; padding: 9px 10px; font-size: 12.5px;
+  }
+  .card .k { color: var(--muted); font-size: 11px; display: flex; gap: 8px; }
+  .card .s { margin-top: 3px; }
+  .card .f { margin-top: 7px; display: flex; gap: 6px; flex-wrap: wrap; color: var(--muted); font-size: 11px; }
+  .pill { border: 1px solid var(--line); border-radius: 20px; padding: 0 7px; }
+  .pill.hi { color: var(--bad); border-color: #4d2b30; }
+  .pill.who { color: var(--accent); border-color: #2b3a63; }
+
+  /* -------------------------------------------------------------- table */
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; }
+  tr:last-child td { border-bottom: 0; }
+  td.num { text-align: right; color: var(--muted); }
+  .empty { color: var(--muted); font-size: 12.5px; padding: 4px 0; }
+  .err { color: var(--bad); }
+  .foot { color: var(--muted); font-size: 11.5px; padding: 0 22px 30px; }
+</style>
+</head>
+<body>
+<aside class="rail">
+  <div class="brand">
+    <div class="dot"></div>
+    <div><b>GodJIRA</b><span id="brandSub">hubben</span></div>
+  </div>
+  <nav class="nav" id="nav"></nav>
+  <div>
+    <h4>Jira</h4>
+    <div class="ctx" id="ctxJira"></div>
+  </div>
+  <div>
+    <h4>GitHub</h4>
+    <div class="ctx" id="ctxGithub"></div>
+  </div>
+  <div class="spacer"></div>
+  <div class="who" id="who">laddar…</div>
+</aside>
+
+<main>
+  <header class="top">
+    <h1 id="title">Översikt</h1>
+    <span class="sub" id="sub"></span>
+    <span class="grow"></span>
+    <input type="search" id="filter" placeholder="filtrera ärenden och repon" hidden>
+    <button id="refresh">Uppdatera</button>
+  </header>
+
+  <div class="wrap">
+    <section class="view on" id="v-overview">
+      <div class="stats" id="stats"></div>
+      <div class="two">
+        <div class="panel">
+          <h3>Flödets nästa <span class="meta">jira_flow.py next --dry-run</span></h3>
+          <div class="body" id="flowPick"></div>
+        </div>
+        <div class="panel">
+          <h3>Flödets egna skrivningar <span class="meta">journal</span></h3>
+          <div class="body" id="journal"></div>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>Repon och deras läge <span class="meta" id="reposMeta"></span></h3>
+        <div class="body"><div class="list" id="reposBrief"></div></div>
+      </div>
+    </section>
+
+    <section class="view" id="v-board">
+      <div class="empty" id="sprintNote"></div>
+      <div class="cols" id="cols"></div>
+      <div class="panel">
+        <h3>Backlog <span class="meta" id="backlogMeta"></span></h3>
+        <div class="body"><div class="list" id="backlog"></div></div>
+      </div>
+    </section>
+
+    <section class="view" id="v-repos">
+      <div class="panel">
+        <h3>Alla repon <span class="meta" id="reposMeta2"></span></h3>
+        <div class="body" style="padding:0"><table id="repoTable"></table></div>
+      </div>
+      <div class="two">
+        <div class="panel">
+          <h3>Öppna pull requests <span class="meta" id="prMeta"></span></h3>
+          <div class="body"><div class="list" id="prs"></div></div>
+        </div>
+        <div class="panel">
+          <h3>Öppna ärenden <span class="meta" id="issMeta"></span></h3>
+          <div class="body"><div class="list" id="issues"></div></div>
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+
+<script>
+const TEXT = {
+  views: { overview: "Översikt", board: "Tavlan", repos: "Repos" },
+  icons: { overview: "◧", board: "▤", repos: "⌥" },
+  updated: "uppdaterad",
+  onBoard: "ärenden på tavlan",
+  inBacklog: "i backlog",
+  repos: "repon",
+  waiting: "väntar på dig i GitHub",
+  next: "Flödets nästa",
+  noNext: "inget att ta just nu",
+  someoneElses: "bara någon annans ärende kvar — det tas från panelens andra tryck",
+  runnersUp: "därefter",
+  nothing: "inget",
+  public: "publikt", private: "privat",
+  never: "aldrig",
+};
+
+let STATE = null;
+let view = "overview";
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function ago(iso) {
+  if (!iso) return TEXT.never;
+  const t = new Date(iso).getTime();
+  if (!t) return TEXT.never;
+  const m = Math.round((Date.now() - t) / 60000);
+  if (m < 1) return "nyss";
+  if (m < 60) return m + " min";
+  const h = Math.round(m / 60);
+  if (h < 24) return h + " h";
+  return Math.round(h / 24) + " d";
+}
+function hhmm() { return new Date().toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" }); }
+
+function renderNav() {
+  document.getElementById("nav").innerHTML = Object.keys(TEXT.views).map(v =>
+    `<a href="#${v}" class="${v === view ? "on" : ""}" data-v="${v}"><span class="ic">${TEXT.icons[v]}</span>${TEXT.views[v]}</a>`
+  ).join("");
+}
+function show(v) {
+  view = v;
+  document.querySelectorAll(".view").forEach(el => el.classList.toggle("on", el.id === "v-" + v));
+  document.getElementById("title").textContent = TEXT.views[v] || v;
+  document.getElementById("filter").hidden = v === "overview";
+  renderNav();
+  render();
+}
+
+function board() { return (STATE.jira.boards || [])[0] || null; }
+function issues() { return (board() || {}).issues || []; }
+function backlog() { return (board() || {}).backlog || []; }
+// The board endpoint keeps the settled work; the live work sits in the backlog (no
+// active sprint). Same keys never appear in both -- measured, 0 of 93+38 -- so the
+// panel shows the board the way the flow sees it.
+function boardItems() {
+  const seen = new Set();
+  return issues().concat(backlog()).filter(i => !seen.has(i.key) && seen.add(i.key));
+}
+function openItems() { return boardItems().filter(i => i.statusCategory !== "done"); }
+function filterText() { return (document.getElementById("filter").value || "").toLowerCase(); }
+function matches(issue) {
+  const q = filterText();
+  if (!q) return true;
+  return (issue.key + " " + (issue.summary || "")).toLowerCase().includes(q);
+}
+
+function renderRail() {
+  const g = STATE.github, j = STATE.jira;
+  document.getElementById("ctxJira").innerHTML = j.ok
+    ? (j.projects || []).map(p => `<div class="row"><span>${esc(p.key)}</span><span>${esc(p.name)}</span></div>`).join("") +
+      `<div class="row"><span>${esc((board() || {}).name || "tavla")}</span><span>${issues().length} ärenden</span></div>` +
+      `<div class="row"><span>sprint</span><span>${(board() || {}).sprint ? esc(board().sprint.name) : "ingen aktiv"}</span></div>`
+    : `<div class="row err"><span>Jira</span><span>${esc(j.error || "inget svar")}</span></div>`;
+  document.getElementById("ctxGithub").innerHTML = g.ok
+    ? `<div class="row"><span>konto</span><span>${esc(g.login)}</span></div>
+       <div class="row"><span>repon</span><span>${g.repos.length}</span></div>
+       <div class="row"><span>kräver dig</span><span>${g.pullRequests.length + g.issues.length}</span></div>`
+    : `<div class="row err"><span>GitHub</span><span>${esc(g.error || "inget svar")}</span></div>`;
+  document.getElementById("who").innerHTML =
+    `<b>${esc((j.account || {}).displayName || "")}</b>${esc((j.account || {}).email || "")}<br>${esc(j.mode || "")} · ${TEXT.updated} ${hhmm()}`;
+  document.getElementById("sub").textContent = TEXT.updated + " " + hhmm();
+  document.getElementById("brandSub").textContent = "hubben · " + STATE.generatedAt.slice(11, 16);
+}
+
+function renderStats() {
+  const f = STATE.flow;
+  const g = STATE.github, j = STATE.jira;
+  document.getElementById("stats").innerHTML = `
+    <div class="stat"><div class="n">${openItems().length}</div><div class="l">öppna ärenden</div>
+      <div class="x">${issues().length} klara i ${esc((board() || {}).name || "tavlan")}</div></div>
+    <div class="stat"><div class="n">${backlog().length}</div><div class="l">${TEXT.inBacklog}</div>
+      <div class="x">${(backlog() || []).filter(i => i.assignee).length} tilldelade</div></div>
+    <div class="stat"><div class="n">${g.repos.length}</div><div class="l">${TEXT.repos}</div>
+      <div class="x">${g.repos.filter(r => r.isPrivate).length} privata · ${g.repos.filter(r => !r.isPrivate).length} publika</div></div>
+    <div class="stat"><div class="n">${g.pullRequests.length + g.issues.length}</div><div class="l">${TEXT.waiting}</div>
+      <div class="x">${g.pullRequests.length} PR · ${g.issues.length} ärenden${f.ok ? "" : " · <span class=\"err\">flödet: " + esc(f.error || "?") + "</span>"}</div></div>`;
+}
+
+function renderFlowPick() {
+  const f = STATE.flow, p = f.pick;
+  const host = document.getElementById("flowPick");
+  if (!p) {
+    host.innerHTML = `<div class="pick none"><div class="t">${TEXT.noNext}</div>
+      <div class="m">${esc(f.error || "")}</div></div>`;
+    return;
+  }
+  host.innerHTML = `
+    <div class="pick"><div class="t">${esc(p.summary)}</div>
+      <div class="m"><span class="key">${esc(p.key)}</span><span>${esc(p.status || "")}</span>
+      ${p.priority ? `<span class="pill hi">${esc(p.priority)}</span>` : ""}
+      <span>${p.assignee ? "→ " + esc(p.assignee) : "oassignerat"}</span></div></div>
+    ${f.someoneElses ? `<div class="empty" style="margin-top:10px">${esc(f.someoneElses.key)} är någon annans — ${TEXT.someoneElses}</div>` : ""}
+    ${(f.runnersUp || []).length ? `<div class="list" style="margin-top:12px">
+      <div class="empty">${TEXT.runnersUp}</div>
+      ${f.runnersUp.map(i => `<div class="it"><span class="k">${esc(i.key)}</span><span class="s">${esc(i.summary)}</span></div>`).join("")}
+    </div>` : ""}`;
+}
+
+function renderJournal() {
+  const log = (STATE.journal.log || []).slice(0, 10);
+  document.getElementById("journal").innerHTML = log.length
+    ? `<div class="list">${log.map(e => `<div class="it">
+        <span class="k">${esc((e.at || "").slice(11, 16))}</span>
+        ${e.key ? `<span class="key">${esc(e.key)}</span>` : ""}
+        <span class="s">${esc(e.action || "")}${e.detail ? " · " + esc(e.detail) : ""}</span>
+        <span class="k" style="margin-left:auto">${e.ok ? "✓" : "<span class=\"err\">✗</span>"}</span>
+      </div>`).join("")}</div>`
+    : `<div class="empty">${esc(STATE.journal.error || "inget skrivet ännu")}</div>`;
+}
+
+function renderReposBrief() {
+  const g = STATE.github;
+  const prByRepo = {}, issByRepo = {};
+  g.pullRequests.forEach(p => { const n = p.repository.nameWithOwner; (prByRepo[n] = prByRepo[n] || []).push(p); });
+  g.issues.forEach(i => { const n = i.repository.nameWithOwner; (issByRepo[n] = issByRepo[n] || []).push(i); });
+  const repos = g.repos.slice().sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || "")).slice(0, 10);
+  document.getElementById("reposMeta").textContent = g.repos.length + " repon, senast rörda först";
+  document.getElementById("reposBrief").innerHTML = repos.map(r => {
+    const n = (g.login || "") + "/" + r.name;
+    const bits = [];
+    if (prByRepo[n]) bits.push(`<span class="pill">${prByRepo[n].length} PR</span>`);
+    if (issByRepo[n]) bits.push(`<span class="pill">${issByRepo[n].length} ärenden</span>`);
+    return `<div class="it"><span class="tag ${r.isPrivate ? "priv" : "pub"}">${r.isPrivate ? TEXT.private : TEXT.public}</span>
+      <span class="s"><b>${esc(r.name)}</b> <span class="muted">${esc(r.description || r.primaryLanguage?.name || "")}</span></span>
+      <span class="k" style="margin-left:auto">${ago(r.updatedAt)}</span>${bits.join("")}</div>`;
+  }).join("");
+}
+
+function renderBoard() {
+  const b = board();
+  if (!b) { document.getElementById("cols").innerHTML = `<div class="empty err">${esc(STATE.jira.error || "ingen tavla")}</div>`; return; }
+  document.getElementById("sprintNote").textContent = b.sprint
+    ? "aktiv sprint: " + b.sprint.name
+    : "ingen aktiv sprint — det som är kvar att göra står i backloggen, och den ligger i To Do här";
+  const byStatus = {};
+  boardItems().forEach(i => { (byStatus[i.statusId] = byStatus[i.statusId] || []).push(i); });
+  document.getElementById("cols").innerHTML = (b.columns || []).map(c => {
+    const list = (byStatus[c.statusId] || []).filter(matches);
+    const shown = list.slice(0, 60);
+    return `<div class="col"><h3>${esc(c.name)}<span class="c">${list.length}</span></h3>
+      <div class="stack">${shown.map(i => card(i)).join("") || `<div class="empty">Inga ärenden</div>`}
+      ${list.length > shown.length ? `<div class="empty">+${list.length - shown.length} äldre</div>` : ""}</div></div>`;
+  }).join("");
+  const bl = backlog().filter(matches);
+  document.getElementById("backlogMeta").textContent = bl.length + " ärenden";
+  document.getElementById("backlog").innerHTML = bl.map(i =>
+    `<div class="it"><span class="key">${esc(i.key)}</span><span class="s">${esc(i.summary)}</span>
+     <span class="k" style="margin-left:auto">${esc(i.assignee || "")}</span></div>`).join("") || `<div class="empty">tomt</div>`;
+}
+function card(i) {
+  return `<div class="card"><div class="k"><span class="key">${esc(i.key)}</span><span>${esc(i.typeName || "")}</span>
+      ${i.sprintName ? `<span style="margin-left:auto">${esc(i.sprintName)}</span>` : ""}</div>
+    <div class="s">${esc(i.summary)}</div>
+    <div class="f">${i.priorityName ? `<span class="pill${/high|highest/i.test(i.priorityName) ? " hi" : ""}">${esc(i.priorityName)}</span>` : ""}
+      ${i.assigneeName ? `<span class="pill who">${esc(i.assigneeName.split(" ")[0])}</span>` : ""}
+      ${i.parentKey ? `<span class="pill">${esc(i.parentKey)}</span>` : ""}</div></div>`;
+}
+
+function renderRepos() {
+  const g = STATE.github;
+  const q = filterText();
+  const rows = g.repos.filter(r => !q || (r.name + " " + (r.description || "")).toLowerCase().includes(q));
+  document.getElementById("reposMeta2").textContent = rows.length + " av " + g.repos.length;
+  const prByRepo = {}, issByRepo = {};
+  g.pullRequests.forEach(p => { const n = p.repository.name; (prByRepo[n] = prByRepo[n] || []).push(p); });
+  g.issues.forEach(i => { const n = i.repository.name; (issByRepo[n] = issByRepo[n] || []).push(i); });
+  document.getElementById("repoTable").innerHTML =
+    `<thead><tr><th>Repo</th><th>Synlighet</th><th>Språk</th><th class="num">Stjärnor</th><th class="num">PR</th><th class="num">Ärenden</th><th>Senast</th></tr></thead>
+     <tbody>${rows.map(r => `<tr>
+       <td><b>${esc(r.name)}</b>${r.description ? `<div class="muted" style="font-size:11.5px">${esc(r.description).slice(0, 90)}</div>` : ""}</td>
+       <td><span class="tag ${r.isPrivate ? "priv" : "pub"}">${r.isPrivate ? TEXT.private : TEXT.public}</span></td>
+       <td class="muted">${esc((r.primaryLanguage && r.primaryLanguage.name) || "—")}</td>
+       <td class="num">${r.stargazerCount || 0}</td>
+       <td class="num">${(prByRepo[r.name] || []).length}</td>
+       <td class="num">${(issByRepo[r.name] || []).length}</td>
+       <td class="muted">${ago(r.updatedAt)}</td></tr>`).join("")}</tbody>`;
+  const prHost = document.getElementById("prs"), issHost = document.getElementById("issues");
+  prHost.innerHTML = g.pullRequests.length ? g.pullRequests.map(p =>
+    `<div class="it"><span class="key">${esc(p.repository.nameWithOwner)}#${p.number}</span><span class="s">${esc(p.title)}</span>
+     <span class="k" style="margin-left:auto">${ago(p.updatedAt)}</span></div>`).join("") : `<div class="empty">inga öppna</div>`;
+  issHost.innerHTML = g.issues.length ? g.issues.map(i =>
+    `<div class="it"><span class="key">${esc(i.repository.nameWithOwner)}#${i.number}</span><span class="s">${esc(i.title)}</span>
+     <span class="k" style="margin-left:auto">${ago(i.updatedAt)}</span></div>`).join("") : `<div class="empty">inga öppna</div>`;
+  document.getElementById("prMeta").textContent = g.pullRequests.length + "";
+  document.getElementById("issMeta").textContent = g.issues.length + "";
+}
+
+function render() {
+  if (!STATE) return;
+  renderRail();
+  if (view === "overview") { renderStats(); renderFlowPick(); renderJournal(); renderReposBrief(); }
+  if (view === "board") renderBoard();
+  if (view === "repos") renderRepos();
+}
+
+async function load(refresh) {
+  try {
+    const r = await fetch(refresh ? "/api/refresh" : "/api/state", { cache: "no-store" });
+    STATE = await r.json();
+    render();
+  } catch (e) {
+    document.getElementById("sub").innerHTML = `<span class="err">ingen kontakt med panelen</span>`;
+  }
+}
+
+document.getElementById("nav").addEventListener("click", e => {
+  const a = e.target.closest("a"); if (!a) return;
+  e.preventDefault(); location.hash = a.dataset.v; show(a.dataset.v);
+});
+document.getElementById("refresh").addEventListener("click", () => load(true));
+document.getElementById("filter").addEventListener("input", render);
+window.addEventListener("hashchange", () => show(location.hash.slice(1) || "overview"));
+show(location.hash.slice(1) || "overview");
+load(false);
+setInterval(() => load(false), 60000);
+</script>
+</body>
+</html>
