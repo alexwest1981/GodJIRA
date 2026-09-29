@@ -193,7 +193,10 @@ python3 panel/check.py                     # one check: answers, and numbers agr
 ### Five views, Plane's anatomy
 
 The hub is modelled on Plane (`makeplane/plane`), which is the reference for how it
-should read: an icon rail plus a nav sidebar with section labels, a breadcrumb header
+should read — the *anatomy*, not the colours: the palette comes from the mark
+(`assets/godjira.svg`), so the accent is the logo's own teal (measured 5.47:1 on the
+background) and the status colours were moved off it rather than near it. Plane's
+blue belongs to Plane: an icon rail plus a nav sidebar with section labels, a breadcrumb header
 with a view switcher, columns whose heading is a state dot + name + count, and work-item
 cards carrying a type glyph, the id, the title, then one row of priority indicator,
 state pill and teammate avatar.
