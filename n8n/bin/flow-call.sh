@@ -21,6 +21,11 @@
 # only writer and this must not grow a second opinion about the flow. gh carries
 # its own credential (the keyring), so it needs no config here either.
 set -u
+# Skriv aldrig .pyc har: bytekoden hamnar i plugin-katalogen, och skalet laddar om
+# ett lokalt plugin vid varje filandring (matt: 85 omladdningar pa en minut under
+# en redigeringsrunda). CLI:t skriver da ingenting i katalogen.
+PYTHONDONTWRITEBYTECODE=1
+export PYTHONDONTWRITEBYTECODE
 
 root=$(cd "$(dirname "$0")/../.." && pwd) || exit 0
 

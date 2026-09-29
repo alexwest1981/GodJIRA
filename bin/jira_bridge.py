@@ -71,6 +71,13 @@ user can encounter):
 Anything else (bad args, bad JSON, a crash) is a bug in the helper and exits 1.
 """
 
+import sys as _sys
+
+# Ingen bytekod bredvid kallkoden: hubben ligger i sin plugin-katalog, och Omarchys
+# skal laddar om ett lokalt plugin sa fort nagot i katalogen andras -- en .pyc vore
+# alltsa en omladdning av baren.
+_sys.dont_write_bytecode = True
+
 import base64
 import datetime
 import json

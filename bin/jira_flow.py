@@ -51,6 +51,13 @@ Credentials, two ways, picked automatically:
 
 from __future__ import annotations
 
+import sys as _sys
+
+# Ingen bytekod bredvid kallkoden. Hubben ligger i sin plugin-katalog, och Omarchys
+# skal laddar om ett lokalt plugin sa fort nagot i katalogen andras -- en .pyc vore
+# alltsa en omladdning av baren.
+_sys.dont_write_bytecode = True
+
 import argparse
 import io
 import json
@@ -461,12 +468,18 @@ def link_project(args, repo_dir: str = "") -> tuple:
     """
     if (getattr(args, "project", "") or "").strip():
         return args.project.strip(), "flaggan"
-    candidates = [(repo_slug_of_dir(repo_dir) if repo_dir else "", "--repo"),
-                  (getattr(args, "repo_name", "") or "", "länken")]
+    # Repot först när det är namngivet, annars det enda länkade repot -- det är
+    # projektet man är kopplad till. Flera länkar utan namn är tvetydigt: standarden.
+    candidates = [(getattr(args, "repo_name", "") or "", "länken"),
+                  (repo_slug_of_dir(repo_dir) if repo_dir else "", "--repo")]
     for name, source in candidates:
         link = link_for(name) if name else {}
         if link.get("project"):
             return link["project"], "{} ({})".format(source, link.get("repo") or name)
+    if not repo_dir and not (getattr(args, "repo_name", "") or "").strip():
+        linked = [dict(value or {}, repo=key) for key, value in load_links().items() if (value or {}).get("project")]
+        if len(linked) == 1:
+            return linked[0]["project"], "länken ({})".format(linked[0].get("repo"))
     return DEFAULT_PROJECT, "standarden"
 
 
@@ -812,7 +825,8 @@ def cmd_next(client_, args) -> int:
             others = shared_first(find(client_, pick_jql(args.project, "any"), limit=10))
             if not others:
                 message = "Nothing to take: nothing not-started in {}.".format(args.project)
-                say(args, {"ok": False, "error": message, "project": args.project}, [message])
+                say(args, {"ok": False, "error": message, "project": args.project,
+                           "projectSource": getattr(args, "project_source", "")}, [message])
                 return 1
             top = others[0]
             message = "Nothing of your own; {} is the most critical. Press again to take it over.".format(
@@ -828,6 +842,7 @@ def cmd_next(client_, args) -> int:
     if args.dry_run:
         say(args,
             {"ok": True, "dryRun": True, "wouldTake": row(chosen), "status": args.status,
+             "project": args.project, "projectSource": getattr(args, "project_source", ""),
              "assignTo": me.get("displayName"), "skipped": skipped},
             ["would take: {}".format(describe(chosen)),
              "            assign to {} and move to {}".format(me.get("displayName"), args.status)])
@@ -1713,6 +1728,17 @@ def selftest() -> int:
         assert link_project(argparse.Namespace(project="OTHER", repo="", repo_name="GodJIRA"))[0] == "OTHER", \
             "flaggan vinner över länken"
         assert link_project(argparse.Namespace(project="", repo="", repo_name="okänt"))[0] == DEFAULT_PROJECT
+        # Ett enda länkat repo är "projektet man är kopplad till" när inget namnges.
+        assert link_project(argparse.Namespace(project=""))[0] == "SCRUM", "den enda länken ger projektet"
+        assert link_project(argparse.Namespace(project="", repo=""))[1].startswith("länken"), "och säger varifrån"
+        with quiet:
+            cmd_link(argparse.Namespace(action="set", repo="annat-repo", project="OTHER", issue="",
+                                        note="", json=True))
+        assert link_project(argparse.Namespace(project=""))[0] == DEFAULT_PROJECT, \
+            "två länkar utan namn är tvetydigt: standarden"
+        with quiet:
+            cmd_link(argparse.Namespace(action="rm", repo="annat-repo", project="", issue="",
+                                        note="", json=True))
         assert plan_repo_dir(argparse.Namespace(repo="/tmp/nagonstans", repo_name="GodJIRA")) == "/tmp/nagonstans", \
             "--repo går före den lokala kopian"
         assert plan_repo_dir(argparse.Namespace(repo="", repo_name="")) == "", "utan repo ingen katalog"
@@ -2065,7 +2091,8 @@ def build_parser() -> argparse.ArgumentParser:
                          help="store in the 0600 config file instead of an OS store (a machine without a desktop)")
     sub.add_parser("logout", help="remove it again")
     for p in (p_next, p_cur):
-        p.add_argument("--project", default=DEFAULT_PROJECT)
+        p.add_argument("--project", default="",
+                       help="override the project; default comes from the repo's link")
     p_next.add_argument("--status", default=DEFAULT_STATUS)
     p_next.add_argument("--dry-run", action="store_true")
     p_next.add_argument("--json", action="store_true", help="machine-readable result (for an agent)")
@@ -2129,6 +2156,10 @@ def main(argv) -> int:
         return cmd_link(args)
     if args.cmd == "repo":
         return cmd_repo(args)
+    # En plats för projektnyckeln: flaggan, annars länken, annars standarden. Nästa,
+    # aktuellt och plan går alla genom den -- ingen av dem har en egen uppfattning.
+    if args.cmd in ("next", "current") and not (args.project or "").strip():
+        args.project, args.project_source = link_project(args)
     jira = client()
     try:
         if args.cmd == "plan":

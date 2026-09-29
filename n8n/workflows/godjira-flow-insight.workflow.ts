@@ -2,28 +2,30 @@ import { workflow, node, links } from '@n8n-as-code/transformer';
 
 // <workflow-map>
 // Workflow : GodJIRA — the flow: insight
-// Nodes   : 8  |  Connections: 6
+// Nodes   : 9  |  Connections: 7
 //
 // NODE INDEX
 // ──────────────────────────────────────────────────────────────────
 // Property name                    Node type (short)         Flags
 // Note                               stickyNote
-// EveryWeekdayAt0730                 scheduleTrigger
+// EveryHour                          scheduleTrigger
 // ManualTrigger                      manualTrigger
 // Config                             set
 // Step1Current                       executeCommand
 // Step2ThePickDryRun                 executeCommand
 // Step3TheJournal                    executeCommand
 // Summary                            code
+// ReportToThePanel                   httpRequest                [onError→regular]
 //
 // ROUTING MAP
 // ──────────────────────────────────────────────────────────────────
-// EveryWeekdayAt0730
+// EveryHour
 //    → Config
 //      → Step1Current
 //        → Step2ThePickDryRun
 //          → Step3TheJournal
 //            → Summary
+//              → ReportToThePanel
 // ManualTrigger
 //    → Config (↩ loop)
 // </workflow-map>
@@ -35,9 +37,10 @@ import { workflow, node, links } from '@n8n-as-code/transformer';
 @workflow({
     id: 'Drq6dySctqkoGTPj',
     name: 'GodJIRA — the flow: insight',
-    active: false,
+    active: true,
     isArchived: false,
-    settings: { executionOrder: 'v1' },
+    projectId: 'xb5Q4TajmScCltIA',
+    settings: { executionOrder: 'v1', binaryMode: 'separate' },
 })
 export class GodjiraTheFlowInsightWorkflow {
     // =====================================================================
@@ -49,7 +52,7 @@ export class GodjiraTheFlowInsightWorkflow {
         name: 'Note',
         type: 'n8n-nodes-base.stickyNote',
         version: 1,
-        position: [-560, 100],
+        position: [-560, 112],
     })
     Note = {
         content: `## Read-only
@@ -57,28 +60,26 @@ Runs the flow's own commands and collects what they answer: what you are on, wha
 
 Nothing here writes on the board.
 
-The three commands are the same code the bar panel and the MCP server call — one flow, two windows.`,
-        height: 260,
+The commands carry no project key: the CLI takes it from the repo link, so this run follows whichever project you are linked to. The last node hands the reading to the panel (POST /api/automation) — that is what the hub shows as "Projektet du är kopplad till".`,
+        height: 300,
         width: 460,
         color: 4,
     };
 
     @node({
         id: 'a8d0b6a4-6c1f-4c2e-9f2e-7b6f2a2f0c11',
-        name: 'Every weekday at 07:30',
+        name: 'Every hour',
         type: 'n8n-nodes-base.scheduleTrigger',
         version: 1.4,
-        position: [-380, 380],
+        position: [-64, 464],
     })
-    EveryWeekdayAt0730 = {
+    EveryHour = {
         rule: {
             interval: [
                 {
-                    field: 'weeks',
-                    weeksInterval: 1,
-                    triggerAtDay: [1, 2, 3, 4, 5],
-                    triggerAtHour: 7,
-                    triggerAtMinute: 30,
+                    field: 'hours',
+                    hoursInterval: 1,
+                    triggerAtMinute: 17,
                 },
             ],
         },
@@ -89,7 +90,7 @@ The three commands are the same code the bar panel and the MCP server call — o
         name: 'Manual Trigger',
         type: 'n8n-nodes-base.manualTrigger',
         version: 1,
-        position: [-80, 200],
+        position: [-80, 208],
     })
     ManualTrigger = {};
 
@@ -98,7 +99,7 @@ The three commands are the same code the bar panel and the MCP server call — o
         name: 'Config',
         type: 'n8n-nodes-base.set',
         version: 3.4,
-        position: [140, 200],
+        position: [144, 208],
     })
     Config = {
         assignments: {
@@ -110,9 +111,9 @@ The three commands are the same code the bar panel and the MCP server call — o
                     type: 'string',
                 },
                 {
-                    id: 'ada71d47-f6e5-4a68-bd23-0a002611a909',
-                    name: 'project',
-                    value: 'SCRUM',
+                    id: '9c2f1b40-7a55-4d3e-8f61-2ab6c0d91e77',
+                    name: 'panel',
+                    value: 'http://127.0.0.1:8788',
                     type: 'string',
                 },
             ],
@@ -125,12 +126,10 @@ The three commands are the same code the bar panel and the MCP server call — o
         name: 'Step 1 - current',
         type: 'n8n-nodes-base.executeCommand',
         version: 1,
-        position: [360, 80],
+        position: [368, 80],
     })
     Step1Current = {
-        command:
-            "={{ $('Config').first().json.repo }}/n8n/bin/flow-call.sh flow current --project {{ $('Config').first().json.project }}",
-        executeOnce: true,
+        command: "={{ $('Config').first().json.repo }}/n8n/bin/flow-call.sh flow current",
     };
 
     @node({
@@ -138,12 +137,10 @@ The three commands are the same code the bar panel and the MCP server call — o
         name: 'Step 2 - the pick (dry run)',
         type: 'n8n-nodes-base.executeCommand',
         version: 1,
-        position: [360, 240],
+        position: [368, 240],
     })
     Step2ThePickDryRun = {
-        command:
-            "={{ $('Config').first().json.repo }}/n8n/bin/flow-call.sh flow next --dry-run --json --project {{ $('Config').first().json.project }}",
-        executeOnce: true,
+        command: "={{ $('Config').first().json.repo }}/n8n/bin/flow-call.sh flow next --dry-run --json",
     };
 
     @node({
@@ -151,11 +148,10 @@ The three commands are the same code the bar panel and the MCP server call — o
         name: 'Step 3 - the journal',
         type: 'n8n-nodes-base.executeCommand',
         version: 1,
-        position: [360, 400],
+        position: [368, 400],
     })
     Step3TheJournal = {
         command: "={{ $('Config').first().json.repo }}/n8n/bin/flow-call.sh bridge journal 20",
-        executeOnce: true,
     };
 
     @node({
@@ -163,11 +159,9 @@ The three commands are the same code the bar panel and the MCP server call — o
         name: 'Summary',
         type: 'n8n-nodes-base.code',
         version: 2,
-        position: [620, 240],
+        position: [624, 240],
     })
     Summary = {
-        mode: 'runOnceForAllItems',
-        language: 'javaScript',
         jsCode: `const read = (json) => {
   try { return JSON.parse(json.stdout || '{}'); } catch (e) { return { exitCode: null, payload: null, raw: json.stdout || '' }; }
 };
@@ -180,21 +174,48 @@ const p = pick.payload || {};
 const candidate = p.wouldTake || p.proposal || null;
 
 const failed = [cur, pick, journal].find(r => r.payload === null && String(r.raw || '').trim());
+const firstLine = (value) => String(value || '').split(String.fromCharCode(10)).filter(l => l.trim())[0] || '';
 
 let note;
-if (failed) note = 'the flow could not answer: ' + String(failed.raw).trim().split('\\n')[0];
+if (failed) note = 'the flow could not answer: ' + firstLine(failed.raw);
 else if (p.wouldTake) note = 'the flow would take ' + candidate.key + ' for ' + p.assignTo + ' and move it to ' + p.status;
 else if (p.proposal) note = candidate.key + " is someone else's; the panel needs a second press on it, this run writes nothing";
 else if (pick.exitCode === 1) note = 'nothing not-started to take';
-else note = 'the flow answered with exit code ' + pick.exitCode + ': ' + String(pick.raw || '').split('\\n')[0];
+else note = 'the flow answered with exit code ' + pick.exitCode + ': ' + firstLine(pick.raw);
 
 const runnersUp = (p.skipped || []).slice(0, 5).map(s => s.key + ' [' + (s.priority || '-') + '] ' + s.summary);
 const log = ((journal.payload || {}).log || []).slice(0, 10)
   .map(e => (e.at + ' ' + e.action + ' ' + (e.key || '-') + ' ' + (e.ok ? 'ok' : 'FAILED') + ' ' + (e.detail || '')).trim());
 
-return [{ json: { checkedAt: new Date().toISOString(), project: cfg.project,
-  note: note, amIOn: String(cur.raw || '').trim() || null, theFlowsPick: candidate,
+// The project key is the CLI's own answer: the repo link decided it, not this flow.
+return [{ json: { checkedAt: new Date().toISOString(), project: p.project || '',
+  projectSource: p.projectSource || '', runner: 'n8n', workflowId: $workflow.id,
+  ok: !failed, note: note, amIOn: firstLine(cur.raw) || null, theFlowsPick: candidate,
   runnersUp: runnersUp, theFlowsOwnJournal: log } }];`,
+    };
+
+    @node({
+        id: 'd4b0f7c1-6a2e-4d8b-9c33-51e7a9f0b2d4',
+        name: 'Report to the panel',
+        type: 'n8n-nodes-base.httpRequest',
+        version: 4.2,
+        position: [888, 240],
+        onError: 'continueRegularOutput',
+    })
+    ReportToThePanel = {
+        method: 'POST',
+        url: "={{ $('Config').first().json.panel }}/api/automation",
+        sendBody: true,
+        specifyBody: 'json',
+        jsonBody: '={{ JSON.stringify($json) }}',
+        options: {
+            timeout: 30000,
+            response: {
+                response: {
+                    neverError: true,
+                },
+            },
+        },
     };
 
     // =====================================================================
@@ -204,10 +225,11 @@ return [{ json: { checkedAt: new Date().toISOString(), project: cfg.project,
     @links()
     defineRouting() {
         this.ManualTrigger.out(0).to(this.Config.in(0));
-        this.EveryWeekdayAt0730.out(0).to(this.Config.in(0));
+        this.EveryHour.out(0).to(this.Config.in(0));
         this.Config.out(0).to(this.Step1Current.in(0));
         this.Step1Current.out(0).to(this.Step2ThePickDryRun.in(0));
         this.Step2ThePickDryRun.out(0).to(this.Step3TheJournal.in(0));
         this.Step3TheJournal.out(0).to(this.Summary.in(0));
+        this.Summary.out(0).to(this.ReportToThePanel.in(0));
     }
 }

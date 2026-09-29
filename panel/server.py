@@ -37,6 +37,9 @@ PORT = int(os.environ.get("PANEL_PORT", "8788"))
 BIND = os.environ.get("PANEL_BIND", "0.0.0.0")
 TTL = int(os.environ.get("PANEL_TTL", "60"))
 PROJECT = os.environ.get("JIRA_FLOW_PROJECT", "SCRUM")
+# Automationens senaste ord. n8n skriver den, panelen visar den -- och den ligger i
+# användarens egen state-katalog, inte i repot.
+AUTOMATION_FILE = Path.home() / ".local/state/omarchy/godjira-automation.json"
 MAX_BODY = int(os.environ.get("PANEL_MAX_BODY", str(40 * 1024 * 1024)))
 MAX_FILE = int(os.environ.get("PANEL_MAX_FILE", str(25 * 1024 * 1024)))
 DEFAULT_WISH = "Skapa ärenden för det som står i de bifogade dokumenten."
@@ -127,8 +130,74 @@ def github_state() -> dict:
     }
 
 
+def project_of_the_link(flow: dict) -> dict:
+    """Projektet man är kopplad till.
+
+    Nyckeln och källan kommer ur CLI:ts eget svar (flödets nästa räknar ut dem med
+    samma regel som terminalen -- panelen har ingen egen uppfattning). Repot och
+    ärendet kommer ur registret, för det är de som är kopplade.
+    """
+    env = seam("flow", "link", "--json", timeout=60)
+    links = [l for l in (((env.get("payload") or {}).get("links")) or []) if (l or {}).get("project")]
+    one = links[0] if len(links) == 1 else {}
+    return {"key": (flow or {}).get("project") or PROJECT,
+            "source": (flow or {}).get("projectSource") or "standarden",
+            "repo": one.get("repo") or "", "issue": one.get("issue") or ""}
+
+
+def automation_state() -> dict:
+    """Vad automaten såg senast. Tom när n8n inte har kört än."""
+    try:
+        data = json.loads(AUTOMATION_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def automation_report(payload: dict) -> tuple[int, dict]:
+    """n8n:s flöde lämnar sin sammanfattning här, så panelen kan visa den.
+
+    Ingen logik flyttar hit: fälten är det flödet redan räknade ut (samma kommandon
+    som panelen kör). Bara korta strängar och kända nycklar sparas.
+    """
+    def text(name: str, cap: int = 300) -> str:
+        return " ".join(str(payload.get(name) or "").split())[:cap]
+
+    project = text("project", 16).upper()
+    if project and not re.fullmatch(r"[A-Z][A-Z0-9_]{1,9}", project):
+        return 400, {"ok": False, "error": "projektnyckeln såg inte ut som en nyckel"}
+    pick = payload.get("theFlowsPick")
+    if isinstance(pick, dict):
+        pick = {"key": str(pick.get("key") or "")[:24], "summary": str(pick.get("summary") or "")[:160],
+                "priority": str(pick.get("priority") or "")[:16]}
+    else:
+        pick = None
+    report = {
+        "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "checkedAt": text("checkedAt", 40),
+        "project": project or PROJECT,
+        "projectSource": text("projectSource", 80),
+        "ok": bool(payload.get("ok", True)),
+        "note": text("note", 300),
+        "runner": text("runner", 40) or "n8n",
+        "amIOn": text("amIOn", 24),
+        "theFlowsPick": pick,
+        "runnersUp": [str(x)[:160] for x in (payload.get("runnersUp") or [])][:5]
+        if isinstance(payload.get("runnersUp"), list) else [],
+        "workflowId": text("workflowId", 40),
+    }
+    AUTOMATION_FILE.parent.mkdir(parents=True, exist_ok=True)
+    AUTOMATION_FILE.parent.chmod(0o700)
+    AUTOMATION_FILE.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    AUTOMATION_FILE.chmod(0o600)
+    with _lock:
+        _cache.clear()          # automaten har sagt sitt: nästa läsning ska visa det
+    return 200, {"ok": True, "automation": report}
+
+
 def flow_state() -> dict:
-    env = seam("flow", "next", "--dry-run", "--json", "--project", os.environ.get("JIRA_FLOW_PROJECT", "SCRUM"))
+    # Utan --project: CLI:t tar projektet ur länken (flaggan vinner om den finns).
+    env = seam("flow", "next", "--dry-run", "--json")
     payload = env.get("payload") or {}
     if not isinstance(payload, dict):
         payload = {}
@@ -138,6 +207,9 @@ def flow_state() -> dict:
         "pick": payload.get("wouldTake") or payload.get("proposal"),
         "someoneElses": None if payload.get("wouldTake") else (payload.get("proposal") or None),
         "runnersUp": (payload.get("skipped") or [])[:5],
+        # Var projektnyckeln kom ifrån står i CLI:ts eget svar: panelen gissar inte.
+        "project": payload.get("project") or "",
+        "projectSource": payload.get("projectSource") or "",
         "error": payload.get("error") or (first_line(env) if env.get("exitCode") not in (0, 1) else None),
     }
 
@@ -215,14 +287,18 @@ def link_set(payload: dict) -> tuple[int, dict]:
 
 
 def state() -> dict:
-    return dict(cached("state", lambda: {
-        "generatedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-        "jira": jira_state(),
-        "github": github_state(),
-        "links": links_state(),
-        "flow": flow_state(),
-        "journal": journal(10),
-    }))
+    """En läsning: flödet räknar ut projektet, projektet läser ur registret, resten är Jira, GitHub och journalen."""
+    def build() -> dict:
+        flow = flow_state()
+        return {"generatedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                "jira": jira_state(),
+                "github": github_state(),
+                "flow": flow,
+                "project": project_of_the_link(flow),
+                "automation": automation_state(),
+                "links": links_state(),
+                "journal": journal(10)}
+    return dict(cached("state", build))
 
 
 def import_parse(payload: dict) -> tuple[int, dict]:
@@ -366,7 +442,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802 -- http.server's own naming
         handler = {"/api/import": import_parse, "/api/import/apply": import_apply,
-                   "/api/link": link_set}.get(self.path.split("?")[0])
+                   "/api/link": link_set, "/api/automation": automation_report}.get(self.path.split("?")[0])
         if not handler:
             self._send(404, b"not found", "text/plain")
             return

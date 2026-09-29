@@ -119,6 +119,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   .inp { background: var(--panel); color: var(--text); border: 1px solid var(--line-2); border-radius: 7px;
          padding: 5px 8px; font: inherit; font-size: 12.5px; }
   .inp:focus { outline: none; border-color: var(--accent); }
+  a.chip { text-decoration: none; }
   .mono { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px; }
 
   /* --------------------------------------------------------- import ---- */
@@ -347,6 +348,11 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   <div class="wrap">
     <section class="view on" id="v-overview">
       <div class="stats" id="stats"></div>
+      <div class="panel">
+        <h3>Projektet du är kopplad till <span class="meta" id="automationMeta"></span>
+          <span class="grow"></span><a class="chip" id="automationLink" hidden>öppna flödet</a></h3>
+        <div class="body" id="automation"></div>
+      </div>
       <div class="two">
         <div class="panel">
           <h3>Flödets nästa <span class="meta">jira_flow.py next --dry-run</span></h3>
@@ -594,7 +600,8 @@ function renderSide() {
 function renderCrumbs() {
   const j = STATE.jira, g = STATE.github, b = board() || {};
   const c = {
-    overview: ["GodJIRA", "Översikt", ""],
+    overview: ["GodJIRA", "Översikt",
+      (STATE.project && STATE.project.key ? STATE.project.key + " · " + (STATE.project.repo ? "ur länken " + STATE.project.repo : "standarden") : "")],
     board: ["Jira", b.name || "Tavlan", ""],
     items: ["GodJIRA", TEXT.allTasks, boardItems().length + ghItems().length + " st"],
     repos: ["GitHub", g.login || "GitHub", g.repos.length + " " + TEXT.repos],
@@ -620,6 +627,51 @@ function renderStats() {
       <div class="x">${g.repos.filter(r => r.isPrivate).length} privata · ${g.repos.filter(r => !r.isPrivate).length} publika</div></div>
     <div class="stat"><div class="n">${f.pick ? esc(f.pick.key) : "—"}</div><div class="l">flödets nästa</div>
       <div class="x">${esc(f.pick ? (f.pick.summary || "").slice(0, 40) : (f.error || TEXT.nothing))}</div></div>`;
+}
+
+/* ----------------------------------------------------------- automaten ---- */
+// n8n går på klocka och lämnar sin läsning i en fil på den här maskinen. Panelen
+// visar den som den är: projektet man är kopplad till, flödets nästa, och när
+// automaten senast tittade. Panelen räknar inte ut något eget här.
+function renderAutomation() {
+  const a = STATE.automation || {}, p = STATE.project || {}, f = STATE.flow || {};
+  const host = document.getElementById("automation");
+  const meta = document.getElementById("automationMeta");
+  const link = document.getElementById("automationLink");
+  const n8nId = a.workflowId || "";
+  link.href = `${location.protocol}//${location.hostname}:5678` + (n8nId ? `/workflow/${n8nId}` : "/home/workflows");
+  link.hidden = false;
+
+  // Projektet: ur länken när ett repo är kopplat, annars standarden. Källan sägs alltid.
+  const kopplad = p.repo
+    ? `<span class="key">${esc(p.key)}</span> <span class="meta">ur länken · ${esc(p.repo)}</span>`
+    : `<span class="key">${esc(p.key || "—")}</span> <span class="meta">standarden (inget repo kopplat än)</span>`;
+  meta.textContent = a.at ? "n8n såg detta " + ago(a.checkedAt || a.at) : "väntar på första körningen";
+
+  const pick = a.theFlowsPick || f.pick || null;
+  const rows = [];
+  rows.push(`<div class="r"><span class="muted" style="width:74px">projekt</span>${kopplad}` +
+    (p.issue ? ` <span class="badge on">${esc(p.issue)}</span>` : "") + `</div>`);
+  if (pick && pick.key) {
+    rows.push(`<div class="r"><span class="muted" style="width:74px">flödets nästa</span><span class="key">${esc(pick.key)}</span>` +
+      `<span class="t">${esc(pick.summary || "")}</span><span class="tside">${esc(pick.priority || "")}</span></div>`);
+  } else if (f.error || a.note) {
+    rows.push(`<div class="r"><span class="muted" style="width:74px">flödets nästa</span>` +
+      `<span class="t">${esc(pick ? "" : (f.error || a.note || ""))}</span></div>`);
+  }
+  (a.runnersUp || []).slice(0, 3).forEach(r => rows.push(
+    `<div class="r"><span class="muted" style="width:74px">därefter</span><span class="t">${esc(r)}</span></div>`));
+
+  const state = a.at
+    ? `<div class="r"><span class="muted" style="width:74px">automaten</span>` +
+      `<span class="t">${esc(a.note || (a.ok ? "körde utan anmärkning" : "fel"))}</span>` +
+      // a.at är panelens egen tid med tidszon; checkedAt är n8ns UTC-klocka och
+      // visade två timmar fel för Alex (mätt i webbläsaren).
+      `<span class="tside">${esc((a.at || a.checkedAt || "").replace("T", " ").slice(0, 16))} · ` +
+      `${a.ok ? "<span style=\"color:var(--accent)\">ok</span>" : "<span class=\"err\">fel</span>"}</span></div>`
+    : `<div class="empty">n8n har inte lämnat något än — flödet går på klocka och skriver sin läsning hit.</div>`;
+
+  host.innerHTML = `<div class="wl">${rows.join("")}${state}</div>`;
 }
 
 function renderFlowPick() {
@@ -1019,7 +1071,7 @@ function render() {
   const filters = document.getElementById("filters");
   filters.hidden = view === "overview" || view === "import";
   document.getElementById("filter").hidden = !(view === "items" || view === "repos");
-  if (view === "overview") { renderStats(); renderFlowPick(); renderJournal(); renderRecent(); }
+  if (view === "overview") { renderStats(); renderAutomation(); renderFlowPick(); renderJournal(); renderRecent(); }
   if (view === "board") renderBoard();
   if (view === "items") renderItems();
   if (view === "repos") renderRepos();
