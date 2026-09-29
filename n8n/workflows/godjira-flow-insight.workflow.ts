@@ -2,12 +2,13 @@ import { workflow, node, links } from '@n8n-as-code/transformer';
 
 // <workflow-map>
 // Workflow : GodJIRA — the flow: insight
-// Nodes   : 7  |  Connections: 5
+// Nodes   : 8  |  Connections: 6
 //
 // NODE INDEX
 // ──────────────────────────────────────────────────────────────────
 // Property name                    Node type (short)         Flags
 // Note                               stickyNote
+// EveryWeekdayAt0730                 scheduleTrigger
 // ManualTrigger                      manualTrigger
 // Config                             set
 // Step1Current                       executeCommand
@@ -17,12 +18,14 @@ import { workflow, node, links } from '@n8n-as-code/transformer';
 //
 // ROUTING MAP
 // ──────────────────────────────────────────────────────────────────
-// ManualTrigger
+// EveryWeekdayAt0730
 //    → Config
 //      → Step1Current
 //        → Step2ThePickDryRun
 //          → Step3TheJournal
 //            → Summary
+// ManualTrigger
+//    → Config (↩ loop)
 // </workflow-map>
 
 // =====================================================================
@@ -58,6 +61,27 @@ The three commands are the same code the bar panel and the MCP server call — o
         height: 260,
         width: 460,
         color: 4,
+    };
+
+    @node({
+        id: 'a8d0b6a4-6c1f-4c2e-9f2e-7b6f2a2f0c11',
+        name: 'Every weekday at 07:30',
+        type: 'n8n-nodes-base.scheduleTrigger',
+        version: 1.4,
+        position: [-380, 380],
+    })
+    EveryWeekdayAt0730 = {
+        rule: {
+            interval: [
+                {
+                    field: 'weeks',
+                    weeksInterval: 1,
+                    triggerAtDay: [1, 2, 3, 4, 5],
+                    triggerAtHour: 7,
+                    triggerAtMinute: 30,
+                },
+            ],
+        },
     };
 
     @node({
@@ -155,8 +179,11 @@ const journal = read($('Step 3 - the journal').first().json);
 const p = pick.payload || {};
 const candidate = p.wouldTake || p.proposal || null;
 
+const failed = [cur, pick, journal].find(r => r.payload === null && String(r.raw || '').trim());
+
 let note;
-if (p.wouldTake) note = 'the flow would take ' + candidate.key + ' for ' + p.assignTo + ' and move it to ' + p.status;
+if (failed) note = 'the flow could not answer: ' + String(failed.raw).trim().split('\\n')[0];
+else if (p.wouldTake) note = 'the flow would take ' + candidate.key + ' for ' + p.assignTo + ' and move it to ' + p.status;
 else if (p.proposal) note = candidate.key + " is someone else's; the panel needs a second press on it, this run writes nothing";
 else if (pick.exitCode === 1) note = 'nothing not-started to take';
 else note = 'the flow answered with exit code ' + pick.exitCode + ': ' + String(pick.raw || '').split('\\n')[0];
@@ -177,6 +204,7 @@ return [{ json: { checkedAt: new Date().toISOString(), project: cfg.project,
     @links()
     defineRouting() {
         this.ManualTrigger.out(0).to(this.Config.in(0));
+        this.EveryWeekdayAt0730.out(0).to(this.Config.in(0));
         this.Config.out(0).to(this.Step1Current.in(0));
         this.Step1Current.out(0).to(this.Step2ThePickDryRun.in(0));
         this.Step2ThePickDryRun.out(0).to(this.Step3TheJournal.in(0));

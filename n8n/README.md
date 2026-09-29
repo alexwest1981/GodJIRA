@@ -24,11 +24,16 @@ maskinen, bredvid credentialen, och instansen lyssnar bara på localhost.
 
 | Fil | Vad den gör |
 |---|---|
-| `workflows/godjira-flow-insight.workflow.ts` | **Läser.** Vad du är på nu, vad flödet skulle ta härnäst (torrkörning), och flödets egen journal. Skriver ingenting. |
+| `workflows/godjira-flow-insight.workflow.ts` | **Läser.** Vad du är på nu, vad flödet skulle ta härnäst (torrkörning), och flödets egen journal. Skriver ingenting. Går dessutom **varje vardag 07:30** av sig själv — den är publicerad och aktiv, så historiken fylls på utan att du trycker. |
 | `workflows/godjira-flow-take-next.workflow.ts` | **Skriver.** Tar det mest kritiska opåbörjade ärendet, assignar dig och sätter *In Progress*. Tar exakt den nyckeln som steg 1 visade, och aldrig någon annans ärende. |
 
-Kör med **Execute workflow** i editorn. Ingen av dem har en trigger som gör något
-av sig själv — de ska tryckas på.
+Kör med **Execute workflow** i editorn. Skrivflödet har ingen trigger som gör något
+av sig själv — det ska tryckas på, och bara när du menar det. Läseflödet har en
+klocka (ovan) och en manuell start.
+
+Publicering är det som gör att klockan går: `n8nac workflow activate <id>` tar upp
+det i n8ns schemaläggare, `n8nac workflow deactivate <id>` tar ner det. Ett aktivt
+flöde förblir aktivt över omstart.
 
 ## `bin/flow-call.sh`
 
@@ -64,6 +69,11 @@ n8nac env auth set Local --api-key-stdin   # nyckeln ur n8n: Settings → API ke
 n8nac env use Local
 n8nac pull <workflow-id>            # eller: push, se ovan
 ```
+
+`n8nac skills validate <fil>` fångar schemat men **inte** JavaScripten i en Code-nod.
+Efter en ändring i en jsCode: `n8nac convert <fil> --format json -o /tmp/w.json` och
+kör `node --check` på varje `jsCode`-fält. Det är där en `\n` som blir en riktig
+radbrytning smäller.
 
 `n8nac-config.json` (miljöerna) och `n8n-workflows.d.ts`/`tsconfig.json` går i
 git. API-nycklar, n8n-managers butik, Docker-state och `.n8n-sync-events.jsonl`
