@@ -116,6 +116,7 @@ def main() -> int:
     check("flowWrap" in html, "long node names wrap instead of being cut")
     # En färsk ritning måste sätta den sparade förskjutningen: gjorde den inte det
     # stod rutorna kvar på filens plats medan vägarna pekade någon helt annanstans.
+    check("n8n:s egen tavla" in html, "the view says whether the drawing is n8n's own")
     check('transform="translate(${spot.x - n.x} ${spot.y - n.y})"' in html,
           "a fresh drawing applies the moves you made")
     check("AbortSignal.timeout" in html, "the state fetch has a time limit")

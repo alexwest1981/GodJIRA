@@ -21,6 +21,7 @@ import os
 import re
 import secrets
 import shutil
+import sqlite3
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 import tempfile
@@ -206,13 +207,70 @@ def flow_graph(path: Path) -> dict:
             "edges": [{"from": m.group(1), "to": m.group(3)} for m in FLOW_EDGE.finditer(text)]}
 
 
+N8N_DB = Path.home() / ".n8n" / "database.sqlite"
+
+
+def n8n_workflows() -> dict:
+    """n8n:s egen tavla, läst skrivskyddat ur dess databas.
+
+    Panelen ritade förut ur flödesfilen i repot -- rätt data, men den egna ritningen
+    blev en tolkning av filen. Här är det samma noder, samma namn och samma
+    positioner som n8n själv visar, så det man flyttar i n8n syns direkt. Filen är
+    fortfarande det som deployas, och den används när n8n inte svarar.
+
+    ponytail: läser databasen i stället för n8n:s REST-API -- ingen nyckel behövs och
+    den ligger på samma maskin; API:t om panelen någon gång kör mot en n8n på annat håll.
+    """
+    try:
+        con = sqlite3.connect("file:{}?mode=ro".format(N8N_DB), uri=True, timeout=5)
+        try:
+            rows = con.execute("select id, name, active, nodes, connections "
+                               "from workflow_entity").fetchall()
+        finally:
+            con.close()
+    except Exception:                                  # noqa: BLE001 -- n8n är frivilligt
+        return {}
+    out = {}
+    for wid, name, active, nodes, conns in rows:
+        try:
+            nodes = json.loads(nodes) if isinstance(nodes, str) else nodes
+            conns = json.loads(conns) if isinstance(conns, str) else conns
+        except Exception:                              # noqa: BLE001
+            continue
+        out[wid] = {
+            "id": wid or "", "name": name or "", "active": bool(active),
+            "nodes": [{"key": n.get("name") or "", "name": n.get("name") or "",
+                       "type": (n.get("type") or "").split(".")[-1],
+                       "x": int((n.get("position") or [0, 0])[0]),
+                       "y": int((n.get("position") or [0, 0])[1])}
+                      for n in (nodes or [])],
+            # n8n:s kanter: {"Nod": {"main": [[{node: "Nästa", ...}], ...]}} -- en väg
+            # per mål. En nod med två utgångar ger två vägar, vilket är hela poängen.
+            "edges": [{"from": src, "to": c.get("node")}
+                      for src, outs in (conns or {}).items()
+                      for group in (outs or {}).get("main", []) or []
+                      for c in (group or []) if c.get("node")]}
+    return out
+
+
 def flow_graphs() -> list:
     """Varje flöde i repot. En fil som inte går att läsa namnges i stället för att
     sänka hela vyn -- samma hållning som jira_state() har mot ett tyst svar."""
+    live = n8n_workflows()
     out = []
     for path in sorted(FLOW_DIR.glob("*.workflow.ts")):
         try:
-            out.append(flow_graph(path))
+            flow = flow_graph(path)
+            # Flödesfilen bär samma id som n8n:s arbetsflöde; finns det i n8n är det
+            # n8n:s noder och positioner som gäller (och n8n:s kanter, som pekar på
+            # visningsnamn i stället för på filens egenskapsnamn).
+            one = live.get(flow.get("id") or "")
+            if one:
+                flow = {**flow, **{k: one[k] for k in ("name", "active", "nodes", "edges")},
+                        "source": "n8n"}
+            else:
+                flow["source"] = "file"
+            out.append(flow)
         except Exception as exc:  # noqa: BLE001 -- vilket fel som helst är samma svar
             out.append({"file": path.name, "nodes": [], "edges": [],
                         "error": "{}: {}".format(type(exc).__name__, exc)})
