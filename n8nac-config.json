@@ -1,0 +1,24 @@
+{
+  "version": 4,
+  "activeEnvironmentId": "local-2",
+  "environmentTargets": [
+    {
+      "id": "local",
+      "name": "Local",
+      "kind": "external-instance",
+      "url": "http://127.0.0.1:5678"
+    }
+  ],
+  "environments": [
+    {
+      "id": "local-2",
+      "name": "Local",
+      "syncSlug": "local",
+      "environmentTargetId": "local",
+      "projectId": "personal",
+      "projectName": "Personal",
+      "workflowsPath": "n8n/workflows",
+      "folderSync": false
+    }
+  ]
+}
