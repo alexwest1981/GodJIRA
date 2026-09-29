@@ -59,6 +59,8 @@ def main() -> int:
     # öppnar detaljen), inte hoppa till webben. GitHub-länken hör till detaljen.
     check("data-repo=" in html and "repoOpen(" in html,
           "the repo row opens the repo inside the app")
+    check('if (repo) { show("repos"); return repoOpen(repo.dataset.repo); }' in html,
+          "the row also switches the main window to the repo")
     # Listan bor i sidofältet, för 59 rader i huvudrutan blev lång skroll innan
     # detaljen. Sökningen filtrerar raderna på plats (ingen omritning = inget tappat
     # fokus), och huvudrutan ritar bara det valda repot.

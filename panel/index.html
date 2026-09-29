@@ -1501,7 +1501,9 @@ document.addEventListener("click", e => {
     writeHash(); return render();
   }
   const repo = e.target.closest("[data-repo]");
-  if (repo) return repoOpen(repo.dataset.repo);
+  // Raden skall öppna repot I HUVUDRUTAN, inte bara hämta det: från en annan vy
+  // syntes ingenting hända (mätt: vyn stod kvar på Uppgifter medan repot laddades).
+  if (repo) { show("repos"); return repoOpen(repo.dataset.repo); }
   const t = e.target.closest("[data-v]"); if (!t) return;
   e.preventDefault(); show(t.dataset.v);
 });
