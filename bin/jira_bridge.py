@@ -794,6 +794,18 @@ def real_issue_types(cfg, pkey):
     return types
 
 
+def adf_text(text: str) -> dict:
+    """Text som ett Jira Cloud-dokument: ett stycke per rad.
+
+    API v3 tar beskrivningen som ADF och avvisar en vanlig sträng, så den som
+    vill skriva en beskrivning måste bygga dokumentet. Tomma rader blir inga
+    stycken (de syns ändå som luft mellan styckena i Jira).
+    """
+    body = [{"type": "paragraph", "content": [{"type": "text", "text": line.strip()}]}
+            for line in str(text or "").splitlines() if line.strip()]
+    return {"type": "doc", "version": 1, "content": body or [{"type": "paragraph"}]}
+
+
 def real_create(cfg, board, payload):
     """Create an issue on the board's project. `board` is a neutral board
     dict (has projectKey). Returns nothing; caller re-snapshots."""
@@ -824,6 +836,15 @@ def real_create(cfg, board, payload):
             "issuetype": {"id": chosen["id"]},
         }
     }
+    if (payload.get("description") or "").strip():
+        body["fields"]["description"] = adf_text(payload["description"])
+    if (payload.get("priorityName") or "").strip():
+        body["fields"]["priority"] = {"name": payload["priorityName"].strip()}
+    parent = (payload.get("parentKey") or "").strip()
+    if parent:
+        # Ett barn till en epic. API v3 tar föräldern som nyckel; den gamla
+        # Epic Link-kolumnen (customfield_10014) behövs inte på den vägen.
+        body["fields"]["parent"] = {"key": parent}
     created = jira_post(cfg, "/rest/api/3/issue", body)
     key = created.get("key") or ""
     if not key:
@@ -1754,7 +1775,7 @@ def mock_issue(key, state):
         "sprintName": sprint_name,
         "startMs": 0,
         "dueMs": 0,
-        "parentKey": "",
+        "parentKey": row.get("parentKey") or "",
         "parentSummary": "",
     }
 
@@ -1907,6 +1928,9 @@ def mock_create(state, board_id, payload):
         "priorityName": (payload.get("priorityName") or "Medium").strip() or "Medium",
         "storyPoints": payload.get("storyPoints"),
         "description": (payload.get("description") or "").strip(),
+        # Föräldern sparas som den kom in: en epic och dess tasks skall synas som
+        # ett träd även i provläget (det är där flödet provas).
+        "parentKey": (payload.get("parentKey") or "").strip(),
         # A new issue starts on the backlog; move it into a sprint from the
         # timeline (or the detail page) when it is planned.
         "sprintId": "",

@@ -108,6 +108,7 @@ AGENT_TIMEOUT = int(os.environ.get("JIRA_FLOW_AGENT_TIMEOUT", "600"))
 # Ett agent-svar som inte gick att tolka hamnar här (0600). Annars finns ingenting
 # kvar att titta på när flödet säger att svaret var obrukbart.
 ANSWER_LOG = os.path.expanduser("~/.local/state/omarchy/jira-flow-answer.log")
+PLAN_EPICS = int(os.environ.get("JIRA_FLOW_PLAN_EPICS", "3"))
 PLAN_MAX = int(os.environ.get("JIRA_FLOW_PLAN_MAX", "10"))
 
 # Underlaget agenten får utöver själva önskemålet. Taken finns för att en agent
@@ -135,15 +136,22 @@ PLAN_PROMPT = """\
 You are a scrum master. Split the customer's wish below into Jira issues for project {project}.
 If the board's own tools are within reach (jira_board, jira_backlog, jira_activity), read them
 first: the proposal has to fit what is already there, not duplicate it.
+The repository text is what the code already does. Read it before you propose anything: work that
+is already in the code is not work, and a description that names the files to touch is worth ten
+that do not. Say in the description which files the work lands in, taken from the repository text.
 {context}
-Only what the wish actually asks for. Do not invent scope, do not add epics, at most {limit} issues.
+Only what the wish actually asks for. Do not invent scope, at most {limit} issues.
 Issue types that exist in this project: {types}.
+Shape the work as scrum: one epic (type "Epic") per coherent piece of the wish, with its tasks
+under it. A task names its epic in "epic" -- exactly the epic's summary. A wish that is one small
+thing needs no epic at all. Put every epic before its own tasks in the array.
 
 Answer with one JSON array of objects and nothing else -- no prose, no explanation,
-no code fences. Every object has exactly these four fields:
+no code fences. Every object has exactly these five fields:
   "summary"       a short imperative for this project, at most 80 characters
-  "type"          one of the issue types listed above
-  "description"   what to build, and how to know it is done
+  "type"          one of the issue types listed above ("Epic" for an epic)
+  "epic"          the summary of the epic this issue belongs to, "" for an epic itself
+  "description"   what to build, how to know it is done, and which files it touches
   "priority"      one of: Highest, High, Medium, Low
 Write them in the language the customer wrote in -- a Swedish wish gets Swedish
 issues, because that is the language the team reads on the board.
@@ -370,6 +378,122 @@ def repo_context(raw) -> tuple:
     elif remote:
         lines.append("remote is not github.com ({}) — local history only".format(remote))
     return "\n".join(lines), info
+
+
+# ------------------------------------------------------------- kodkontexten
+#
+# Ett anslag skall mötas av vad som redan FINNS i repot, inte bara av dess
+# historik: "finns bokningen redan?" besvaras av koden, inte av commit-raden.
+# Git vet vilka filer som är med (ls-files), så ignorerade filer och byggskräp
+# följer med gratis. Kontraktsraderna (def/class/interface/...) säger vad en fil
+# gör; hela texten tas bara för de filer som ligger närmast önskemålet, och allt
+# klipps med ett synligt besked -- en tyst trunkering ser ut som ett fullständigt
+# svar, och då gissar modellen i stället för att läsa.
+
+CODE_BUDGET = int(os.environ.get("JIRA_FLOW_CODE_CHARS", "60000"))
+CODE_FILES = int(os.environ.get("JIRA_FLOW_CODE_FILES", "12"))
+CODE_MAP_MAX = int(os.environ.get("JIRA_FLOW_CODE_MAP", "400"))
+CODE_SUFFIXES = (".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".java", ".kt", ".kts",
+                 ".go", ".rs", ".rb", ".cs", ".c", ".h", ".cc", ".cpp", ".hpp", ".php", ".sh",
+                 ".sql", ".qml", ".vue", ".svelte", ".swift", ".lua", ".toml", ".yaml", ".yml")
+CODE_MANIFESTS = ("readme", "manifest", "package.json", "pyproject.toml", "cargo.toml", "go.mod",
+                  "requirements", "pom.xml", "build.gradle", "makefile", "dockerfile", "schema",
+                  "migration", "settings.gradle", "compose.")
+CODE_DEF = re.compile(
+    r"^\s*(?:async\s+)?(?:def|class|function|export|interface|type|struct|impl|enum|pub\s+fn|"
+    r"fn|public|private|protected|static|void|const|let|var|module|namespace|CREATE\s+(?:TABLE|INDEX))\b",
+    re.I)
+CODE_WORD = re.compile(r"[A-Za-zÅÄÖåäö][A-Za-zÅÄÖåäö0-9_]{3,}")
+CODE_STOP = {
+    "samt", "eller", "detta", "denna", "skall", "skulle", "kunna", "finns", "finnas", "vilket",
+    "vilken", "vilka", "sedan", "även", "måste", "behöver", "kunden", "önskemål", "when", "with",
+    "that", "this", "from", "into", "should", "shall", "have", "must", "there", "their", "about",
+    "would", "could", "just", "only", "also", "make", "need", "want", "user", "issue", "issues",
+}
+
+
+def code_words(text: str) -> set:
+    """Orden ur ett önskemål som är värda att matcha mot en filsökväg."""
+    return {w for w in (m.group(0).lower() for m in CODE_WORD.finditer(text or ""))
+            if w not in CODE_STOP}
+
+
+def code_context(root: Path, words) -> tuple:
+    """Filkartan ur git, kontrakten per fil, och hela texten för de närmaste filerna.
+
+    `words` kommer ur önskemålet: filer vars sökväg nämner samma sak läses först.
+    Allt som klipps sägs det om, så den som läser förslaget vet vad agenten såg.
+    """
+    listed = [line.strip() for line in git_out(root, "ls-files").splitlines() if line.strip()]
+    if not listed:
+        return "", {"files": 0, "error": "no files are tracked by git here"}
+    # Ett ord ur anslaget kan stå i filens namn eller i filens text. Texten är det
+    # säkrare svaret ("finns bokningen redan?" besvaras av den som skriver om den),
+    # och git grep svarar på det utan att lämna det git följer.
+    words = sorted(words)[:12]
+    mentions = set()
+    if words:
+        pairs = [piece for word in words for piece in ("-e", word)]
+        hits = git_out(root, "grep", "-l", "-i", "-F", *pairs)
+        mentions = {line.strip() for line in hits.splitlines() if line.strip()}
+    sizes, scored = {}, []
+    for path in listed:
+        try:
+            sizes[path] = len((root / path).read_text(errors="replace").splitlines())
+        except (OSError, UnicodeError):
+            sizes[path] = -1
+        low = path.lower()
+        score = sum(3 for word in words if word in low)
+        if any(marker in low for marker in CODE_MANIFESTS):
+            score += 5
+        if low.endswith(CODE_SUFFIXES):
+            score += 1
+        if path in mentions:
+            score += 4          # filen nämner själv det anslaget handlar om
+        if "/test" in low or low.startswith(("test", "spec/")):
+            score -= 2          # en testfil beskriver vad som finns, men bygger inget
+        if score > 0:
+            scored.append((score, sizes[path], path))
+    # Flest träffar först. Vid lika många träffar går den lilla filen före den stora:
+    # den hinner läsas i sin helhet inom budgeten, medan en fil på 20 000 rader
+    # ändå bara blir till kontraktsrader.
+    scored.sort(key=lambda row: (-row[0], row[1]))
+    picked = [row[2] for row in scored[:CODE_FILES]]
+
+    map_lines = ["file map (git ls-files, {} files{}):".format(
+        len(listed), ", {} biggest shown".format(CODE_MAP_MAX) if len(listed) > CODE_MAP_MAX else "")]
+    for path in listed[:CODE_MAP_MAX]:
+        map_lines.append("  {}  ({} lines)".format(path, sizes.get(path, -1)))
+    text = ["\n".join(map_lines)]
+
+    budget, read, clipped = CODE_BUDGET - len(text[0]), [], False
+    for path in picked:
+        try:
+            raw = (root / path).read_text(errors="replace")
+        except OSError as exc:
+            text.append("### {} -- could not be read ({})".format(path, exc))
+            continue
+        header = "\n\n### {} ({} lines)".format(path, sizes.get(path, -1))
+        if len(raw) + len(header) <= budget:
+            text.append(header + "\n" + raw)
+            read.append(path)
+            budget -= len(raw) + len(header)
+            continue
+        # Inte plats: kontrakten ur filen säger ändå vad den innehåller.
+        contract = [line for line in raw.splitlines() if line.strip() and CODE_DEF.match(line.strip())]
+        clipped = True
+        kept = contract[:40] if contract else raw.splitlines()[:20]
+        text.append(header + " -- contracts only ({} of {} lines shown)\n{}".format(
+            len(kept), sizes.get(path, -1), "\n".join(kept)))
+        budget -= sum(len(line) + 1 for line in kept) + len(header)
+        if budget <= 0:
+            clipped = True
+            break
+    joined = "\n".join(text)
+    info = {"files": len(listed), "mapShown": min(len(listed), CODE_MAP_MAX),
+            "read": read, "picked": picked, "chars": len(joined),
+            "mentions": sorted(mentions), "budget": CODE_BUDGET, "truncated": clipped}
+    return joined, info
 
 
 # ------------------------------------------------- repot och dess Jira-sida
@@ -677,6 +801,10 @@ class Http:
     def create(self, board: dict, item: dict) -> dict:
         fields = {"project": {"key": (board or {}).get("projectKey") or DEFAULT_PROJECT},
                   "summary": item["summary"], "issuetype": {"name": item.get("type") or "Task"}}
+        if item.get("parentKey"):
+            fields["parent"] = {"key": item["parentKey"]}
+        if item.get("priority"):
+            fields["priority"] = {"name": item["priority"]}
         if item.get("description"):
             fields["description"] = {"type": "doc", "version": 1, "content": [
                 {"type": "paragraph",
@@ -731,7 +859,9 @@ class Bridge:
     def create(self, board: dict, item: dict) -> dict:
         # Bryggan lämnar tillbaka nyckeln som en sträng, HTTP ett objekt: en form ut
         # till anroparen, så ingen behöver veta vilken väg som användes.
-        answer = self.jb.real_create(self.cfg, board, dict(item, typeName=item.get("type", "Task")))
+        answer = self.jb.real_create(self.cfg, board, dict(
+            item, typeName=item.get("type", "Task"), priorityName=item.get("priority") or "",
+            parentKey=item.get("parentKey") or ""))
         if isinstance(answer, dict):
             return answer
         return {"key": str(answer or "")}
@@ -878,6 +1008,11 @@ def cmd_next(client_, args) -> int:
     return 0
 
 
+def is_epic(item: dict) -> bool:
+    """En epic är en epic på sin typ, inte på sin plats i listan."""
+    return (item.get("type") or "").strip().lower() == "epic"
+
+
 def parse_plan(text: str):
     """Ärendena ur agentens svar. Hel array eller inget: en halv lista blir aldrig
     några ärenden, och skräp ger fel i stället för halvskrivna tavlor."""
@@ -924,12 +1059,26 @@ def parse_plan(text: str):
         out.append({"summary": summary[:250],
                     "type": str(item.get("type") or "Task").strip() or "Task",
                     "description": str(item.get("description") or "").strip(),
-                    "priority": str(item.get("priority") or "").strip()})
+                    "priority": str(item.get("priority") or "").strip(),
+                    # Vilken epic uppgiften hör till, som epikens sammanfattning.
+                    "epic": str(item.get("epic") or "").strip()[:250]})
     if not out:
         raise ValueError("the agent proposed no issues at all")
     if len(out) > PLAN_MAX:
         raise ValueError("the agent proposed {} issues; the cap is {} "
                          "(JIRA_FLOW_PLAN_MAX)".format(len(out), PLAN_MAX))
+    epics = [item["summary"] for item in out if is_epic(item)]
+    if len(epics) > PLAN_EPICS:
+        raise ValueError("the agent proposed {} epics; the cap is {} "
+                         "(JIRA_FLOW_PLAN_EPICS)".format(len(epics), PLAN_EPICS))
+    # En uppgift som pekar på en epic som inte finns i listan blir inget ärende under
+    # den. Ett tyst träd utan rot är värre än ett fel: hellre ett omtag än fel tavla.
+    for item in out:
+        if is_epic(item):
+            item["epic"] = ""
+        elif item["epic"] and item["epic"] not in epics:
+            raise ValueError("an issue named an epic that is not in the list: {!r}".format(
+                item["epic"][:60]))
     return out
 
 
@@ -1122,6 +1271,12 @@ def cmd_plan(client_, args) -> int:
                 repo_text, repo_info = repo_context(repo_dir)
                 if repo_info.get("error"):
                     raise RuntimeError("--repo {}: {}".format(repo_dir, repo_info["error"]))
+                # Koden, inte bara loggen: anslaget skall mötas av vad som redan
+                # finns, och filnamnen styr vilka filer som läses (önskemålets ord).
+                code_text, code_info = code_context(Path(repo_dir), code_words(wish))
+                repo_info["code"] = code_info
+                if code_text:
+                    repo_text = "{}\n\n{}".format(repo_text, code_text) if repo_text else code_text
         except (RuntimeError, OSError) as exc:
             message = "the papers could not be read: {}".format(exc)
             say(args, {"ok": False, "error": message}, ["jira_flow: " + message])
@@ -1191,15 +1346,30 @@ def cmd_plan(client_, args) -> int:
         print("{} issue(s) proposed for {} ({}):".format(len(items), project, answered_by[0]))
         print("  project from: {}".format(project_source))
         for number, item in enumerate(items, 1):
-            print("  {}. [{}] {}  ({})".format(number, item["type"], item["summary"],
-                                               item["priority"] or "no priority"))
+            print("  {}. [{}] {}{}  ({})".format(
+                number, item["type"], item["summary"],
+                "  — under: " + item["epic"][:44] if item.get("epic") else "",
+                item["priority"] or "no priority"))
     if not args.create:
         if not args.json:
             print("nothing written. again with --create writes exactly this list.")
         return 0
 
-    created = []
-    for item in items:
+    created, keys = [], {}
+    # Epics först: barnen behöver deras nycklar. Ordningen i listan får inte styra,
+    # för ett barn som skrivs före sin epic blir ett träd utan rot.
+    order = [item for item in items if is_epic(item)] + [item for item in items if not is_epic(item)]
+    for item in order:
+        if is_epic(item):
+            item["parentKey"] = ""
+        elif item.get("epic"):
+            item["parentKey"] = keys.get(item["epic"], "")
+            if not item["parentKey"]:
+                message = "epicen skrevs inte, så uppgiften kunde inte läggas under den: {}".format(
+                    item["epic"][:60])
+                say(args, {"ok": False, "error": message, "created": created},
+                    ["jira_flow: " + message])
+                return 2
         try:
             answer = client_.create(board, item) or {}
         except Exception as exc:  # noqa: BLE001 -- en krasch får inte dölja en halv skrivning
@@ -1214,9 +1384,13 @@ def cmd_plan(client_, args) -> int:
         if isinstance(answer, str):
             answer = {"key": answer}
         key = answer.get("key") or (answer.get("result") or {}).get("key") or ""
-        created.append({"key": key, "summary": item["summary"]})
+        created.append({"key": key, "summary": item["summary"], "type": item.get("type"),
+                        "epic": item.get("parentKey") or ""})
+        keys[item["summary"]] = key
         if not args.json:
-            print("created: {}  {}".format(key or "(no key back)", item["summary"]))
+            print("created: {}  {}{}".format(key or "(no key back)", item["summary"],
+                                             "  under {}".format(item["parentKey"])
+                                             if item.get("parentKey") else ""))
     for entry in created:
         client_.log("flow-plan", entry["key"], entry["summary"][:80])
     say(args, {"ok": True, "created": created, "proposal": items, "project": project,
@@ -1693,6 +1867,53 @@ def selftest() -> int:
     assert "SCRUM" in prompt and "kunden vill boka" in prompt, "prompten bär projekt och önskemål"
     for filler in ("{project}", "{wish}", "{limit}", "{context}", "{types}"):
         assert filler not in prompt, "ofylld platshållare: " + filler
+    checks += 1
+
+    # Scrum-formen: en epic med sina uppgifter under sig -- och inget halvt träd.
+    tree = ('[{"summary": "Bokning i butik", "type": "Epic", "description": "VAD: boka"}, '
+            '{"summary": "Boka tid", "type": "Story", "epic": "Bokning i butik"}, '
+            '{"summary": "Bekräfta", "type": "Task", "epic": "Bokning i butik"}]')
+    items = parse_plan(tree)
+    assert is_epic(items[0]) and items[0]["epic"] == "", items[0]
+    assert [i["epic"] for i in items[1:]] == ["Bokning i butik"] * 2, items
+    assert is_epic({"type": "EPIC"}) and not is_epic({"type": "episkt"}), "typen avgör, inte ordet"
+    try:
+        parse_plan('[{"summary": "Boka", "type": "Task", "epic": "Ingen sådan epic"}]')
+        raise AssertionError("en uppgift under en epic som inte finns skulle ha vägrats")
+    except ValueError as exc:
+        assert "not in the list" in str(exc), exc
+    too_many = "[" + ",".join('{{"summary": "E{}", "type": "Epic"}}'.format(n)
+                              for n in range(PLAN_EPICS + 1)) + "]"
+    try:
+        parse_plan(too_many)
+        raise AssertionError("fler epics än taket skulle ha vägrats")
+    except ValueError as exc:
+        assert "epics" in str(exc), exc
+    checks += 1
+
+    # Kodkontexten: filkartan ur git, filen närmast önskemålet i sin helhet, och
+    # det som klipps sagt högt. Ett anslag skall mötas av koden, inte av loggen.
+    code_root = Path(os.environ.get("TMPDIR") or "/tmp") / "jira-flow-code-selftest"
+    shutil.rmtree(code_root, ignore_errors=True)
+    (code_root / "shop").mkdir(parents=True)
+    (code_root / "shop" / "booking.py").write_text("def book(car):\n    return car\n" * 4)
+    (code_root / "shop" / "invoice.py").write_text("def bill(car):\n    return 0\n" * 4)
+    (code_root / "ledger.py").write_text("# invoice: här skrivs fakturan\ndef total():\n    pass\n")
+    (code_root / "huge.py").write_text("x = 1\n" * 20000)
+    (code_root / ".gitignore").write_text("secret.py\n")
+    (code_root / "secret.py").write_text("TOKEN = 'hemligt'\n")
+    for argv in (("init", "-q"), ("add", "-A")):
+        subprocess.run(["git", "-C", str(code_root)] + list(argv), capture_output=True, check=True)
+    assert code_words("the and booking") == {"booking"}, code_words("the and booking")
+    text, info = code_context(code_root, code_words("the customer wants invoice handling"))
+    assert "shop/booking.py  (8 lines)" in text, "kartan bär filerna med radantal"
+    assert "def book(car)" in text, "filen närmast önskemålet läses i sin helhet"
+    assert "TOKEN" not in text, "en ignorerad fil följer inte med (git vet vad som är med)"
+    assert info["files"] == 5, info
+    assert "ledger.py" in info["mentions"] and any(p.endswith("ledger.py") for p in info["picked"]), \
+        "filens text pekar ut den, även när namnet inget säger: " + str(info)
+    assert info["truncated"] and "contracts only" in text, \
+        "det som klipps skall sägas, annars ser svaret fullständigt ut: " + str(info)
     checks += 1
 
     # Länken repo <-> Jira: namnet ur fjärren, uppslagningen, och vems projekt som vinner.
