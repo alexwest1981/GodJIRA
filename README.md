@@ -170,12 +170,12 @@ thing that touches Jira). Everything else is a door onto those files:
 | the QML panel | the Omarchy bar widget | this desktop only |
 | `bin/jira_flow.py` | the CLI, and the editor shims/commit hook | anywhere (Python stdlib) |
 | `bin/jira_mcp.py` | MCP over stdio for an agent in an editor | anywhere |
-| `n8n/` | the flow on a canvas, with history and a schedule | this machine, at `http://omarchy.local:5678` |
+| `n8n/` | the flow on a canvas, with history and a schedule -- parked, for visualizing a flow when that helps | this machine, at `http://omarchy.local:5678` |
 | `panel/` | **the hub**: Jira's board + backlog, GitHub's repos, the flow's next pick, in one page | this machine, at `http://omarchy.local:8788` |
 
-The panel reads the same two CLIs through the same seam n8n uses
-(`n8n/bin/flow-call.sh`), so it can show something new but never believe
-something new. Its first answer costs ~9 s (four CLI calls) and a browser refresh
+The hub does not go through n8n: it calls the same CLIs through
+`n8n/bin/flow-call.sh` (the seam both doors share), so it can show something new
+but never believe something new. Its first answer costs ~9 s (four CLI calls) and a browser refresh
 costs nothing for 60 s (`PANEL_TTL`).
 
 ```sh
@@ -183,13 +183,34 @@ systemctl --user status godjira-panel      # alive, and starts at login
 python3 panel/check.py                     # one check: answers, and numbers agree
 ```
 
+### Four views, Plane's anatomy
+
+The hub is modelled on Plane (`makeplane/plane`), which is the reference for how it
+should read: an icon rail plus a nav sidebar with section labels, a breadcrumb header
+with a view switcher, columns whose heading is a state dot + name + count, and work-item
+cards carrying a type glyph, the id, the title, then one row of priority indicator,
+state pill and teammate avatar.
+
+| View | What it holds |
+|---|---|
+| Översikt | the numbers, the flow's next pick (`jira_flow.py next --dry-run`), what the flow itself has written, the repos touched last |
+| Tavlan | the board: `issues` + `backlog` merged, because the live work sits in the backlog whenever no sprint is active |
+| Uppgifter | Plane's table: every work item from **both** sources in one place, with source, id, status, priority, assignee, sprint |
+| Repon | all repositories, their visibility, language, and any open PRs/issues on them |
+
+The table is where the two sources actually meet, so GitHub's PRs and issues are shaped
+like work items rather than given their own screen. There are no write affordances: the
+hub reads, and the flow decides.
+
 ### It is a window, not a floating box
 
 The hub opens as a real application window: `panel/godjira.desktop` (and
 `panel/godjira-flodet.desktop` for the n8n canvas) go through Omarchy's own
 `omarchy-launch-webapp`, which launches the default browser with `--app=<url>` —
-no tabs, no address bar, and **Hyprland tiles it like any other window** (the
-QML panel needs a rule to float; the hub deliberately has none).
+no tabs, no address bar, and **Hyprland tiles it like any other window**. The QML
+panel is a tile too: it used to be floated by a rule in `~/.config/hypr/hyprland.lua`
+(now `{ tile = true }`, same line as Steam). The floating recipe is kept in
+`window-rule.lua` for whoever wants the old behaviour back.
 
 ```sh
 cp panel/godjira*.desktop ~/.local/share/applications/   # then it is in the launcher
