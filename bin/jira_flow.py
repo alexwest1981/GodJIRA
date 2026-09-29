@@ -1152,15 +1152,31 @@ def write_once(path: Path, text: str, dry_run: bool) -> None:
 def cmd_login(args) -> int:
     """Store the token in the machine's own store. Read from stdin, never as an
     argument: arguments end up in shell history and in process lists."""
+    token = sys.stdin.read().strip()
+    if not token:
+        print("jira_flow: no token on stdin.", file=sys.stderr)
+        return 2
+
+    if getattr(args, "file", False):
+        # Maskinen utan skrivbord. Där finns ingen nyckelring att vara trogen, så
+        # 0600-filen är butiken — samma fil som bryggan nu läser som sista utväg.
+        data = load_flow_config()
+        site = os.environ.get("JIRA_SITE") or data.get("site") or ""
+        email = os.environ.get("JIRA_EMAIL") or data.get("email") or ""
+        if not (site and email):
+            print("jira_flow: sätt JIRA_SITE och JIRA_EMAIL (eller skriv dem i {}) "
+                  "först.".format(CONFIG_FILE), file=sys.stderr)
+            return 2
+        data.update({"site": site, "email": email, "token": token})
+        save_flow_config(data)
+        print("token stored in {} (0600).".format(CONFIG_FILE))
+        return 0
+
     import jira_secrets
 
     store = jira_secrets.store_for()
     if isinstance(store, jira_secrets.NoStore):
         print("jira_flow: " + _no_store_reason(), file=sys.stderr)
-        return 2
-    token = sys.stdin.read().strip()
-    if not token:
-        print("jira_flow: no token on stdin.", file=sys.stderr)
         return 2
     try:
         store.write(token)
@@ -1188,7 +1204,9 @@ def cmd_logout(args) -> int:
 def _no_store_reason() -> str:
     """Sagt en gång, på det system där det gäller."""
     return ("på Linux sköts token av bryggans nyckelring (`jira_bridge.py login`) "
-            "eller av {} (chmod 600)".format(Path.home() / ".config/jira-flow/config.json"))
+            "eller av {} (chmod 600) — på en maskin utan skrivbord: "
+            "`jira_flow.py login --file` (token på stdin)"
+            .format(Path.home() / ".config/jira-flow/config.json"))
 
 
 def cmd_install(args) -> int:
@@ -1604,7 +1622,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_pick.add_argument("--title", default="", help="what the dialog asks for")
     p_pick.add_argument("--json", action="store_true")
     p_ins = sub.add_parser("install", help="write the editor shims and the commit hook into a repo")
-    sub.add_parser("login", help="store the Jira token in this machine's own store (reads stdin)")
+    p_login = sub.add_parser("login", help="store the Jira token in this machine's own store (reads stdin)")
+    p_login.add_argument("--file", action="store_true",
+                         help="store in the 0600 config file instead of an OS store (a machine without a desktop)")
     sub.add_parser("logout", help="remove it again")
     for p in (p_next, p_cur):
         p.add_argument("--project", default=DEFAULT_PROJECT)

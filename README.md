@@ -354,7 +354,8 @@ Python 3 standard library only, so a teammate clones the repo and runs it.
   Windows (bound to your user account), the **login keychain** on macOS — so it
   is not lying in a file. `logout` removes it again. On Linux `login` declines
   on purpose: the bridge's keyring, or `~/.config/jira-flow/config.json`, already
-  owns that there. `JIRA_SITE`, `JIRA_EMAIL` and `JIRA_TOKEN` in the environment
+  owns that there — unless you pass **`--file`**, which is the machine with no
+  desktop (below). `JIRA_SITE`, `JIRA_EMAIL` and `JIRA_TOKEN` in the environment
   still win if you want a one-off. Atlassian's API token, never a password.
 - **The commit hook works as it is** on all three systems: Git for Windows ships
   its own bash and runs hooks through it, and the hook looks its interpreter up
@@ -370,6 +371,31 @@ Python 3 standard library only, so a teammate clones the repo and runs it.
 
 Verified on Linux; the Windows and macOS specifics above are reasoned from Git
 for Windows' bundled bash and VS Code's own per-OS override, not run there.
+
+#### A machine with no desktop (a server, a laptop without the keyring)
+
+The token used to be the one thing that tied GodJIRA to this desktop: with no
+session bus `secret-tool` cannot answer, and every command died in a traceback.
+One function decides now (`jira_bridge.load_secret`), in this order:
+
+1. **the keyring** — where it exists it stays the owner (nothing changes on the
+   Omarchy desktop),
+2. **`JIRA_TOKEN`** in the environment — what a service unit hands over,
+3. **`~/.config/jira-flow/config.json`** (0600) — the flow's own file, read
+   **only for the account it names**, so one machine's token cannot be borrowed
+   for another address.
+
+Provisioning a server, token on stdin and never in the shell history:
+
+```sh
+JIRA_SITE=https://your-domain.atlassian.net JIRA_EMAIL=you@example.com \
+  python3 bin/jira_flow.py login --file < /tmp/jira-token   # writes 0600
+```
+
+Measured 2026-09-29, session bus unset: `jira_flow.py current --project SCRUM`
+and `next --dry-run --json` answer exactly as they do on the desktop — `current`
+still exits 1 for "nothing in progress", which is what n8n reads as *no answer
+needed* rather than an error.
 
 Credentials come from the bridge's keyring whenever the bridge is there — which
 it is, inside this plugin. Outside Omarchy (a plain clone for a teammate) the

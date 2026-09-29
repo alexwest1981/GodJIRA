@@ -183,14 +183,49 @@ def clear_secret(account):
         check=True, capture_output=True)
 
 
-def load_secret(account):
-    proc = subprocess.run(
-        ["secret-tool", "lookup", "service", SERVICE, "account", account],
-        capture_output=True)
-    if proc.returncode != 0:
+FLOW_CONFIG_PATH = os.path.join(HOME, ".config", "jira-flow", "config.json")
+
+
+def flow_config_token(account, path=None):
+    """Token ur jira_flow:s egen 0600-fil — den plats en maskin utan skrivbord har.
+
+    Bara för samma konto: ett token som hör till en annan adress är inte den här
+    anroparens, och att låna det skulle vara en tyst felkoppling.
+    """
+    try:
+        with open(path or FLOW_CONFIG_PATH, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
         return None
+    if not isinstance(data, dict):
+        return None
+    email = str(data.get("email") or "").strip().lower()
+    if email and account and email != str(account).strip().lower():
+        return None
+    return str(data.get("token") or "").strip() or None
+
+
+def pick_token(keyring_token, env_token, file_token):
+    """Ordningen, på ett ställe: nyckelringen först (skrivbordet äger sanningen),
+    sedan miljön, sedan filen. Maskiner utan nyckelring har ingen konflikt."""
+    return keyring_token or env_token or file_token or None
+
+
+def load_secret(account):
+    try:
+        proc = subprocess.run(
+            ["secret-tool", "lookup", "service", SERVICE, "account", account],
+            capture_output=True)
+    except FileNotFoundError:
+        # En server har ingen secret-tool alls; det är inte ett fel, det är en maskin
+        # utan skrivbord. Miljön och filen nedan är dess väg in.
+        proc = None
+    if proc is None or proc.returncode != 0:
+        return pick_token(None, (os.environ.get("JIRA_TOKEN") or "").strip(),
+                          flow_config_token(account))
     token = proc.stdout.decode("utf-8", "replace").strip()
-    return token or None
+    return pick_token(token or None, (os.environ.get("JIRA_TOKEN") or "").strip(),
+                      flow_config_token(account))
 
 
 # ---------------------------------------------------- anslutningslåset
@@ -3331,7 +3366,25 @@ def selftest():
         return "klart" if tries["n"] == 2 else None
     assert settled(flaky, tries=3, delay=0) == "klart" and tries["n"] == 2
     assert settled(lambda: None, tries=2, delay=0) is None
-    print("OK: multipart, Jira-datum och sprintrader")
+    # Tokenets ordning: nyckelringen först, sedan miljön, sedan 0600-filen — och
+    # filens token bara för samma konto, så ingen lånar någon annans anslutning.
+    assert pick_token("nyckelring", "miljö", "fil") == "nyckelring"
+    assert pick_token(None, "miljö", "fil") == "miljö"
+    assert pick_token(None, None, "fil") == "fil"
+    assert pick_token(None, None, None) is None
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        own = os.path.join(tmp, "config.json")
+        with open(own, "w", encoding="utf-8") as fh:
+            json.dump({"email": "a@b.se", "token": "hemlig"}, fh)
+        assert flow_config_token("a@b.se", own) == "hemlig"
+        assert flow_config_token("A@B.SE", own) == "hemlig", "kontot jämförs utan versaler"
+        assert flow_config_token("annan@b.se", own) is None
+        with open(own, "w", encoding="utf-8") as fh:
+            fh.write("inte json")
+        assert flow_config_token("a@b.se", own) is None
+        assert flow_config_token("a@b.se", os.path.join(tmp, "finns-inte")) is None
+    print("OK: multipart, Jira-datum, sprintrader, tokenets ordning")
 
 
 if __name__ == "__main__":
