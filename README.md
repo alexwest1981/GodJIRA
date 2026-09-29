@@ -183,6 +183,23 @@ systemctl --user status godjira-panel      # alive, and starts at login
 python3 panel/check.py                     # one check: answers, and numbers agree
 ```
 
+### It is a window, not a floating box
+
+The hub opens as a real application window: `panel/godjira.desktop` (and
+`panel/godjira-flodet.desktop` for the n8n canvas) go through Omarchy's own
+`omarchy-launch-webapp`, which launches the default browser with `--app=<url>` —
+no tabs, no address bar, and **Hyprland tiles it like any other window** (the
+QML panel needs a rule to float; the hub deliberately has none).
+
+```sh
+cp panel/godjira*.desktop ~/.local/share/applications/   # then it is in the launcher
+```
+
+On other operating systems the same URL is the whole story: open
+`http://<machine>:8788` in a browser, or use the browser's own *Install as app /
+Open as window* to get the same chrome-less window. Nothing else is
+platform-specific — that was the point of keeping the core in one place.
+
 `check.py` is the one worth keeping: it fails when the panel is alive but blank,
 which is exactly what happens if the board — settled work — is shown without the
 backlog that holds the live work during a sprint with no active sprint.
