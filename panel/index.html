@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="/godjira.svg">
+<script>/* Sätts innan första målningen: annars blinkar fel tema förbi vid start. */
+try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}</script>
 <title>GodJIRA</title>
 <style>
   /* Plane's anatomy, our data: icon rail + nav sidebar, breadcrumb header with a
@@ -12,27 +14,44 @@
      due date) and avatars, plus a table of every work item across both sources.
      No writes: the panel reads the same CLI the flow uses, and never decides. */
   :root {
-    /* Ytorna är Plane:s mörka ramp (@makeplane/propel 0.9.2, @variant dark, oklch
-       omräknat till hex): neutral-black #0f0f10, 100 #141415, 200 #181a1b, 300 #1d1f20,
-       400 #222425, 500 #2c2e30, 600 #36393a, 1000 #afb3b6, 1100 #cacdce, 1200 #e4e6e7.
-       Skälet att byta: vår kanvas var #0b0b0e och rälen #08080a -- rälen låg UNDER
-       kanvasen, så kromet flöt ihop till en svart massa i stället för att klättra.
-       Nu stiger varje steg ett snäpp: kanvas (#0f0f10) -> räl -> sidofält -> panel och
-       kort -> kort vid hover, med en synlig ram emellan. Det är formen Plane har. */
-    --bg: #0f0f10; --rail: #141415; --side: #181a1b; --panel: #1d1f20;
-    --card: #1d1f20; --card-hi: #222425; --line: #222425; --line-2: #2c2e30; --line-3: #36393a;
-    --text: #e4e6e7; --text-2: #cacdce; --muted: #afb3b6;
-    /* Paletten kommer ur märket (assets/godjira.svg): teal #04997a och marin
-       #0b3656. Accenten ÄR märkets teal -- mätt 5,47:1 mot bakgrunden, alltså
-       läsbar som text/länk och inte en påhittad granne till märket. Den gamla
-       blå-violetta accenten låg en hue ifrån märket, och det är den sortens
-       nästan-lika som ser ut som ett fel i stället för som en palett.
-       Grönen (status "klart") flyttades gulare, till 189 i avstånd från tealen:
-       med 116 läste status och accent som samma färg. */
-    --accent: #04997a; --navy: #1a6ba8; --green: #7bcf6a;
-    --amber: #e0a33e; --red: #e5545f;
+    /* Två teman i en rad per token: light-dark(ljust, mörkt). Växlaren sätter
+       color-scheme (data-theme), och alla värden följer -- ingen duplicerad
+       tokenlista att hålla i synk. Utan val följer panelen skrivbordet.
+       Ljust tema är Plane:s ljusa ramp (canvas neutral-300 #f2f2f3, ytor vita,
+       text neutral-1200 #0f0f10), liksom deras semantiska textfärger
+       (green-900 #25743b, amber-900 #973c00, red-800 #a5261d). Accenten är
+       märkets teal mörknad till #007d61: originalet #04997a ger bara 3,21:1 på
+       ljus kanvas, den här ger 4,57:1 med samma hue. */
+    color-scheme: light dark;
+    --bg: light-dark(#f2f2f3, #0f0f10);
+    --rail: light-dark(#f9f9f9, #141415);
+    --side: light-dark(#fcfcfc, #181a1b);
+    --panel: light-dark(#ffffff, #1d1f20);
+    --card: light-dark(#ffffff, #1d1f20);
+    --card-hi: light-dark(#f9f9f9, #222425);
+    --line: light-dark(#eaebec, #222425);
+    --line-2: light-dark(#e1e2e3, #2c2e30);
+    --line-3: light-dark(#d5d7d9, #36393a);
+    --text: light-dark(#0f0f10, #e4e6e7);
+    --text-2: light-dark(#313435, #cacdce);
+    --muted: light-dark(#494d50, #afb3b6);
+    --accent: light-dark(#007d61, #04997a);
+    --navy: #1a6ba8; --green: light-dark(#25743b, #7bcf6a);
+    --amber: light-dark(#973c00, #e0a33e); --red: light-dark(#a5261d, #e5545f);
     --r: 6px;
   }
+  [data-theme="light"] { color-scheme: light; }
+  [data-theme="dark"] { color-scheme: dark; }
+
+  /* Ytorna i mörkt läge är Plane:s mörka ramp (@makeplane/propel 0.9.2, @variant
+     dark): kanvas #0f0f10 -> räl #141415 -> sidofält #181a1b -> panel/kort #1d1f20,
+     ramar #222425/#2c2e30/#36393a, text #e4e6e7/#cacdce/#afb3b6. Våra egna värden
+     hade rälen MÖRKARE än kanvasen (#08080a mot #0b0b0e), så kromet flöt ihop till
+     en svart massa i stället för att klättra -- stegen är hela poängen.
+     Accentfärgen är märkets teal (#04997a mörkt, #007d61 ljust): den gamla
+     blåvioletta låg en hue ifrån märket, alltså nästan-lika, vilket ser ut som ett
+     fel. Statusgrönen är flyttad gulare: mot tealen låg den förr på 116 i avstånd,
+     vilket läste status och accent som samma färg. */
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; overflow: hidden; }
   body {
@@ -72,10 +91,12 @@
   ::-webkit-scrollbar { width: 11px; height: 11px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb {
-    background: oklch(1 0 0 / 20%); border: 3px solid transparent; background-clip: padding-box;
-    border-radius: 999px;
+    background: light-dark(oklch(0 0 0 / 20%), oklch(1 0 0 / 20%));
+    border: 3px solid transparent; background-clip: padding-box; border-radius: 999px;
   }
-  ::-webkit-scrollbar-thumb:hover { background: oklch(1 0 0 / 50%); background-clip: padding-box; }
+  ::-webkit-scrollbar-thumb:hover {
+    background: light-dark(oklch(0 0 0 / 45%), oklch(1 0 0 / 50%)); background-clip: padding-box;
+  }
   ::-webkit-scrollbar-corner { background: transparent; }
   /* --------------------------------------------------------- import ---- */
   .impfile { cursor: pointer; }
@@ -226,7 +247,7 @@
 
   .avatar {
     width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
-    font-size: 10px; font-weight: 600; color: var(--bg); flex: 0 0 22px;
+    font-size: 10px; font-weight: 600; color: light-dark(#fff, var(--bg)); flex: 0 0 22px;
   }
   .avatar.sm { width: 20px; height: 20px; flex-basis: 20px; }
   /* Plane:s tintade state-chip: samma hue i ytan som i pricken, svag styrka. Utan den
@@ -238,7 +259,8 @@
   }
   .pill {
     display: inline-flex; align-items: center; gap: 5px; padding: 1.5px 7px; border: 1px solid var(--line-2);
-    border-radius: 5px; font-size: 11.5px; color: var(--text-2); background: #ffffff08;
+    border-radius: 5px; font-size: 11.5px; color: var(--text-2);
+    background: light-dark(rgba(0, 0, 0, .035), rgba(255, 255, 255, .03));
     white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
   }
   .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex: 0 0 7px; }
@@ -250,7 +272,8 @@
   .bars.p1 i:nth-child(1) { background: var(--accent); }
   .excl {
     display: inline-grid; place-items: center; width: 15px; height: 15px; border-radius: 4px;
-    background: #e5545f22; color: var(--red); font-size: 10px; font-weight: 700;
+    background: color-mix(in oklch, var(--red) 18%, transparent); color: var(--red);
+    font-size: 10px; font-weight: 700;
   }
   .cardflag { font-size: 11px; color: var(--amber); }
 
@@ -266,7 +289,7 @@
     color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
     background: var(--panel);
   }
-  tr:hover td { background: #ffffff06; }
+  tr:hover td { background: light-dark(rgba(0, 0, 0, .03), rgba(255, 255, 255, .025)); }
   td .t { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 460px; }
   td.num { text-align: right; color: var(--muted); }
   .src { font-size: 10px; letter-spacing: .06em; color: var(--muted); border: 1px solid var(--line-2); border-radius: 4px; padding: 0 4px; }
@@ -291,6 +314,7 @@
     <div class="seg" id="seg"></div>
     <div class="filters" id="filters"></div>
     <input type="search" id="filter" placeholder="filtrera">
+    <button class="ghost" id="theme" title="Ljust eller mörkt tema" aria-label="Ljust eller mörkt tema">☀</button>
     <button class="ghost" id="refresh">Uppdatera</button>
   </header>
 
@@ -887,6 +911,21 @@ document.addEventListener("click", e => {
   e.preventDefault(); show(t.dataset.v);
 });
 document.getElementById("refresh").addEventListener("click", () => load(true));
+
+// Tema: växlaren sätter data-theme; utan val följer panelen skrivbordet
+// (color-scheme: light dark i :root). Valet sparas och läses igen i <head>,
+// innan första målningen -- annars blinkar fel tema förbi vid start.
+const themeBtn = document.getElementById("theme");
+const isDark = () => (document.documentElement.dataset.theme
+  || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")) === "dark";
+const visaIkon = () => { themeBtn.textContent = isDark() ? "☀" : "☾"; };
+themeBtn.addEventListener("click", () => {
+  const next = isDark() ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem("godjira-theme", next); } catch (e) { /* privat läge: temat håller i alla fall denna session */ }
+  visaIkon();
+});
+visaIkon();
 document.getElementById("impFiles").addEventListener("change", e => {
   IMP.files = [...e.target.files]; IMP.note = ""; renderImport();
 });

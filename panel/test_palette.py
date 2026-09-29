@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
-"""Paletten i panel/index.html: rätt ramp, läsbar accent.
+"""Paletten i panel/index.html: rätt ramp och läsbara färger, i BÅDA temana.
 
 Kör: python3 panel/test_palette.py   (exit 0 = grönt)
 
-Provet finns för att paletten numera är data på ett ställe: en rad i :root. Går
-någon in och pillar i den ska två saker hålla -- ytorna ska klättra uppåt utan
-hopp bakåt (det var felet: rälen låg under kanvasen och allt flöt ihop till en
-svart massa) och accenten ska gå att läsa på kanvasen.
+Provet finns för att paletten är data på ett ställe: tokenraderna i :root, med båda
+temana i samma rad (light-dark(ljust, mörkt)). Går någon in och pillar ska tre
+saker hålla:
+
+  1. Ytorna klättrar uppåt i båda temana. Det var felet: rälen låg MÖRKARE än
+     kanvasen, och då flöt krom, sida och innehåll ihop till en svart massa.
+  2. Hover-steget skiljer sig från kortet, annars finns ingen hover i det temat.
+  3. Accent och text går att läsa mot kanvasen (WCAG AA 4,5:1), och status- och
+     typfärgerna ligger över 3:1 (de bär glyfer och tintar, inte brödtext).
 """
 import re
 import sys
@@ -16,13 +21,22 @@ HTML = Path(__file__).with_name("index.html").read_text()
 m = re.search(r":root\s*\{(.*?)\}", HTML, re.S)
 if not m:
     sys.exit("FEL: hittar ingen :root i index.html")
-ROOT = m.group(1)
-TOKENS = dict(re.findall(r"--([a-z0-9-]+):\s*(#[0-9a-fA-F]{6})", ROOT))
 
-# Ordningen ytorna möter ögat i. Varje steg ska vara ljusare än det förra.
-LADDER = ["bg", "rail", "side", "panel", "card", "card-hi"]
-# Text på kanvasen. Accenten bär länkar och glyfer, alltså minst 4,5:1 (WCAG AA).
+# --namn: light-dark(#a, #b)  eller  --namn: #a   ->  {namn: (ljust, mörkt)}
+TOKENS = {}
+for namn, ljus, mork in re.findall(
+        r"--([a-z0-9-]+):\s*light-dark\(\s*(#[0-9a-fA-F]{6})\s*,\s*(#[0-9a-fA-F]{6})\s*\)", m.group(1)):
+    TOKENS[namn] = (ljus, mork)
+for namn, enda in re.findall(r"--([a-z0-9-]+):\s*(#[0-9a-fA-F]{6})\s*;", m.group(1)):
+    TOKENS.setdefault(namn, (enda, enda))
+
+# Ordningen ytorna möter ögat i: kanvas -> räl -> sidofält -> panel -> kort.
+LADDER = ["bg", "rail", "side", "panel", "card"]
+# Texten mot kanvasen.
 TEXT = ["text", "text-2", "muted"]
+# Status- och typfärger: glyfer, prickar och tintar.
+GLYF = ["green", "amber", "red", "navy"]
+TEMAN = ("ljust", "mörkt")
 
 
 def srgb(v):
@@ -43,38 +57,40 @@ def contrast(a, b):
 
 def main():
     fel = []
-    for name in LADDER + TEXT + ["accent", "navy", "green", "amber", "red"]:
-        if name not in TOKENS:
-            fel.append("token --%s saknas i :root" % name)
+    for namn in LADDER + TEXT + GLYF + ["accent", "card-hi"]:
+        if namn not in TOKENS:
+            fel.append("token --%s saknas i :root" % namn)
+    if fel:
+        print("\n".join("FEL: " + f for f in fel))
+        return 1
 
-    for under, over in zip(LADDER, LADDER[1:]):
-        if under in TOKENS and over in TOKENS:
-            # Lika steg är tillåtna (Plane har surface-2 och layer-1 på samma rung);
-            # det som var felet var ett steg som gick MÖRKARE än det förra.
-            if lum(TOKENS[over]) < lum(TOKENS[under]) - 1e-9:
-                fel.append("ytan --%s (%s) är mörkare än --%s (%s): stegen går bakåt"
-                           % (over, TOKENS[over], under, TOKENS[under]))
+    for i, tema in enumerate(TEMAN):
+        # Lika steg är tillåtna (Plane har surface-2 och layer-1 på samma rung);
+        # det som var felet var ett steg som gick MÖRKARE än det förra.
+        for under, over in zip(LADDER, LADDER[1:]):
+            a, b = TOKENS[under][i], TOKENS[over][i]
+            if lum(b) < lum(a) - 1e-9:
+                fel.append("%s: ytan --%s (%s) är mörkare än --%s (%s), stegen går bakåt"
+                           % (tema, over, b, under, a))
+        if TOKENS["card-hi"][i] == TOKENS["card"][i]:
+            fel.append("%s: --card-hi är samma färg som --card, ingen hover syns" % tema)
+        for namn, krav in [("accent", 4.5)] + [(t, 4.5) for t in TEXT] + [(g, 3.0) for g in GLYF]:
+            c = contrast(TOKENS[namn][i], TOKENS["bg"][i])
+            if c < krav:
+                fel.append("%s: --%s %s bara %.2f:1 mot kanvasen (krav %.1f:1)"
+                           % (tema, namn, TOKENS[namn][i], c, krav))
 
-    if "bg" in TOKENS and "accent" in TOKENS:
-        c = contrast(TOKENS["accent"], TOKENS["bg"])
-        if c < 4.5:
-            fel.append("accenten --accent %s bara %.2f:1 mot --bg %s (krav 4,5:1)"
-                       % (TOKENS["accent"], c, TOKENS["bg"]))
-        else:
-            print("accenten: %.2f:1 mot kanvasen" % c)
-
-    if "bg" in TOKENS:
-        for t in TEXT:
-            if t in TOKENS:
-                c = contrast(TOKENS[t], TOKENS["bg"])
-                print("--%-6s %.2f:1 mot kanvasen" % (t, c))
-                if c < 4.5:
-                    fel.append("texten --%s %s bara %.2f:1 mot kanvasen" % (t, TOKENS[t], c))
+        print("%s: %s | accent %.2f:1 | text %s | glyfer %s" % (
+            tema,
+            " < ".join(TOKENS[n][i] for n in LADDER),
+            contrast(TOKENS["accent"][i], TOKENS["bg"][i]),
+            "/".join("%.1f" % contrast(TOKENS[t][i], TOKENS["bg"][i]) for t in TEXT),
+            "/".join("%.1f" % contrast(TOKENS[g][i], TOKENS["bg"][i]) for g in GLYF)))
 
     if fel:
         print("\n".join("FEL: " + f for f in fel))
         return 1
-    print("paletten ok: %s" % " < ".join(TOKENS[n] for n in LADDER))
+    print("paletten ok i båda temana")
     return 0
 
 

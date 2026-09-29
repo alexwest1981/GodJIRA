@@ -192,6 +192,10 @@ python3 panel/check.py                     # one check: answers, and numbers agr
 
 ### Five views, Plane's anatomy
 
+Two themes (light/dark) come out of one token line each — `light-dark(<light>,
+<dark>)` in `:root`, with the switcher in the header flipping `color-scheme`
+(and remembering the choice). The light ramp, like the dark one, is Plane's.
+
 The hub is modelled on Plane (`makeplane/plane`), which is the reference for how it
 should read — the anatomy, and the *surfaces*: the surface ramp, borders and text
 ladder are Plane's own dark tokens (`@makeplane/propel` 0.9.2, `@variant dark`,
