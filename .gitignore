@@ -4,3 +4,4 @@ __pycache__/
 # n8n workspace: the sync log is machine-local
 n8n/workflows/.n8n-sync-events.jsonl
 n8n/workflows/.n8n-state.json
+.reticle/

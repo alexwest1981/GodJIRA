@@ -14,7 +14,7 @@ Anslut i Antigravity IDE (~/.gemini/config/mcp_config.json) eller valfri annan
 MCP-klient:
 
   {"mcpServers": {"godjira": {"command": "python3",
-      "args": ["/home/alex/.config/omarchy/plugins/custom.jira/bin/jira_mcp.py"]}}}
+      "args": ["/home/alex/Projects/godjira/bin/jira_mcp.py"]}}}
 
 Självkontroll: python3 bin/jira_mcp.py --selftest
 """
