@@ -15,7 +15,15 @@
     --bg: #0b0b0e; --rail: #08080a; --side: #101014; --panel: #16161b;
     --card: #1b1b21; --card-hi: #212128; --line: #26262e; --line-2: #33333d;
     --text: #ececf1; --text-2: #a5a5b3; --muted: #71717f;
-    --blue: #4d7cfe; --amber: #e0a33e; --red: #e5545f; --green: #48b98a; --violet: #9b7bf0;
+    /* Paletten kommer ur märket (assets/godjira.svg): teal #04997a och marin
+       #0b3656. Accenten ÄR märkets teal -- mätt 5,47:1 mot bakgrunden, alltså
+       läsbar som text/länk och inte en påhittad granne till märket. Den gamla
+       blå-violetta accenten låg en hue ifrån märket, och det är den sortens
+       nästan-lika som ser ut som ett fel i stället för som en palett.
+       Grönen (status "klart") flyttades gulare, till 189 i avstånd från tealen:
+       med 116 läste status och accent som samma färg. */
+    --accent: #04997a; --navy: #1a6ba8; --green: #7bcf6a;
+    --amber: #e0a33e; --red: #e5545f;
     --r: 6px;
   }
   * { box-sizing: border-box; }
@@ -37,7 +45,7 @@
   .splash-box b { font-size: 15px; letter-spacing: .02em; }
   .splash .note { color: var(--text-2); font-size: 12.5px; max-width: 330px; }
   .spin {
-    width: 18px; height: 18px; border: 2px solid var(--line-2); border-top-color: var(--blue);
+    width: 18px; height: 18px; border: 2px solid var(--line-2); border-top-color: var(--accent);
     border-radius: 50%; animation: spin .9s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
@@ -82,7 +90,7 @@
   .railitem .g { font-size: 15px; line-height: 1; }
   .railitem:hover { background: var(--panel); color: var(--text-2); }
   .railitem.on { background: var(--panel); color: var(--text); }
-  .railitem.on .g { color: var(--blue); }
+  .railitem.on .g { color: var(--accent); }
 
   /* -------------------------------------------------------------- sidebar */
   .side {
@@ -206,7 +214,7 @@
   .bars i:nth-child(1) { height: 4px; } .bars i:nth-child(2) { height: 7px; } .bars i:nth-child(3) { height: 10px; }
   .bars.p3 i { background: var(--red); }
   .bars.p2 i:nth-child(-n+2) { background: var(--amber); }
-  .bars.p1 i:nth-child(1) { background: var(--blue); }
+  .bars.p1 i:nth-child(1) { background: var(--accent); }
   .excl {
     display: inline-grid; place-items: center; width: 15px; height: 15px; border-radius: 4px;
     background: #e5545f22; color: var(--red); font-size: 10px; font-weight: 700;
@@ -354,8 +362,11 @@ const dt = ms => { if (!ms) return ""; const d = new Date(ms); return d.getDate(
 const hhmm = () => new Date().toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" });
 
 // Plane's type icon: one glyph per work-item type, coloured by type.
-const TYPE = [["epic", "◆", "#9b7bf0"], ["story", "▣", "#48b98a"], ["task", "▤", "#4d7cfe"],
-              ["bug", "●", "#e5545f"], ["subtask", "↳", "#71717f"]];
+// Färgerna läses ur :root i stället för att skrivas en gång till här. En palett som
+// ligger på två ställen är två paletter, och den andra blir alltid kvar gammal.
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const TYPE = [["epic", "◆", css("--navy")], ["story", "▣", css("--green")], ["task", "▤", css("--accent")],
+              ["bug", "●", css("--red")], ["subtask", "↳", css("--muted")]];
 function typeGlyph(name) {
   const k = String(name || "").toLowerCase();
   const hit = TYPE.find(([key]) => k.includes(key)) || ["", "▫", "#a5a5b3"];
@@ -376,7 +387,7 @@ function prio(name) {
   if (p.startsWith("low")) return `<span class="bars p1" ${t}><i></i><i></i><i></i></span>`;
   return "";
 }
-const HUE = ["#4d7cfe", "#48b98a", "#e0a33e", "#9b7bf0", "#e5545f", "#3fb6c9"];
+const HUE = [css("--accent"), css("--green"), css("--amber"), css("--navy"), css("--red"), "#3fb6c9"];
 function avatar(name, small) {
   if (!name) return "";
   const h = [...name].reduce((a, c) => a + c.charCodeAt(0), 0);
@@ -510,7 +521,7 @@ function renderFlowPick() {
   const f = STATE.flow, p = f.pick, host = document.getElementById("flowPick");
   if (!p) { host.innerHTML = `<div class="empty">${TEXT.noNext || "inget att ta just nu"}${f.error ? " · " + esc(f.error) : ""}</div>`; return; }
   host.innerHTML = `
-    <div class="card" style="border-left:2px solid var(--blue)">
+    <div class="card" style="border-left:2px solid var(--accent)">
       <div class="c1">${typeGlyph("Task")}<span class="key">${esc(p.key)}</span><span class="grow"></span>${prio(p.priority)}</div>
       <div class="t">${esc(p.summary)}</div>
       <div class="c2"><span class="pill">${stateDot("new")}${esc(p.status || "")}</span>
