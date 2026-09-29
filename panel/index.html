@@ -574,7 +574,19 @@ const textOk = x => {
   const q = (document.getElementById("filter").value || "").toLowerCase();
   return !q || (x.key + " " + (x.summary || "") + " " + (x.assigneeName || "")).toLowerCase().includes(q);
 };
-const scopeOk = (x, v) => v === "all" || isShared(x) === (v === "shared");
+// "Egna" är assignade på dig och inte klara. Mätt på SCRUM: 98 av 123 bär ditt namn,
+// men 95 av dem är klara -- det man jobbar med är 2-3 stycken, och det är dem man
+// menar. Den gamla regeln ("inte GEMENSAMT") gav 127 av 131 och såg inget ansvar.
+const isMine = x => {
+  if (x.source === "GH") return false;                 // GitHub-poster bär ingen ansvarig
+  const account = (STATE.jira || {}).account || {};
+  const name = x.assigneeName || "", mail = x.assigneeEmail || "";
+  return (!!name && name === account.displayName) || (!!mail && mail === account.email);
+};
+const stillOpen = x => !!x.statusCategory && x.statusCategory !== "done";
+const scopeOk = (x, v) => v === "all" ? true
+  : v === "shared" ? isShared(x)
+  : isMine(x) && stillOpen(x);
 // GitHub rows carry no Jira priority, so they fall under "utan" rather than sneaking
 // past a severity choice -- a filter that quietly ignores half the table is a lie.
 const prioOk = x => !F.prio.size || F.prio.has(x.priorityName || "utan");
@@ -595,7 +607,8 @@ function renderFilters() {
     `<button class="chip ${on ? "on" : ""}" ${attrs}>${esc(label)}${count != null ? `<span class="c">${count}</span>` : ""}</button>`;
   document.getElementById("filters").innerHTML =
     Object.entries(TEXT.scope).map(([v, label]) =>
-      chip(label, F.scope === v, `data-scope="${v}"`, work.filter(textOk).filter(x => scopeOk(x, v)).length)
+      chip(label, F.scope === v, `data-scope="${v}" title="${v === "mine" ? "assignade på dig som inte är klara" : v === "shared" ? "GEMENSAMT-poolen" : "allt, även klart"}"`,
+           work.filter(textOk).filter(x => scopeOk(x, v)).length)
     ).join("") +
     `<span class="chip sep">·</span>` +
     priorities().map(name => chip(name, F.prio.has(name), `data-prio="${esc(name)}"`)).join("") +
@@ -895,7 +908,12 @@ function renderFlow() {
   }).join("");
   const boxes = flow.nodes.map(n => {
     const key = n.key || n.name, step = order[key], lines = flowWrap(n.name);
-    return `<g class="fnode" data-node="${esc(key)}">` +
+    // Förskjutningen sätts REDAN HÄR, inte bara under ett drag: annars ritas rutorna
+    // på filens plats medan pilarna räknas från den flyttade (mätt: efter en
+    // omladdning stod rutorna still och vägarna pekade i tomma luften).
+    const spot = FLOW.pos[key];
+    return `<g class="fnode" data-node="${esc(key)}" ` +
+      `transform="translate(${spot.x - n.x} ${spot.y - n.y})">` +
       `<title>${esc(n.name)} — ${esc(n.type)}${step ? " · steg " + step : ""}</title>` +
       `<rect x="${n.x}" y="${n.y}" width="${W}" height="${H}" rx="10" fill="var(--card)" ` +
         `stroke="var(--line-2)"/>` +

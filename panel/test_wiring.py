@@ -114,6 +114,10 @@ def main() -> int:
     check('data-act="flow-reset"' in html and "localStorage" in html,
           "what you move is remembered, and can be reset")
     check("flowWrap" in html, "long node names wrap instead of being cut")
+    # En färsk ritning måste sätta den sparade förskjutningen: gjorde den inte det
+    # stod rutorna kvar på filens plats medan vägarna pekade någon helt annanstans.
+    check('transform="translate(${spot.x - n.x} ${spot.y - n.y})"' in html,
+          "a fresh drawing applies the moves you made")
     check("AbortSignal.timeout" in html, "the state fetch has a time limit")
     check("retryLater" in html, "a failed refresh is retried and said out loud")
 
