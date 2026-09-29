@@ -139,6 +139,86 @@ def github_state() -> dict:
     }
 
 
+# -------------------------------------------------------------- flödesgrafen
+#
+# n8n:s egen tavla går att öppna (länken finns kvar), men hubben skall visa flödet
+# där man står. Filen n8n/workflows/*.workflow.ts ÄR källan och instansen i n8n är
+# en kopia (n8n/README.md) -- därför ritas filen. Varje nod bär sin egen position,
+# så ritningen får n8n:s egen layout i stället för en påhittad.
+
+FLOW_DIR = ROOT / "n8n" / "workflows"
+FLOW_NODE = re.compile(r"@node\(")
+FLOW_EDGE = re.compile(r"this\.(\w+)\.out\((\d+)\)\.to\(this\.(\w+)\.in\((\d+)\)\)")
+FLOW_NAME = re.compile(r"\bname:\s*'([^']*)'")
+FLOW_TYPE = re.compile(r"\btype:\s*'([^']*)'")
+FLOW_SPOT = re.compile(r"\bposition:\s*\[\s*(-?\d+)\s*,\s*(-?\d+)\s*\]")
+
+
+def decorator_body(text: str, start: int) -> str:
+    """Argumenten inuti ett dekoratoranrop, alltså innehållet i @node({ ... }).
+
+    Hängslena räknas: nodens egen konfiguration har nästlade objekt (Config bär en
+    lista av { name, value }), och ett naivt sök efter `name:` hade läst dem som
+    nodens namn.
+    """
+    depth, opening = 0, text.find("{", start)
+    if opening < 0:
+        return ""
+    for index in range(opening, len(text)):
+        if text[index] == "{":
+            depth += 1
+        elif text[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[opening + 1:index]
+    return ""
+
+
+def flow_graph(path: Path) -> dict:
+    """Noderna och vägarna ur en flödesfil."""
+    text = path.read_text(errors="replace")
+    head = decorator_body(text, text.find("@workflow")) if "@workflow" in text else ""
+    nodes = []
+    for match in FLOW_NODE.finditer(text):
+        body = decorator_body(text, match.start())
+        name, kind = FLOW_NAME.search(body), FLOW_TYPE.search(body)
+        spot = FLOW_SPOT.search(body)
+        if not (name and kind):
+            continue
+        # Egennamnet efter dekoratorn (EveryHour = { ... }) är det kanterna pekar på:
+        # visningsnamnet är "Every hour" och egenskapen är EveryHour, så utan den här
+        # nyckeln pekade varje kant i tomma luften (mätt: 0 av 7 vägar ritades).
+        # Slutet på dekoratorns egna argument är `})`, och först därefter står
+        # egenskapens namn. Ett ankrat sök direkt efter @node( träffar argumentens
+        # egen { och ger visningsnamnet i stället.
+        after = text[match.end():]
+        prop = re.search(r"\}\s*\)\s*(?:export\s+)?([A-Za-z_]\w*)\s*=", after)
+        nodes.append({"key": prop.group(1) if prop else name.group(1),
+                      "name": name.group(1),
+                      "type": kind.group(1).split(".")[-1],
+                      "x": int(spot.group(1)) if spot else 0,
+                      "y": int(spot.group(2)) if spot else 0})
+    return {"file": path.name,
+            "id": (re.search(r"\bid:\s*'([^']*)'", head) or [None, ""])[1] if head else "",
+            "name": FLOW_NAME.search(head).group(1) if head and FLOW_NAME.search(head) else path.stem,
+            "active": bool(re.search(r"active:\s*true", head)),
+            "nodes": nodes,
+            "edges": [{"from": m.group(1), "to": m.group(3)} for m in FLOW_EDGE.finditer(text)]}
+
+
+def flow_graphs() -> list:
+    """Varje flöde i repot. En fil som inte går att läsa namnges i stället för att
+    sänka hela vyn -- samma hållning som jira_state() har mot ett tyst svar."""
+    out = []
+    for path in sorted(FLOW_DIR.glob("*.workflow.ts")):
+        try:
+            out.append(flow_graph(path))
+        except Exception as exc:  # noqa: BLE001 -- vilket fel som helst är samma svar
+            out.append({"file": path.name, "nodes": [], "edges": [],
+                        "error": "{}: {}".format(type(exc).__name__, exc)})
+    return out
+
+
 def project_of_the_link(flow: dict) -> dict:
     """Projektet man är kopplad till.
 
@@ -308,7 +388,8 @@ def state() -> dict:
                     "project": pool.submit(project_of_the_link, flow),
                     "automation": pool.submit(automation_state),
                     "links": pool.submit(links_state),
-                    "journal": pool.submit(journal, 10)}
+                    "journal": pool.submit(journal, 10),
+                    "flows": pool.submit(lambda: cached("flows", flow_graphs))}
         return {"generatedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                 "flow": flow, **{name: job.result() for name, job in jobs.items()}}
     return dict(cached("state", build))

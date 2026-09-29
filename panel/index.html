@@ -203,6 +203,11 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   .seg button { background: transparent; border: 0; color: var(--muted); padding: 4px 9px; cursor: pointer; font-size: 13px; }
   .seg button:hover { color: var(--text); background: var(--panel); }
   .seg button.on { background: var(--card-hi); color: var(--text); }
+  /* Flödesritningen: n8n:s egna nodpositioner är layouten, så rutan skrollar i
+     sidled när flödet är brett i stället för att krympa texten oläslig. */
+  .graph { overflow-x: auto; }
+  .graph svg { display: block; min-width: 640px; }
+  .graph .empty { padding: 10px 2px; }
   .filters { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
   .chip {
     border: 1px solid var(--line-2); background: transparent; color: var(--text-2);
@@ -409,6 +414,18 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
       </div>
     </section>
 
+    <section class="view" id="v-automatik">
+      <div class="panel">
+        <h3>Flödet <span class="meta" id="flowMeta"></span>
+          <span class="grow"></span><a class="chip" id="flowCanvasLink" hidden>n8n:s egen tavla</a></h3>
+        <div class="body">
+          <div class="seg" id="flowChips"></div>
+          <div class="graph" id="flowCanvas"></div>
+        </div>
+      </div>
+      <div class="empty" id="flowNote"></div>
+    </section>
+
     <section class="view" id="v-repos">
       <div class="tablewrap"><table id="repoTable"></table></div>
       <div class="two">
@@ -442,13 +459,17 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
 <script>
 const TEXT = {
   views: { overview: ["Översikt", "◫"], board: ["Tavlan", "▤"], items: ["Uppgifter", "☰"], repos: ["Repon", "⌥"],
-           import: ["Importera", "⇪"] },
+           automatik: ["Automatik", "⤳"], import: ["Importera", "⇪"] },
   next: "nästa", empty: "Inga ärenden", never: "aldrig", nothing: "inget",
   someoneElses: "är någon annans — tas från panelens andra tryck",
   runnersUp: "därefter", noSprint: "ingen aktiv sprint — det som är kvar står i backloggen och ligger i To Do här",
   open: "öppna", settled: "klara", backlog: "i backloggen", repos: "repon", waiting: "väntar på dig",
   allTasks: "Alla uppgifter", sources: "Jira + GitHub",
   scope: { all: "Alla", shared: "Gemensamma", mine: "Egna" },
+  flows: "Flöden", flowRuns: "går av sig själv", flowIdle: "trycks bara på",
+  flowNone: "här finns inget flöde att rita — n8n/workflows är tom",
+  flowUnreadable: "flödesfilen går inte att läsa", flowNodes: "noder", flowEdges: "vägar",
+  n8nCanvas: "n8n:s egen tavla", under: "under", readCode: "läst ur repot",
   none: "utan",
 };
 let STATE = null, view = "board";
@@ -605,6 +626,7 @@ function renderCrumbs() {
     board: ["Jira", b.name || "Tavlan", ""],
     items: ["GodJIRA", TEXT.allTasks, boardItems().length + ghItems().length + " st"],
     repos: ["GitHub", g.login || "GitHub", g.repos.length + " " + TEXT.repos],
+    automatik: ["Godjira", "Automatik", "n8n ur n8n/workflows"],
     import: ["GodJIRA", "Importera", "underlag in, ärenden ut"],
   }[view] || ["GodJIRA", (TEXT.views[view] || ["?"])[0], ""];   // en ny vy får aldrig fälla hela ritningen
   document.getElementById("crumbs").innerHTML =
@@ -633,6 +655,95 @@ function renderStats() {
 // n8n går på klocka och lämnar sin läsning i en fil på den här maskinen. Panelen
 // visar den som den är: projektet man är kopplad till, flödets nästa, och när
 // automaten senast tittade. Panelen räknar inte ut något eget här.
+// Flödet ritat ur sin egen fil. n8n:s egen tavla ligger ett klick bort (länken),
+// men flödet skall synas där man står -- och ritas ur n8n/workflows/*.workflow.ts,
+// för filen är källan och instansen i n8n är en kopia (n8n/README.md).
+let flowSel = "";
+
+function flowGlyphOf(type) {
+  const map = { scheduleTrigger: "◷", manualTrigger: "▶", set: "≡", executeCommand: "$",
+                code: "ƒ", httpRequest: "⇅", if: "⋔", switch: "⋔", noOp: "○", stickyNote: "✎" };
+  return map[type] || "▪";
+}
+
+function renderFlow() {
+  const chips = document.getElementById("flowChips");
+  const canvas = document.getElementById("flowCanvas");
+  const note = document.getElementById("flowNote");
+  const link = document.getElementById("flowCanvasLink");
+  const flows = (STATE.flows || []).filter(f => f && f.file);
+  const p = STATE.project || {};
+  document.getElementById("flowMeta").textContent =
+    (p.key ? `${p.key} · ${p.repo || "inget repo kopplat"} · ` : "") +
+    `flödet ${flows.some(f => f.active) ? TEXT.flowRuns : TEXT.flowIdle}`;
+  if (!flows.length) {
+    chips.innerHTML = ""; canvas.innerHTML = ""; link.hidden = true;
+    note.textContent = TEXT.flowNone;
+    return;
+  }
+  note.textContent = "";
+  const usable = flows.filter(f => (f.nodes || []).length);
+  if (!flowSel || !flows.some(f => f.file === flowSel)) {
+    flowSel = (usable.find(f => f.active) || usable[0] || flows[0]).file;
+  }
+  const flow = flows.find(f => f.file === flowSel) || flows[0];
+  // Ett flöde per chip: läse-flödet går på klocka, skriv-flödet trycks på -- active
+  // kommer ur filen, så det som går av sig självt syns utan att någon skriver det.
+  chips.innerHTML = flows.map(f =>
+    `<button data-flow="${esc(f.file)}" class="${f.file === flow.file ? "on" : ""}" ` +
+    `title="${esc(f.file)}">${f.active ? "◷ " : ""}${esc(f.name || f.file)} ` +
+    `<span class="meta">${(f.nodes || []).length} ${TEXT.flowNodes}</span></button>`).join("");
+  link.href = `${location.protocol}//${location.hostname}:5678` +
+    (flow.id ? `/workflow/${flow.id}` : "/home/workflows");
+  link.hidden = false;
+  if (flow.error || !(flow.nodes || []).length) {
+    canvas.innerHTML = `<div class="empty">${esc(TEXT.flowUnreadable)}: ${esc(flow.file)}` +
+      `${flow.error ? " — " + esc(flow.error) : ""}</div>`;
+    return;
+  }
+  // Layouten är n8n:s egen: nodernas positioner ritas som de står, ingenting räknas
+  // om här. Rutan är 224x54 -- n8n:s egen nodbredd -- och allt skalas med viewBox.
+  const W = 224, H = 54, PAD = 18;
+  const xs = flow.nodes.map(n => n.x), ys = flow.nodes.map(n => n.y);
+  const x0 = Math.min(...xs) - PAD, x1 = Math.max(...xs) + W + PAD;
+  const y0 = Math.min(...ys) - PAD, y1 = Math.max(...ys) + H + PAD;
+  const at = Object.fromEntries(flow.nodes.map(n => [n.key || n.name, n]));
+  // Körordningen, räknad ur vägarna och inte ur positionerna: filens nodpositioner
+  // står kvar i ett gammalt mönster (tre steg i samma kolumn) medan kedjan går
+  // Config -> steg 1 -> steg 2 -> steg 3. Numret gör ordningen läsbar utan att
+  // layouten hittas på -- positionerna är fortfarande n8n:s egna.
+  const order = {}, queue = flow.nodes.filter(n => !(flow.edges || []).some(e => e.to === (n.key || n.name)))
+    .map(n => [n.key || n.name, 1]);
+  while (queue.length) {
+    const [key, step] = queue.shift();
+    if (order[key]) continue;
+    order[key] = step;
+    (flow.edges || []).filter(e => e.from === key).forEach(e => queue.push([e.to, step + 1]));
+  }
+  const edges = (flow.edges || []).map(e => {
+    const a = at[e.from], b = at[e.to];
+    if (!a || !b) return "";
+    const sx = a.x + W, sy = a.y + H / 2, tx = b.x, ty = b.y + H / 2;
+    const mid = Math.max(24, (tx - sx) / 2);
+    return `<path d="M ${sx} ${sy} C ${sx + mid} ${sy} ${tx - mid} ${ty} ${tx} ${ty}" fill="none" ` +
+      `stroke="var(--line-2)" stroke-width="1.5" marker-end="url(#flowarrow)"/>`;
+  }).join("");
+  const boxes = flow.nodes.map(n => `<g>` +
+    `<rect x="${n.x}" y="${n.y}" width="${W}" height="${H}" rx="9" fill="var(--card)" stroke="var(--line)"/>` +
+    `<text x="${n.x + 14}" y="${n.y + 23}" fill="var(--text)" font-size="12.5">` +
+      `${esc(flowGlyphOf(n.type))} ${esc(String(n.name).slice(0, 26))}</text>` +
+    `<text x="${n.x + 14}" y="${n.y + 40}" fill="var(--muted)" font-size="11">${esc(n.type)}</text>` +
+    (order[n.key || n.name] ? `<text x="${n.x + W - 12}" y="${n.y + 22}" fill="var(--muted)" ` +
+      `font-size="11" text-anchor="end">${order[n.key || n.name]}</text>` : "") +
+    `</g>`).join("");
+  canvas.innerHTML = `<svg viewBox="${x0} ${y0} ${x1 - x0} ${y1 - y0}" width="100%" ` +
+    `preserveAspectRatio="xMinYMin meet" role="img" ` +
+    `aria-label="${esc(flow.name || flow.file)}">` +
+    `<defs><marker id="flowarrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" ` +
+    `markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--line-2)"/>` +
+    `</marker></defs>${edges}${boxes}</svg>`;
+}
+
 function renderAutomation() {
   const a = STATE.automation || {}, p = STATE.project || {}, f = STATE.flow || {};
   const host = document.getElementById("automation");
@@ -909,7 +1020,7 @@ function renderRepos() {
       <th style="width:76px" class="num">Ärenden</th><th style="width:80px">Jira</th>
       <th style="width:80px">Senast</th></tr></thead>
      <tbody>${rows.map(r => `<tr data-repo="${esc(r.name)}" class="${REPO.name === r.name ? "on" : ""}">
-       <td>${link(r.url, `<b>${esc(r.name)}</b>`)}${r.description ? `<div class="muted" style="font-size:11.5px;max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.description)}</div>` : ""}</td>
+       <td><b>${esc(r.name)}</b>${r.description ? `<div class="muted" style="font-size:11.5px;max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.description)}</div>` : ""}</td>
        <td><span class="pill">${r.isPrivate ? "▣ privat" : "▢ publikt"}</span></td>
        <td class="muted">${esc((r.primaryLanguage && r.primaryLanguage.name) || "—")}</td>
        <td class="num">${r.stargazerCount || 0}</td>
@@ -992,15 +1103,20 @@ function renderImport() {
   const host = document.getElementById("impProposal");
   document.getElementById("impProposalPanel").hidden = !IMP.plan.length;
   if (IMP.plan.length) {
+    const code = ((IMP.context || {}).repo || {}).code || {};
+    const read = code.files
+      ? ` · ${TEXT.readCode}: ${code.files} filer${code.truncated ? " (klippt)" : ""}`
+      : "";
     document.getElementById("impProposalMeta").textContent =
       `${IMP.plan.length} förslag till ${IMP.project || projectKey()}` +
       `${IMP.projectSource ? " (projektet ur " + IMP.projectSource + ")" : ""}` +
-      ` · ${plural(IMP.keep.size, "ibockad", "ibockade")} · ingenting skrivet än`;
+      ` · ${plural(IMP.keep.size, "ibockad", "ibockade")} · ingenting skrivet än` + read;
     host.innerHTML = IMP.plan.map((item, i) => `
-      <label class="impitem">
+      <label class="impitem"${item.epic ? ` style="margin-left:22px"` : ""}>
         <input type="checkbox" data-keep="${i}" ${IMP.keep.has(i) ? "checked" : ""}>
         <span><span class="key">${esc(item.type || "Task")}</span> ${esc(item.summary || "")}
           ${item.priority ? `<span class="meta">${esc(item.priority)}</span>` : ""}
+          ${item.epic ? `<span class="meta">${esc(TEXT.under)} ${esc(item.epic)}</span>` : ""}
           ${item.description ? `<div class="t2">${esc(String(item.description).slice(0, 300))}</div>` : ""}
         </span>
       </label>`).join("") + `
@@ -1021,7 +1137,8 @@ function renderImport() {
       IMP.created.length + " skrivna i " + (IMP.project || projectKey());
     document.getElementById("impDone").innerHTML = IMP.created.map(c => `<div class="r">` +
       link(jiraOrigin() ? `${jiraOrigin()}/browse/${c.key}` : "",
-           `<span class="key">${esc(c.key || "")}</span> <span class="t">${esc(c.summary || "")}</span>`) +
+           `<span class="key">${esc(c.key || "")}</span> <span class="t">${esc(c.summary || "")}</span>` +
+           (c.epic ? `<span class="meta">${esc(TEXT.under)} ${esc(c.epic)}</span>` : "") + ("")) +
       `</div>`).join("");
   }
 }
@@ -1040,6 +1157,9 @@ async function impParse() {
     if (!answer.ok) throw new Error(answer.error || "svaret gick inte att läsa");
     IMP.plan = answer.proposal || []; IMP.token = answer.token || "";
     IMP.project = answer.project || ""; IMP.projectSource = answer.projectSource || "";
+    // Vad agenten faktiskt läste: underlaget OCH koden. Utan den raden ser ett
+    // förslag lika självsäkert ut när det bara har gissat.
+    IMP.context = answer.context || null;
     IMP.keep = new Set(IMP.plan.map((_, i) => i));
     IMP.note = `${IMP.plan.length} förslag ur ${IMP.files.length} dokument till ` +
                `${IMP.project || projectKey()} — bocka av det du inte vill ha`;
@@ -1076,12 +1196,13 @@ function render() {
   if (!STATE) return;
   renderRail(); renderSide(); renderCrumbs(); renderFilters();
   const filters = document.getElementById("filters");
-  filters.hidden = view === "overview" || view === "import";
+  filters.hidden = view === "overview" || view === "import" || view === "automatik";
   document.getElementById("filter").hidden = !(view === "items" || view === "repos");
   if (view === "overview") { renderStats(); renderAutomation(); renderFlowPick(); renderJournal(); renderRecent(); }
   if (view === "board") renderBoard();
   if (view === "items") renderItems();
   if (view === "repos") renderRepos();
+  if (view === "automatik") renderFlow();
   if (view === "import") renderImport();
 }
 
@@ -1174,6 +1295,7 @@ document.addEventListener("click", e => {
   if (e.target.closest('[data-act="imp-apply"]')) return impApply();
   if (e.target.closest('[data-act="link-save"]')) return linkSave(false);
   if (e.target.closest('[data-act="link-rm"]')) return linkSave(true);
+  if (e.target.closest("[data-flow]")) { flowSel = e.target.closest("[data-flow]").dataset.flow; return renderFlow(); }
   if (e.target.closest('[data-act="imp-all"]')) { IMP.keep = new Set(IMP.plan.map((_, i) => i)); return renderImport(); }
   if (e.target.closest('[data-act="imp-none"]')) { IMP.keep = new Set(); return renderImport(); }
   if (e.target.closest('[data-act="splash-retry"]')) {
