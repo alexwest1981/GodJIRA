@@ -98,6 +98,29 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
     background: light-dark(oklch(0 0 0 / 45%), oklch(1 0 0 / 50%)); background-clip: padding-box;
   }
   ::-webkit-scrollbar-corner { background: transparent; }
+  /* -------------------------------------------------------- repot ------ */
+  /* Raden är klickbar: hela repot öppnas, inte bara namnet. */
+  #repoTable tbody tr { cursor: pointer; }
+  #repoTable tbody tr:hover { background: var(--card-hi); }
+  #repoTable tbody tr.on { background: var(--card-hi); box-shadow: inset 3px 0 0 var(--accent); }
+  .badge { font-size: 9.5px; letter-spacing: .07em; text-transform: uppercase; white-space: nowrap;
+           border: 1px solid var(--line-3); border-radius: 999px; padding: 1px 6px; color: var(--muted); }
+  .badge.on { color: var(--accent); border-color: var(--accent); }
+  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 10px; }
+  .facts .f { border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; background: var(--card); }
+  .facts .f .l { font-size: 10px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+  .facts .f .v { font-size: 13px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; }
+  .linkform { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 7px 10px; align-items: center; }
+  .linkform label { font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+  .linkform input { background: var(--panel); color: var(--text); border: 1px solid var(--line-2);
+                    border-radius: 7px; padding: 6px 8px; font: inherit; font-size: 12.5px; width: 100%; }
+  .linkform input:focus { outline: none; border-color: var(--accent); }
+  .linkbar { display: flex; align-items: center; gap: 8px; margin-top: 11px; flex-wrap: wrap; }
+  .inp { background: var(--panel); color: var(--text); border: 1px solid var(--line-2); border-radius: 7px;
+         padding: 5px 8px; font: inherit; font-size: 12.5px; }
+  .inp:focus { outline: none; border-color: var(--accent); }
+  .mono { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px; }
+
   /* --------------------------------------------------------- import ---- */
   .impfile { cursor: pointer; }
   .impitem { display: flex; gap: 8px; align-items: flex-start; padding: 7px 0; border-top: 1px solid var(--line); }
@@ -356,6 +379,12 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
           <textarea id="impWish" rows="3"
             placeholder="Vad ska bli ärenden? Lämna tomt för att utgå från dokumenten."></textarea>
           <div class="improw">
+            <label class="meta" for="impRepo" style="min-width:74px">jobbar mot</label>
+            <select class="inp" id="impRepo"><option value="">— inget repo —</option></select>
+            <span class="meta" id="impTarget"></span>
+            <span class="grow"></span>
+          </div>
+          <div class="improw">
             <label class="chip impfile"><input type="file" id="impFiles" multiple hidden accept=".pdf,.docx,.odt,.xlsx,.pptx,.txt,.md,.csv,.json,.xml,.rst,.log,.html,.htm">välj filer</label>
             <span class="meta" id="impFiles">inga filer valda</span>
             <span class="grow"></span>
@@ -376,6 +405,20 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
 
     <section class="view" id="v-repos">
       <div class="tablewrap"><table id="repoTable"></table></div>
+      <div class="two">
+        <div class="panel">
+          <h3>Repot <span class="meta" id="repoDetailMeta"></span></h3>
+          <div class="body" id="repoDetail">
+            <div class="empty">välj ett repo i listan ovan — raden öppnar det</div>
+          </div>
+        </div>
+        <div class="panel">
+          <h3>Jira-kopplingen <span class="meta">projektet ett uppladdat underlag hamnar i</span></h3>
+          <div class="body" id="repoLink">
+            <div class="empty">inget repo valt</div>
+          </div>
+        </div>
+      </div>
       <div class="two">
         <div class="panel">
           <h3>Öppna pull requests <span class="meta" id="prMeta"></span></h3>
@@ -543,7 +586,7 @@ function renderSide() {
     </div>
     <div class="sect">GitHub</div>
     <div class="item ${view === "repos" ? "on" : ""}" data-v="repos"><span class="g">⌥</span>${esc(g.login || "GitHub")}<span class="c">${g.repos.length}</span></div>
-    <div class="sub">${recent.map(r => `<div class="item" data-v="repos"><span class="g">${r.isPrivate ? "▣" : "▢"}</span>${esc(r.name)}</div>`).join("")}</div>
+    <div class="sub">${recent.map(r => `<div class="item" data-v="repos"><span class="g">${r.isPrivate ? "▣" : "▢"}</span>${esc(r.name)}${linkOf(r.name) ? `<span class="badge on">${esc(linkOf(r.name).project || "?")}</span>` : ""}</div>`).join("")}</div>
     <div class="who">${esc((j.account || {}).displayName || "")}<br>
       <span class="key">${esc((j.account || {}).email || "")}</span><br>${esc(j.mode || "")} · uppdaterad ${hhmm()}</div>`;
 }
@@ -669,6 +712,131 @@ function renderItems() {
        || `<tr><td colspan="8" class="empty">${TEXT.empty}</td></tr>`}</tbody>`;
 }
 
+/* ---------------------------------------------------------------- repot ---- */
+// Raden öppnar repot: fakta, öppna PR/ärenden, commitarna och Jira-kopplingen.
+// Allt kommer ur `jira_flow repo` via panelen -- ingen egen läsning av GitHub här.
+const REPO = { name: "", data: null, busy: false, note: "", bad: false };
+const links = () => ((STATE && STATE.links && STATE.links.links) || []);
+const shortName = full => String(full || "").split("/").pop();
+const linkOf = name => links().find(l =>
+  shortName(l.repo).toLowerCase() === String(name || "").toLowerCase());
+const linkBadge = name => {
+  const l = linkOf(name);
+  return l ? `<span class="badge on">${esc(l.project || "?")}</span>` : `<span class="badge">—</span>`;
+};
+
+async function repoOpen(name) {
+  if (!name || REPO.busy) return;
+  REPO.name = name; REPO.busy = true; REPO.bad = false; REPO.note = "hämtar repot — det tar några sekunder";
+  REPO.data = null;
+  renderRepos();
+  try {
+    const r = await fetch("/api/repo?name=" + encodeURIComponent(name), { cache: "no-store" });
+    const answer = await r.json();
+    if (!answer.ok) throw new Error(answer.error || "svaret gick inte att läsa");
+    REPO.data = answer; REPO.note = "";
+  } catch (e) {
+    REPO.bad = true; REPO.note = e.message;
+  } finally { REPO.busy = false; renderRepos(); }
+}
+
+const ghRow = (url, key, title, side) => `<div class="r">${link(url, `<span class="key">${esc(key)}</span>`)} ` +
+  `<span class="t">${esc(title || "")}</span>${side ? `<span class="tside">${esc(side)}</span>` : ""}</div>`;
+
+// Repot står stilla medan man tittar på kopplingen: fakta och koppling delar rad.
+function renderRepoDetail() {
+  const meta = document.getElementById("repoDetailMeta");
+  const body = document.getElementById("repoDetail");
+  const host = document.getElementById("repoLink");
+  if (!REPO.name) { meta.textContent = ""; return; }
+  const d = REPO.data;
+  meta.innerHTML = d ? link(d.about.url, esc(d.repo)) : esc(REPO.name);
+  if (REPO.busy) {
+    body.innerHTML = `<div class="empty">${esc(REPO.note)}</div>`;
+  } else if (REPO.bad || !d) {
+    body.innerHTML = `<div class="empty err">${esc(REPO.note || "repot kunde inte läsas")}</div>`;
+  } else {
+    const a = d.about || {};
+    const fact = (l, v) => `<div class="f"><div class="l">${esc(l)}</div><div class="v">${v}</div></div>`;
+    const prs = (d.openPRs || []).map(p => ghRow(p.url, "#" + p.number, p.title + (p.isDraft ? " (utkast)" : ""),
+      ago(p.updatedAt))).join("") || `<div class="empty">inga öppna</div>`;
+    const iss = (d.openIssues || []).map(i => ghRow(i.url, "#" + i.number, i.title, ago(i.updatedAt)))
+      .join("") || `<div class="empty">inga öppna</div>`;
+    const cm = (d.commits || []).map(c => ghRow("", c.sha, c.summary, c.date)).join("")
+      || `<div class="empty">ingen historik</div>`;
+    body.innerHTML =
+      (a.description ? `<div class="t2" style="margin-bottom:10px">${esc(a.description)}</div>` : "") +
+      `<div class="facts">
+        ${fact("synlighet", esc(a.visibility || "—") + (a.license ? " · " + esc(a.license) : ""))}
+        ${fact("språk", esc(a.language || "—"))}
+        ${fact("stjärnor", String(a.stars || 0) + " · " + String(a.forks || 0) + " forkar")}
+        ${fact("standardgren", `<span class="mono">${esc(a.branch || "—")}</span>`)}
+        ${fact("senaste push", esc((a.pushedAt || "").slice(0, 10) || "—"))}
+        ${fact("lokal kopia", d.local ? `<span class="mono">${esc(d.local)}</span>` : "ingen hittad")}
+      </div>
+      <div style="margin-top:14px"><div class="meta">öppna pull requests · ${(d.openPRs || []).length}</div>${prs}</div>
+      <div style="margin-top:12px"><div class="meta">öppna ärenden · ${(d.openIssues || []).length}</div>${iss}</div>
+      <div style="margin-top:12px"><div class="meta">senaste commitarna</div>${cm}</div>` +
+      (d.notes && d.notes.length ? `<div class="meta" style="margin-top:10px">! ${esc(d.notes.join(" · "))}</div>` : "");
+  }
+  renderRepoLink();
+}
+
+function renderRepoLink() {
+  const host = document.getElementById("repoLink");
+  if (!REPO.name) { host.innerHTML = `<div class="empty">inget repo valt</div>`; return; }
+  // Länken är ett objekt. Förut stod här `l.project || linkOf(...)` och sedan
+  // `known.project` -- med en projektnyckel i known blev det undefined, alltså "—"
+  // i panelen och fel knapptext (mätt i webbläsaren). Objektet först, sedan fälten.
+  const l = (REPO.data && REPO.data.link) || linkOf(REPO.name) || {};
+  const project = l.project || "";
+  const issue = l.issue || "";
+  const note = l.note || "";
+  host.innerHTML = `
+    <div class="facts">
+      <div class="f"><div class="l">repo</div><div class="v mono">${esc((REPO.data && REPO.data.repo) || REPO.name)}</div></div>
+      <div class="f"><div class="l">projekt</div><div class="v">${project ? esc(project) : "—"}</div></div>
+      <div class="f"><div class="l">jobbar mot</div><div class="v mono">${issue ? esc(issue) : "—"}</div></div>
+    </div>
+    <div class="linkform" style="margin-top:12px">
+      <label for="lnkProject">projekt</label>
+      <input id="lnkProject" value="${esc(project || projectKey())}" placeholder="SCRUM" spellcheck="false">
+      <label for="lnkIssue">ärende</label>
+      <input id="lnkIssue" value="${esc(issue)}" placeholder="SCRUM-133 (frivilligt)" spellcheck="false">
+      <label for="lnkNote">anteckning</label>
+      <input id="lnkNote" value="${esc(note)}" placeholder="en rad för människor" spellcheck="false">
+    </div>
+    <div class="linkbar">
+      <button class="chip on" data-act="link-save">${project ? "uppdatera kopplingen" : "koppla till Jira"}</button>
+      ${project ? `<button class="chip" data-act="link-rm">ta bort kopplingen</button>` : ""}
+      <span class="grow"></span>
+      <span class="meta ${REPO.bad ? "err" : ""}">${esc(REPO.note || "")}</span>
+    </div>
+    <div class="meta" style="margin-top:9px">Underlag du laddar upp i Importera utgår från kopplingen:
+      projektet, ärendet du jobbar mot, och den lokala kopian om den finns.</div>`;
+}
+
+async function linkSave(rm) {
+  const value = id => ((document.getElementById(id) || {}).value || "").trim();
+  const body = rm ? { repo: REPO.name, rm: true }
+                  : { repo: REPO.name, project: value("lnkProject"), issue: value("lnkIssue"),
+                      note: value("lnkNote") };
+  REPO.bad = false; REPO.note = rm ? "tar bort kopplingen …" : "kopplar …";
+  renderRepoDetail();
+  try {
+    const r = await fetch("/api/link", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body) });
+    const answer = await r.json();
+    if (!answer.ok) throw new Error(answer.error || "svaret gick inte att läsa");
+    REPO.note = rm ? "kopplingen är borta" : "kopplat till " + (answer.link || {}).project;
+    await load(true);                 // nyckeln syns i listan, sidofältet och importen
+    await repoOpen(REPO.name);
+  } catch (e) {
+    REPO.bad = true; REPO.note = "kunde inte spara: " + e.message;
+    renderRepoDetail();
+  }
+}
+
 function renderRepos() {
   const g = STATE.github;
   const prBy = {}, issBy = {};
@@ -679,14 +847,16 @@ function renderRepos() {
   document.getElementById("repoTable").innerHTML =
     `<thead><tr><th>Repo</th><th style="width:104px">Synlighet</th><th style="width:110px">Språk</th>
       <th style="width:56px" class="num">★</th><th style="width:56px" class="num">PR</th>
-      <th style="width:76px" class="num">Ärenden</th><th style="width:80px">Senast</th></tr></thead>
-     <tbody>${rows.map(r => `<tr>
+      <th style="width:76px" class="num">Ärenden</th><th style="width:80px">Jira</th>
+      <th style="width:80px">Senast</th></tr></thead>
+     <tbody>${rows.map(r => `<tr data-repo="${esc(r.name)}" class="${REPO.name === r.name ? "on" : ""}">
        <td><b>${esc(r.name)}</b>${r.description ? `<div class="muted" style="font-size:11.5px;max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.description)}</div>` : ""}</td>
        <td><span class="pill">${r.isPrivate ? "▣ privat" : "▢ publikt"}</span></td>
        <td class="muted">${esc((r.primaryLanguage && r.primaryLanguage.name) || "—")}</td>
        <td class="num">${r.stargazerCount || 0}</td>
        <td class="num">${(prBy[r.name] || []).length}</td>
        <td class="num">${(issBy[r.name] || []).length}</td>
+       <td>${linkBadge(r.name)}</td>
        <td class="muted">${ago(r.updatedAt)}</td></tr>`).join("")}</tbody>`;
   const ghList = items => items.map(x => `<div class="r">${link(x.url,
       `<span class="key">${esc(x.repository.nameWithOwner || x.repository.name)}#${x.number}</span>`)}
@@ -696,6 +866,7 @@ function renderRepos() {
   document.getElementById("issMeta").textContent = g.issues.length + "";
   document.getElementById("prs").innerHTML = ghList(g.pullRequests);
   document.getElementById("issues").innerHTML = ghList(g.issues);
+  renderRepoDetail();
 }
 
 /* --------------------------------------------------------------- import ---- */
@@ -703,7 +874,7 @@ function renderRepos() {
 // ticked off what should be there. The panel sends back only *which* of the
 // proposed items to write -- never issue text of its own.
 const IMP = { files: [], plan: [], token: "", spent: false, keep: new Set(), busy: false,
-              note: "", bad: false, created: [] };
+              note: "", bad: false, created: [], project: "", projectSource: "", repo: "" };
 const projectKey = () => (board() || {}).projectKey || "SCRUM";
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const jiraMode = () => (STATE && STATE.jira.mode === "real" ? "skarpt läge" : "provläge");
@@ -722,7 +893,35 @@ const filesLabel = () => IMP.files.length
 
 // The wish box is deliberately not re-rendered: a refresh every 60 s must not eat
 // what Alex is in the middle of typing.
+// Vad projektet blir, innan något är uppladdat: ur kopplingen när repot är kopplat.
+const impTargetText = () => {
+  const name = (document.getElementById("impRepo") || {}).value || "";
+  if (!name) return "utan repo: projektet blir " + projectKey();
+  const l = linkOf(shortName(name));
+  return l ? `${l.project || projectKey()}${l.issue ? " · " + l.issue : ""} ur kopplingen`
+           : "repot är inte kopplat — projektet blir " + projectKey();
+};
+
 function renderImport() {
+  // Repot man jobbar mot: de kopplade först, sedan alla andra. Valet är det som
+  // avgör projektet -- och när ett enda repo är kopplat står det redan förvalt.
+  const sel = document.getElementById("impRepo");
+  const linked = links();
+  const all = ((STATE.github || {}).repos || []).map(r => r.name);
+  const signature = linked.map(l => l.repo).join("|") + "#" + all.length;
+  if (sel.dataset.filled !== signature) {
+    const before = sel.value;
+    const names = linked.map(l => shortName(l.repo));
+    const opt = l => `<option value="${esc(shortName(l.repo))}">${esc(l.repo)}` +
+      `${l.project ? " · " + esc(l.project) : ""}${l.issue ? " · " + esc(l.issue) : ""}</option>`;
+    sel.innerHTML = `<option value="">— inget repo —</option>` +
+      (linked.length ? `<optgroup label="kopplade till Jira">${linked.map(opt).join("")}</optgroup>` : "") +
+      `<optgroup label="alla dina repon">${all.filter(n => !names.includes(n))
+        .map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join("")}</optgroup>`;
+    sel.dataset.filled = signature;
+    sel.value = names.concat(all).includes(before) ? before : (linked.length === 1 ? names[0] : "");
+  }
+  document.getElementById("impTarget").textContent = impTargetText();
   document.getElementById("impFiles").textContent = filesLabel();
   const note = document.getElementById("impNote");
   note.className = "meta" + (IMP.note ? (IMP.bad ? " err" : "") : "");
@@ -735,7 +934,9 @@ function renderImport() {
   document.getElementById("impProposalPanel").hidden = !IMP.plan.length;
   if (IMP.plan.length) {
     document.getElementById("impProposalMeta").textContent =
-      `${IMP.plan.length} förslag · ${plural(IMP.keep.size, "ibockad", "ibockade")} · ingenting skrivet än`;
+      `${IMP.plan.length} förslag till ${IMP.project || projectKey()}` +
+      `${IMP.projectSource ? " (projektet ur " + IMP.projectSource + ")" : ""}` +
+      ` · ${plural(IMP.keep.size, "ibockad", "ibockade")} · ingenting skrivet än`;
     host.innerHTML = IMP.plan.map((item, i) => `
       <label class="impitem">
         <input type="checkbox" data-keep="${i}" ${IMP.keep.has(i) ? "checked" : ""}>
@@ -749,7 +950,7 @@ function renderImport() {
         <button class="chip" data-act="imp-none">bocka av alla</button>
         <span class="grow"></span>
         <button class="chip on" data-act="imp-apply" ${IMP.keep.size && !IMP.busy && !IMP.spent ? "" : "disabled"}>
-          Skapa ${plural(IMP.keep.size, "ärende", "ärenden")} i ${esc(projectKey())} (${jiraMode()})
+          Skapa ${plural(IMP.keep.size, "ärende", "ärenden")} i ${esc(IMP.project || projectKey())} (${jiraMode()})
         </button>
       </div>`;
   }
@@ -757,7 +958,8 @@ function renderImport() {
   const done = document.getElementById("impDonePanel");
   done.hidden = !IMP.created.length;
   if (IMP.created.length) {
-    document.getElementById("impDoneMeta").textContent = IMP.created.length + " skrivna i " + projectKey();
+    document.getElementById("impDoneMeta").textContent =
+      IMP.created.length + " skrivna i " + (IMP.project || projectKey());
     document.getElementById("impDone").innerHTML = IMP.created.map(c => `<div class="r">` +
       link(jiraOrigin() ? `${jiraOrigin()}/browse/${c.key}` : "",
            `<span class="key">${esc(c.key || "")}</span> <span class="t">${esc(c.summary || "")}</span>`) +
@@ -774,12 +976,14 @@ async function impParse() {
     const files = [];
     for (const f of IMP.files) files.push({ name: f.name, b64: b64(await f.arrayBuffer()) });
     const r = await fetch("/api/import", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ wish, files }) });
+      body: JSON.stringify({ wish, files, repo: (document.getElementById("impRepo") || {}).value || "" }) });
     const answer = await r.json();
     if (!answer.ok) throw new Error(answer.error || "svaret gick inte att läsa");
     IMP.plan = answer.proposal || []; IMP.token = answer.token || "";
+    IMP.project = answer.project || ""; IMP.projectSource = answer.projectSource || "";
     IMP.keep = new Set(IMP.plan.map((_, i) => i));
-    IMP.note = `${IMP.plan.length} förslag ur ${IMP.files.length} dokument — bocka av det du inte vill ha`;
+    IMP.note = `${IMP.plan.length} förslag ur ${IMP.files.length} dokument till ` +
+               `${IMP.project || projectKey()} — bocka av det du inte vill ha`;
   } catch (e) {
     IMP.bad = true; IMP.note = "kunde inte tolka: " + e.message;
   } finally { IMP.busy = false; renderImport(); }
@@ -788,7 +992,7 @@ async function impParse() {
 async function impApply() {
   const keep = [...IMP.keep].sort((a, b) => a - b);
   if (!keep.length || IMP.busy || IMP.spent) return;
-  const project = projectKey();
+  const project = IMP.project || projectKey();
   if (!window.confirm(`Skapa ${plural(keep.length, "ärende", "ärenden")} i ${project} (${jiraMode()})?`)) return;
   IMP.busy = true; IMP.note = `skriver ${keep.length} ärenden i ${project} …`; renderImport();
   try {
@@ -894,6 +1098,8 @@ document.addEventListener("click", e => {
   if (e.target.closest('[data-act="refresh"]')) return load(true);
   if (e.target.closest('[data-act="imp-parse"]')) return impParse();
   if (e.target.closest('[data-act="imp-apply"]')) return impApply();
+  if (e.target.closest('[data-act="link-save"]')) return linkSave(false);
+  if (e.target.closest('[data-act="link-rm"]')) return linkSave(true);
   if (e.target.closest('[data-act="imp-all"]')) { IMP.keep = new Set(IMP.plan.map((_, i) => i)); return renderImport(); }
   if (e.target.closest('[data-act="imp-none"]')) { IMP.keep = new Set(); return renderImport(); }
   if (e.target.closest('[data-act="splash-retry"]')) {
@@ -910,6 +1116,8 @@ document.addEventListener("click", e => {
     else F.prio.add(v);
     writeHash(); return render();
   }
+  const repo = e.target.closest("[data-repo]");
+  if (repo) return repoOpen(repo.dataset.repo);
   const t = e.target.closest("[data-v]"); if (!t) return;
   e.preventDefault(); show(t.dataset.v);
 });
@@ -929,6 +1137,9 @@ themeBtn.addEventListener("click", () => {
   visaIkon();
 });
 visaIkon();
+document.getElementById("impRepo").addEventListener("change", () => {
+  document.getElementById("impTarget").textContent = impTargetText();
+});
 document.getElementById("impFiles").addEventListener("change", e => {
   IMP.files = [...e.target.files]; IMP.note = ""; renderImport();
 });

@@ -76,6 +76,13 @@ BRIDGE_DIR = Path(
     os.environ.get("JIRA_BRIDGE_DIR", str(Path.home() / ".config/omarchy/plugins/custom.jira/bin"))
 )
 CONFIG_FILE = Path.home() / ".config/jira-flow/config.json"
+# Repots Jira-koppling. Ingen hemlighet (ingen token), men den hör i samma stängda
+# katalog: den säger vilket projekt och vilket ärende ett repo hör till, och den ska
+# överleva att plugin-katalogen klonas om.
+LINKS_FILE = Path.home() / ".config/jira-flow/links.json"
+# Var en lokal kopia brukar ligga när länken ska ge kodkontext. Sista posten är
+# hubben själv, som ligger i sin plugin-katalog och inte under någon projektmapp.
+LOCAL_ROOTS = ("~/Projects", "~/Work", "~/Documents", str(SELF.parent.parent))
 LOG_FILE = Path.home() / ".local/state/jira-flow/actions.log"
 DEFAULT_PROJECT = os.environ.get("JIRA_FLOW_PROJECT", "SCRUM")
 DEFAULT_STATUS = os.environ.get("JIRA_FLOW_STATUS", "In Progress")
@@ -103,6 +110,7 @@ DOC_CHARS = 6000        # per dokument
 TOTAL_CHARS = 20000     # alla dokument tillsammans
 MAX_FILES = 20          # filer ur en mapp, fler än så är inte ett önskemål
 COMMITS = 30            # rader ur git-historiken
+REPO_ROWS = 10          # öppna PR:er, ärenden och commits i repo-detaljen
 URL_BYTES = 20 * 1024 * 1024   # ett underlag från nätet, inte en film
 URL_UA = "GodJIRA/1.0 (jira_flow; +https://github.com/alexwest1981/GodJIRA)"
 
@@ -287,15 +295,33 @@ def git_out(root, *argv, timeout=30) -> str:
     return done.stdout.strip() if done.returncode == 0 else ""
 
 
-def gh_open(root, what: str, limit: int = 10):
-    """Öppna PR:er eller ärenden ur gh. Kastar om gh inte svarar."""
-    done = subprocess.run(["gh", what, "list", "--state", "open", "--limit", str(limit),
-                           "--json", "number,title,updatedAt"],
-                          cwd=str(root), capture_output=True, text=True, timeout=60)
+def gh_json(*argv, root=None, timeout=60):
+    """Kör gh och läs svaret som JSON. Kastar gh:s egen sista rad, inte en traceback."""
+    done = subprocess.run(["gh"] + [str(a) for a in argv], cwd=str(root) if root else None,
+                          capture_output=True, text=True, timeout=timeout)
     if done.returncode != 0:
         lines = [l for l in (done.stderr or "gh failed").strip().splitlines() if l.strip()]
         raise RuntimeError(lines[-1][:200] if lines else "gh failed")
-    return json.loads(done.stdout or "[]")
+    text = (done.stdout or "").strip()
+    return json.loads(text) if text else None
+
+
+def gh_soft(*argv, root=None, timeout=60):
+    """Samma anrop, men ett fel blir en anteckning i stället för ett avbrott.
+
+    Ett repo utan ärenden, en avstängd issue-flik eller en gh som inte svarar ska
+    visa resten av repot -- inte ingenting.
+    """
+    try:
+        return gh_json(*argv, root=root, timeout=timeout), ""
+    except (RuntimeError, ValueError) as exc:
+        return None, str(exc)
+
+
+def gh_open(root, what: str, limit: int = 10):
+    """Öppna PR:er eller ärenden i den här kopian, ur gh."""
+    return gh_json(what, "list", "--state", "open", "--limit", str(limit),
+                   "--json", "number,title,updatedAt", root=root) or []
 
 
 def repo_context(raw) -> tuple:
@@ -339,12 +365,149 @@ def repo_context(raw) -> tuple:
     return "\n".join(lines), info
 
 
-def build_context(docs_text: str, repo_text: str, notes) -> str:
+# ------------------------------------------------- repot och dess Jira-sida
+
+def repo_slug(raw: str) -> str:
+    """owner/name ur en git-fjärr, eller det namn som gavs.
+
+    Tar https://github.com/owner/name.git, git@github.com:owner/name.git och ett
+    naket namn (som blir namnet utan ägare -- en användare här har en ägare, och
+    den slås upp ur gh när den behövs).
+    """
+    text = (raw or "").strip()
+    hit = re.search(r"github\.com[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?$", text)
+    if hit:
+        return "{}/{}".format(hit.group(1), hit.group(2))
+    tail = text.rstrip("/")
+    return tail[:-4] if tail.endswith(".git") else tail
+
+
+def repo_slug_of_dir(root) -> str:
+    """Repots namn på GitHub, ur den lokala kopians fjärr."""
+    return repo_slug(git_out(root, "remote", "get-url", "origin"))
+
+
+def local_clone(name: str) -> str:
+    """Var en lokal kopia ligger, om det finns en.
+
+    Ett namn, inte en sökning i hela hemmet: katalogerna i LOCAL_ROOTS, och fjärren
+    jämförs -- en katalog som heter samma sak men pekar någon annanstans räknas inte.
+    """
+    slug = repo_slug(name).lower()
+    short = slug.split("/")[-1]
+    if not short:
+        return ""
+    for raw_root in LOCAL_ROOTS:
+        root = Path(raw_root).expanduser()
+        if not root.is_dir():
+            continue
+        seen = {}
+        # Roten själv först: en kopia behöver inte heta samma som repot (hubben ligger
+        # i sin plugin-katalog, custom.jira). Sedan kataloger som *heter* något av namnet.
+        for hit in [root] + list(root.glob(short)) + list(root.glob("*" + short)) + list(root.glob(short + "*")):
+            seen[str(hit)] = hit
+        for hit in seen.values():
+            if not (hit / ".git").is_dir():
+                continue
+            remote = repo_slug_of_dir(hit).lower()
+            # Ett naket namn har ingen ägare att jämföra med, så kortnamnet får räcka
+            # (mätt: "GodJIRA" gav ingen träff mot "alexwest1981/GodJIRA").
+            if remote == slug or (("/" not in slug) and remote.split("/")[-1] == short):
+                return str(hit)
+    return ""
+
+
+def load_links() -> dict:
+    if not LINKS_FILE.exists():
+        return {}
+    try:
+        data = json.loads(LINKS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_links(data: dict) -> None:
+    """Skriv länkarna. Katalogen är samma som token bor i, alltså 0700/0600."""
+    LINKS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    LINKS_FILE.parent.chmod(0o700)
+    with LINKS_FILE.open("w", newline="\n") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=2, sort_keys=True)
+        fh.write("\n")
+    LINKS_FILE.chmod(0o600)
+
+
+def link_for(name: str) -> dict:
+    """Länken för ett repo: "owner/name" först, sedan ett naket namn."""
+    slug = repo_slug(name).lower()
+    if not slug:
+        return {}
+    links = load_links()
+    for key, value in links.items():
+        if str(key).lower() == slug:
+            return dict(value or {}, repo=key)
+    short = slug.split("/")[-1]
+    for key, value in links.items():
+        if str(key).lower().split("/")[-1] == short:
+            return dict(value or {}, repo=key)
+    return {}
+
+
+def link_project(args, repo_dir: str = "") -> tuple:
+    """(projekt, varifrån) -- flaggan vinner, sedan länken, sedan standarden.
+
+    Det här är hela poängen med kopplingen: den som jobbar mot ett repo ska inte
+    behöva komma ihåg projektnyckeln, och panelen ska kunna säga var den kom ifrån.
+    """
+    if (getattr(args, "project", "") or "").strip():
+        return args.project.strip(), "flaggan"
+    candidates = [(repo_slug_of_dir(repo_dir) if repo_dir else "", "--repo"),
+                  (getattr(args, "repo_name", "") or "", "länken")]
+    for name, source in candidates:
+        link = link_for(name) if name else {}
+        if link.get("project"):
+            return link["project"], "{} ({})".format(source, link.get("repo") or name)
+    return DEFAULT_PROJECT, "standarden"
+
+
+def plan_repo_dir(args) -> str:
+    """Katalogen önskemålet gäller: --repo, annars den lokala kopian av länken."""
+    given = (getattr(args, "repo", "") or "").strip()
+    if given:
+        return given
+    name = (getattr(args, "repo_name", "") or "").strip()
+    return local_clone(name) if name else ""
+
+
+def link_context(client_, args) -> str:
+    """Jira-sidan av länken, som text till agenten. Tom när inget är länkat."""
+    link = link_for(getattr(args, "repo_name", "") or repo_slug_of_dir(getattr(args, "repo", "") or ""))
+    if not link:
+        return ""
+    parts = ["repo {} is linked to Jira project {}{}.".format(
+        link.get("repo"), link.get("project") or "?",
+        " — " + str(link["note"]).strip() if link.get("note") else "")]
+    key = str(link.get("issue") or "").strip()
+    if key:
+        parts.append("the work in hand is {}.".format(key))
+        try:
+            issue = client_.get("/rest/api/3/issue/{}?fields=summary,status".format(key)) or {}
+            fields = issue.get("fields") or {}
+            parts.append("{}: {} ({}).".format(key, (fields.get("summary") or "").strip(),
+                                               ((fields.get("status") or {}).get("name") or "")))
+        except Exception as exc:  # noqa: BLE001 -- en nyckel som inte går att läsa stoppar inte planen
+            parts.append("({} could not be read: {})".format(key, exc if str(exc) else type(exc).__name__))
+    return "\n".join(parts) + "\n"
+
+
+def build_context(docs_text: str, repo_text: str, notes, link_text: str = "") -> str:
     """Kontextblocket i prompten. Tomt när inget underlag gavs."""
-    if not (docs_text or repo_text):
+    if not (docs_text or repo_text or link_text):
         return ""
     parts = ["Context for the project as it stands — read it before you split the wish:",
              "build on what is already there, and let each description say what it rests on."]
+    if link_text:
+        parts += ["", "The Jira side the repo is tied to:", "", link_text]
     if docs_text:
         parts += ["", "Papers handed in with the wish:", "", docs_text]
     if repo_text:
@@ -930,20 +1093,26 @@ def cmd_plan(client_, args) -> int:
         say(args, {"ok": False, "error": message}, ["jira_flow: " + message])
         return 2
 
+    # Projektet och repot avgörs här, en gång: --project vinner, annars länken för
+    # repot (--repo, --repo-name eller den lokala kopian av ett länkat repo), annars
+    # standarden. Panelen skickar bara repot och får tillbaka var nyckeln kom ifrån.
+    repo_dir = plan_repo_dir(args)
+    project, project_source = link_project(args, repo_dir)
+
     docs_text, docs_notes, repo_text, repo_info = "", [], "", {}
     if not approved:
         try:
             docs_text, docs_notes = read_context(getattr(args, "context", []) or [])
-            if getattr(args, "repo", ""):
-                repo_text, repo_info = repo_context(args.repo)
+            if repo_dir:
+                repo_text, repo_info = repo_context(repo_dir)
                 if repo_info.get("error"):
-                    raise RuntimeError("--repo {}: {}".format(args.repo, repo_info["error"]))
+                    raise RuntimeError("--repo {}: {}".format(repo_dir, repo_info["error"]))
         except (RuntimeError, OSError) as exc:
             message = "the papers could not be read: {}".format(exc)
             say(args, {"ok": False, "error": message}, ["jira_flow: " + message])
             return 2
 
-    board = client_.board(args.project)
+    board = client_.board(project)
     if approved:
         # Samma kontroll som agentens svar går igenom: en lista någon har redigerat i
         # är inte mer pålitlig än en modell, och en halv lista ska bli noll ärenden.
@@ -956,9 +1125,10 @@ def cmd_plan(client_, args) -> int:
             return 2
     else:
         # Agenten får hela underlaget: önskemålet, dokumenten och repot.
-        prompt = PLAN_PROMPT.format(project=args.project, limit=PLAN_MAX,
-                                    types=", ".join(client_.types(args.project)) or "Story, Task, Bug",
-                                    context=build_context(docs_text, repo_text, docs_notes),
+        prompt = PLAN_PROMPT.format(project=project, limit=PLAN_MAX,
+                                    types=", ".join(client_.types(project)) or "Story, Task, Bug",
+                                    context=build_context(docs_text, repo_text, docs_notes,
+                                                          link_context(client_, args)),
                                     wish=wish.strip())
         answered_by, answer, items = ["(no agent answered)"], "", []
         try:
@@ -991,7 +1161,7 @@ def cmd_plan(client_, args) -> int:
         # Med --create kommer ett enda dokument, längst ner, med både förslaget och
         # nycklarna: en maskinläsare ska inte behöva tolka två JSON-dokument i rad.
         print(json.dumps({"ok": True, "created": False, "proposal": items,
-                          "project": args.project, "agent": answered_by,
+                          "project": project, "projectSource": project_source, "agent": answered_by,
                           "context": context_note}, ensure_ascii=False))
     elif not args.json:
         if docs_notes or repo_info:
@@ -1003,7 +1173,8 @@ def cmd_plan(client_, args) -> int:
                 print("  {}{}{}".format(note["path"], "" if not note.get("error") else " — " + note["error"],
                                         " [{} of {} chars]".format(note["chars"], note["documentChars"])
                                         if note.get("truncated") else ""))
-        print("{} issue(s) proposed for {} ({}):".format(len(items), args.project, answered_by[0]))
+        print("{} issue(s) proposed for {} ({}):".format(len(items), project, answered_by[0]))
+        print("  project from: {}".format(project_source))
         for number, item in enumerate(items, 1):
             print("  {}. [{}] {}  ({})".format(number, item["type"], item["summary"],
                                                item["priority"] or "no priority"))
@@ -1033,8 +1204,159 @@ def cmd_plan(client_, args) -> int:
             print("created: {}  {}".format(key or "(no key back)", item["summary"]))
     for entry in created:
         client_.log("flow-plan", entry["key"], entry["summary"][:80])
-    say(args, {"ok": True, "created": created, "proposal": items, "project": args.project,
+    say(args, {"ok": True, "created": created, "proposal": items, "project": project,
+               "projectSource": project_source,
                "agent": answered_by, "context": context_note}, [])
+    return 0
+
+
+def cmd_link(args) -> int:
+    """Repots Jira-koppling: visa, sätt eller ta bort.
+
+    Länken är det som gör att ett önskemål hamnar i rätt projekt utan att någon
+    skriver projektnyckeln: panelens import skickar repot, och CLI:t slår upp resten.
+    """
+    action = (args.action or "list").lower()
+    links = load_links()
+    if action == "list":
+        rows = [dict(value or {}, repo=key) for key, value in sorted(links.items())]
+        say(args, {"ok": True, "links": rows},
+            ["{} link(s){}".format(len(rows), ":" if rows else "")] +
+            ["  {} -> {}{}{}".format(row["repo"], row.get("project") or "?",
+                                     " ({})".format(row["issue"]) if row.get("issue") else "",
+                                     " — " + str(row["note"]) if row.get("note") else "") for row in rows])
+        return 0
+
+    name = repo_slug(args.repo or "")
+    if not name:
+        message = "which repo? (a name, or owner/name)"
+        say(args, {"ok": False, "error": message}, ["jira_flow: " + message])
+        return 2
+
+    if action == "rm":
+        # Ta bort både den exakta nyckeln och ett naket namn som pekar på samma repo.
+        gone = [key for key in links if key.lower() == name.lower()] or (
+            [str(link_for(name).get("repo") or "")] if link_for(name) else [])
+        gone = [key for key in gone if key]
+        if not gone:
+            message = "{} is not linked".format(name)
+            say(args, {"ok": False, "error": message}, ["jira_flow: " + message])
+            return 1
+        for key in gone:
+            links.pop(key, None)
+        save_links(links)
+        say(args, {"ok": True, "removed": gone}, ["unlinked: " + ", ".join(gone)])
+        return 0
+
+    project = (getattr(args, "project", "") or "").strip()
+    if not project:
+        message = "which Jira project? (--project KEY)"
+        say(args, {"ok": False, "error": message}, ["jira_flow: " + message])
+        return 2
+    entry = {"project": project.upper(),
+             "issue": (getattr(args, "issue", "") or "").strip().upper(),
+             "note": (getattr(args, "note", "") or "").strip(),
+             "at": time.strftime("%Y-%m-%dT%H:%M:%S")}
+    links[name] = {key: value for key, value in entry.items() if value}
+    save_links(links)
+    say(args, {"ok": True, "link": dict(links[name], repo=name)},
+        ["{} -> {}{}{}".format(name, entry["project"],
+                               " ({})".format(entry["issue"]) if entry["issue"] else "",
+                               " — " + entry["note"] if entry["note"] else "")])
+    return 0
+
+
+def cmd_repo(args) -> int:
+    """Ett repo: vad det är, vad som är öppet, var kopian ligger, och Jira-länken.
+
+    Ren läsning via gh (inget Jira, inget skrivs), så panelen kan visa den även när
+    token är trasig -- och det är den enda vägen till detaljen, ingen egen kopia i
+    frontend.
+    """
+    name = repo_slug(args.name or "")
+    if not name:
+        message = "which repo? (a name, or owner/name)"
+        say(args, {"ok": False, "error": message}, ["jira_flow: " + message])
+        return 2
+    try:
+        if "/" not in name:
+            owner = ((gh_json("api", "user") or {}).get("login") or "").strip()
+            if not owner:
+                raise RuntimeError("gh could not say who is logged in")
+            name = "{}/{}".format(owner, name)
+        about = gh_json("repo", "view", name, "--json",
+                        "name,owner,description,visibility,isPrivate,isArchived,primaryLanguage,"
+                        "stargazerCount,forkCount,defaultBranchRef,updatedAt,pushedAt,url,"
+                        "licenseInfo,hasIssuesEnabled") or {}
+    except (RuntimeError, ValueError) as exc:
+        message = "{}: {}".format(name, exc)
+        say(args, {"ok": False, "error": message}, ["jira_flow: " + message])
+        return 2
+
+    notes = []
+    prs, err = gh_soft("pr", "list", "--repo", name, "--state", "open", "--limit", str(REPO_ROWS),
+                       "--json", "number,title,isDraft,updatedAt,url,headRefName")
+    if err:
+        notes.append("pull requests: " + err)
+    issues, err = gh_soft("issue", "list", "--repo", name, "--state", "open", "--limit", str(REPO_ROWS),
+                          "--json", "number,title,updatedAt,url")
+    if err:
+        notes.append("issues: " + err)
+    raw_commits, err = gh_soft("api", "repos/{}/commits?per_page={}".format(name, REPO_ROWS))
+    if err:
+        notes.append("commits: " + err)
+    commits = [{"sha": (row.get("sha") or "")[:7],
+                "date": (((row.get("commit") or {}).get("author") or {}).get("date") or "")[:10],
+                "summary": (((row.get("commit") or {}).get("message") or "").splitlines() or [""])[0][:120]}
+               for row in (raw_commits or []) if isinstance(row, dict)]
+    link = link_for(name)
+    local = local_clone(name)
+    payload = {
+        "ok": True, "repo": (about.get("nameWithOwner") or name), "about": {
+            "name": about.get("name"), "owner": ((about.get("owner") or {}).get("login") or ""),
+            "description": about.get("description") or "",
+            "visibility": about.get("visibility") or "",
+            "isPrivate": bool(about.get("isPrivate")), "isArchived": bool(about.get("isArchived")),
+            "language": ((about.get("primaryLanguage") or {}).get("name") or ""),
+            "stars": about.get("stargazerCount"), "forks": about.get("forkCount"),
+            "branch": ((about.get("defaultBranchRef") or {}).get("name") or ""),
+            "pushedAt": about.get("pushedAt"), "updatedAt": about.get("updatedAt"),
+            "url": about.get("url") or "https://github.com/" + name,
+            "license": ((about.get("licenseInfo") or {}).get("spdxId") or ""),
+            "hasIssues": bool(about.get("hasIssuesEnabled")),
+        },
+        "openPRs": prs or [], "openIssues": issues or [], "commits": commits,
+        "link": link, "local": local, "notes": notes,
+    }
+    if not args.json:
+        a = payload["about"]
+        print("{}  ({}, {}{}{})".format(payload["repo"], a["visibility"].lower() or "?",
+                                        a["language"] or "no language",
+                                        ", ★{}".format(a["stars"]) if a["stars"] else "",
+                                        ", arkiverat" if a["isArchived"] else ""))
+        if a["description"]:
+            print("  " + a["description"])
+        print("  {}  ·  standardgren {}".format(a["url"], a["branch"] or "?"))
+        if link.get("project"):
+            print("  Jira: projekt {}{}".format(
+                link["project"], " · " + link["issue"] if link.get("issue") else ""))
+        else:
+            print("  Jira: inte länkat än")
+        print("  lokal kopia: " + (local or "ingen hittad"))
+        print("  öppna PR:er: {}".format(len(payload["openPRs"])))
+        for row in payload["openPRs"]:
+            print("    #{} {}{}".format(row.get("number"), row.get("title") or "",
+                                        " (utkast)" if row.get("isDraft") else ""))
+        print("  öppna ärenden: {}".format(len(payload["openIssues"])))
+        for row in payload["openIssues"]:
+            print("    #{} {}".format(row.get("number"), row.get("title") or ""))
+        print("  senaste commitarna:")
+        for row in commits:
+            print("    {}  {}  {}".format(row["sha"], row["date"], row["summary"]))
+        for note in notes:
+            print("  ! " + note)
+    else:
+        print(json.dumps(payload, ensure_ascii=False))
     return 0
 
 
@@ -1357,6 +1679,60 @@ def selftest() -> int:
     for filler in ("{project}", "{wish}", "{limit}", "{context}", "{types}"):
         assert filler not in prompt, "ofylld platshållare: " + filler
     checks += 1
+
+    # Länken repo <-> Jira: namnet ur fjärren, uppslagningen, och vems projekt som vinner.
+    assert repo_slug("https://github.com/alexwest1981/GodJIRA.git") == "alexwest1981/GodJIRA"
+    assert repo_slug("git@github.com:alexwest1981/HellCrawlers.git") == "alexwest1981/HellCrawlers"
+    assert repo_slug("alexwest1981/GodJIRA/") == "alexwest1981/GodJIRA"
+    assert repo_slug("GodJIRA") == "GodJIRA" and repo_slug("") == ""
+    checks += 1
+    global LINKS_FILE
+    kept_file = LINKS_FILE
+    # Ingen tempfile här: funktionen importerar tempfile längre ner, och ett namn som
+    # binds senare är lokal i hela kroppen (mätt: UnboundLocalError).
+    scratch = Path(os.environ.get("TMPDIR") or "/tmp") / "jira-flow-links-selftest"
+    shutil.rmtree(scratch, ignore_errors=True)
+    scratch.mkdir(parents=True, exist_ok=True)
+    LINKS_FILE = scratch / "links.json"
+    try:
+        import contextlib
+        quiet = contextlib.redirect_stdout(io.StringIO())
+        assert link_for("GodJIRA") == {}, "ett tomt register ger ingen länk"
+        with quiet:
+            code = cmd_link(argparse.Namespace(action="set", repo="GodJIRA", project="scrum",
+                                              issue="scrum-133", note="hubben", json=True))
+        assert code == 0, code
+        assert (LINKS_FILE.stat().st_mode & 0o777) == 0o600, "länkregistret ska vara 0600"
+        assert link_for("GodJIRA")["project"] == "SCRUM", "naket namn hittar owner/name"
+        assert link_for("godjira")["issue"] == "SCRUM-133", "skiftläget spelar ingen roll"
+        assert link_for("annat-repo") == {}, "ett oreponterat namn ger ingenting"
+        checks += 1
+        # --project vinner, sedan länken (--repo eller --repo-name), sedan standarden.
+        assert link_project(argparse.Namespace(project="", repo="", repo_name="GodJIRA")) == \
+            ("SCRUM", "länken (GodJIRA)"), "länken ger projektet"
+        assert link_project(argparse.Namespace(project="OTHER", repo="", repo_name="GodJIRA"))[0] == "OTHER", \
+            "flaggan vinner över länken"
+        assert link_project(argparse.Namespace(project="", repo="", repo_name="okänt"))[0] == DEFAULT_PROJECT
+        assert plan_repo_dir(argparse.Namespace(repo="/tmp/nagonstans", repo_name="GodJIRA")) == "/tmp/nagonstans", \
+            "--repo går före den lokala kopian"
+        assert plan_repo_dir(argparse.Namespace(repo="", repo_name="")) == "", "utan repo ingen katalog"
+        checks += 1
+        # Ett oreponterat avbrott är ett svar, inte en krasch: 1 betyder "fanns inte".
+        with quiet:
+            assert cmd_link(argparse.Namespace(action="rm", repo="aldrig-lankad", project="",
+                                               issue="", note="", json=True)) == 1
+            assert cmd_link(argparse.Namespace(action="set", repo="HellCrawlers", project="hel",
+                                               issue="", note="", json=True)) == 0
+        assert link_for("HellCrawlers")["project"] == "HEL", "projektnyckeln skrivs i versaler"
+        with quiet:
+            assert cmd_link(argparse.Namespace(action="rm", repo="hellcrawlers", project="",
+                                               issue="", note="", json=True)) == 0
+        assert link_for("HellCrawlers") == {}, "borttagningen tar med skiftläget"
+        assert json.loads(LINKS_FILE.read_text())["GodJIRA"]["issue"] == "SCRUM-133", "resten står kvar"
+        checks += 1
+    finally:
+        LINKS_FILE = kept_file
+        shutil.rmtree(scratch, ignore_errors=True)
 
     # Underlaget: dokument läses, klipps med besked, och skräp nekas.
     import http.server
@@ -1699,17 +2075,31 @@ def build_parser() -> argparse.ArgumentParser:
     p_agent.add_argument("action", nargs="?", default="list",
                          choices=["list", "add", "set", "rm"])
     p_agent.add_argument("commands", nargs="*")
+    p_link = sub.add_parser("link", help="which Jira project and issue a repo belongs to")
+    p_link.add_argument("action", nargs="?", default="list", choices=["list", "set", "rm"])
+    p_link.add_argument("repo", nargs="?", help="the repo: owner/name, or a name")
+    p_link.add_argument("--project", default="", help="the Jira project key")
+    p_link.add_argument("--issue", default="", help="the issue you are working against (SCRUM-133)")
+    p_link.add_argument("--note", default="", help="a line for the humans")
+    p_link.add_argument("--json", action="store_true")
+    p_repo = sub.add_parser("repo", help="one repo: what it is, what is open, and its link")
+    p_repo.add_argument("name", nargs="?", help="owner/name, or a name")
+    p_repo.add_argument("--json", action="store_true")
     p_plan = sub.add_parser("plan", help="customer wish in, issue proposal out")
     p_plan.add_argument("--file", default="", help="read the wish from a file (default: stdin)")
     p_plan.add_argument("--text", default="", help="the wish as one argument (the panel sends it this way)")
     p_plan.add_argument("--create", action="store_true",
                         help="write exactly the proposed list (default: write nothing)")
     p_plan.add_argument("--json", action="store_true", help="machine-readable result")
-    p_plan.add_argument("--project", default=DEFAULT_PROJECT)
+    p_plan.add_argument("--project", default="",
+                        help="override the project; default comes from the repo's link")
     p_plan.add_argument("--context", action="append", default=[], metavar="PATH",
                         help="papers the wish came with: a file or a folder (repeatable)")
     p_plan.add_argument("--repo", default="", metavar="DIR",
                         help="the project's repo: branch, recent commits, open PRs/issues")
+    p_plan.add_argument("--repo-name", default="", metavar="OWNER/NAME",
+                        help="a GitHub repo instead of a path: its link picks project, "
+                             "issue and local copy")
     p_plan.add_argument("--proposal", default="", metavar="PATH",
                         help="an already-approved list of issues: skips the agent (the panel sends this)")
     p_ins.add_argument("repo", nargs="?", help="repository root (default: here)")
@@ -1735,6 +2125,10 @@ def main(argv) -> int:
         return cmd_agent(args)
     if args.cmd == "pick":
         return cmd_pick(args)
+    if args.cmd == "link":
+        return cmd_link(args)
+    if args.cmd == "repo":
+        return cmd_repo(args)
     jira = client()
     try:
         if args.cmd == "plan":

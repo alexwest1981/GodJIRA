@@ -27,6 +27,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parent.parent
 SEAM = ROOT / "n8n" / "bin" / "flow-call.sh"
@@ -152,11 +153,73 @@ def journal(limit: int = 20) -> dict:
 
 
 
+def links_state() -> dict:
+    """Vilket repo som hör till vilket Jira-projekt. Registret bor i CLI:t."""
+    env = seam("flow", "link", "--json", timeout=60)
+    data = env.get("payload") or {}
+    links = data.get("links")
+    if env.get("exitCode") != 0 or not isinstance(links, list):
+        return {"ok": False, "links": [], "error": data.get("error") or first_line(env)}
+    return {"ok": True, "links": links, "error": None}
+
+
+def repo_detail(name: str) -> dict:
+    """Ett repo: vad det är, vad som är öppet, lokala kopian och Jira-länken.
+
+    Ingen egen åsikt här: svaret är `jira_flow repo --json`, samma kommando en
+    människa kör i terminalen -- och därför kan panelen visa repot även när Jira
+    inte svarar (kommandot rör aldrig Jira).
+    """
+    if not re.fullmatch(r"[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)?", (name or "").strip()):
+        return {"ok": False, "error": "repot såg inte ut som ett namn"}
+    env = seam("flow", "repo", name.strip(), "--json", timeout=180)
+    data = env.get("payload") or {}
+    if env.get("exitCode") != 0 or not isinstance(data, dict) or not data.get("ok"):
+        return {"ok": False, "repo": name, "error": data.get("error") or first_line(env)}
+    return data
+
+
+def link_set(payload: dict) -> tuple[int, dict]:
+    """Koppla ett repo till ett Jira-projekt, och till ärendet man jobbar mot.
+
+    Länken är det som gör att ett uppladdat önskemål hamnar rätt: importen skickar
+    repot, projektet kommer ur länken. Projectnyckeln kan aldrig skrivas av klienten
+    utan att se ut som en nyckel.
+    """
+    repo = str(payload.get("repo") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)?", repo):
+        return 400, {"ok": False, "error": "repot såg inte ut som ett namn"}
+    if payload.get("rm"):
+        env = seam("flow", "link", "rm", repo, "--json", timeout=60)
+    else:
+        project = str(payload.get("project") or "").strip().upper()
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]{1,9}", project):
+            return 400, {"ok": False, "error": "projektnyckeln såg inte ut som en nyckel"}
+        args = ["flow", "link", "set", repo, "--project", project, "--json"]
+        issue = str(payload.get("issue") or "").strip().upper()
+        if issue:
+            if not re.fullmatch(r"[A-Z][A-Z0-9_]{1,9}-\d+", issue):
+                return 400, {"ok": False, "error": "ärendenyckeln såg inte ut som SCRUM-123"}
+            args += ["--issue", issue]
+        note = " ".join(str(payload.get("note") or "").split())[:200]
+        if note:
+            args += ["--note", note]
+        env = seam(*args, timeout=60)
+    data = env.get("payload") or {}
+    if env.get("exitCode") != 0 or not data.get("ok"):
+        return 200, {"ok": False, "error": data.get("error") or first_line(env)}
+    with _lock:
+        _cache.clear()      # länken ändrar vad nästa läsning ska säga
+    return 200, {"ok": True, "repo": repo, "link": data.get("link") or {},
+                 "removed": data.get("removed") or []}
+
+
 def state() -> dict:
     return dict(cached("state", lambda: {
         "generatedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "jira": jira_state(),
         "github": github_state(),
+        "links": links_state(),
         "flow": flow_state(),
         "journal": journal(10),
     }))
@@ -165,6 +228,9 @@ def state() -> dict:
 def import_parse(payload: dict) -> tuple[int, dict]:
     """A wish plus the papers it came with -> an issue proposal. Writes nothing."""
     wish = (payload.get("wish") or "").strip() or DEFAULT_WISH
+    repo = str(payload.get("repo") or "").strip()
+    if repo and not re.fullmatch(r"[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)?", repo):
+        return 400, {"ok": False, "error": "repot såg inte ut som ett namn"}
     files = payload.get("files")
     if not isinstance(files, list) or not files:
         return 400, {"ok": False, "error": "inga dokument bifogades"}
@@ -193,7 +259,13 @@ def import_parse(payload: dict) -> tuple[int, dict]:
             path.write_bytes(raw)
             paths.append(path)
 
-        args = ["flow", "plan", "--text", wish, "--json", "--project", PROJECT]
+        args = ["flow", "plan", "--text", wish, "--json"]
+        if repo:
+            # Repot i stället för projektnyckeln: CLI:t slår upp länken och tar med
+            # både projektet, ärendet man jobbar mot och den lokala kopian.
+            args += ["--repo-name", repo]
+        else:
+            args += ["--project", PROJECT]
         for path in paths:
             args += ["--context", str(path)]
         env = seam(*args, timeout=600)
@@ -201,9 +273,12 @@ def import_parse(payload: dict) -> tuple[int, dict]:
         if env.get("exitCode") != 0 or not isinstance(data.get("proposal"), list) or not data["proposal"]:
             return 200, {"ok": False, "error": data.get("error") or first_line(env)}
         token = secrets.token_urlsafe(9)
-        _imports[token] = {"proposal": data["proposal"], "at": time.time()}
-        return 200, {"ok": True, "token": token, "proposal": data["proposal"], "project": PROJECT,
-                     "agent": data.get("agent"), "context": data.get("context")}
+        # Repot följer med godkännandet: skrivningen ska landa där förhandsgranskningen sa.
+        _imports[token] = {"proposal": data["proposal"], "at": time.time(), "repo": repo}
+        return 200, {"ok": True, "token": token, "proposal": data["proposal"],
+                     "project": data.get("project") or PROJECT,
+                     "projectSource": data.get("projectSource") or "",
+                     "repo": repo, "agent": data.get("agent"), "context": data.get("context")}
     finally:
         shutil.rmtree(folder, ignore_errors=True)   # the papers are not kept
 
@@ -228,8 +303,10 @@ def import_apply(payload: dict) -> tuple[int, dict]:
     path = Path(folder) / "approved.json"
     path.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
     try:
-        env = seam("flow", "plan", "--proposal", str(path), "--create", "--json",
-                   "--project", PROJECT, timeout=600)
+        repo = str(entry.get("repo") or "")
+        args = ["flow", "plan", "--proposal", str(path), "--create", "--json"]
+        args += ["--repo-name", repo] if repo else ["--project", PROJECT]
+        env = seam(*args, timeout=600)
         data = env.get("payload") or {}
         if env.get("exitCode") != 0:
             # A crash mid-list says how many were written: never a silent half board.
@@ -237,7 +314,8 @@ def import_apply(payload: dict) -> tuple[int, dict]:
                          "created": data.get("created") or []}
         with _lock:
             _cache.clear()      # the board changed: the next read must not be the old one
-        return 200, {"ok": True, "created": data.get("created") or [], "project": PROJECT}
+        return 200, {"ok": True, "created": data.get("created") or [],
+                     "project": data.get("project") or PROJECT}
     finally:
         shutil.rmtree(folder, ignore_errors=True)
 
@@ -267,6 +345,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/state":
             self._send(200, json.dumps(state(), ensure_ascii=False).encode(), "application/json; charset=utf-8")
             return
+        if path == "/api/repo":
+            query = parse_qs(urlparse(self.path).query)
+            name = (query.get("name") or [""])[0]
+            answer = cached("repo:" + name, lambda: repo_detail(name), ttl=120)
+            self._json(200, answer)   # svaret bär sitt eget ok/fel
+            return
         if path == "/api/refresh":
             with _lock:
                 _cache.clear()
@@ -281,7 +365,8 @@ class Handler(BaseHTTPRequestHandler):
         self._send(code, json.dumps(payload, ensure_ascii=False).encode(), "application/json; charset=utf-8")
 
     def do_POST(self) -> None:  # noqa: N802 -- http.server's own naming
-        handler = {"/api/import": import_parse, "/api/import/apply": import_apply}.get(self.path.split("?")[0])
+        handler = {"/api/import": import_parse, "/api/import/apply": import_apply,
+                   "/api/link": link_set}.get(self.path.split("?")[0])
         if not handler:
             self._send(404, b"not found", "text/plain")
             return
