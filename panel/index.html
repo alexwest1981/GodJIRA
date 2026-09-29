@@ -18,9 +18,9 @@
     --r: 6px;
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; }
+  html, body { margin: 0; height: 100%; overflow: hidden; }
   body {
-    background: var(--bg); color: var(--text); display: flex; min-height: 100vh;
+    background: var(--bg); color: var(--text); display: flex; height: 100vh;
     font: 13.5px/1.45 ui-sans-serif, system-ui, "Inter", "Segoe UI", Roboto, sans-serif;
   }
   .col { display: flex; flex-direction: column; }
@@ -35,7 +35,7 @@
   /* ------------------------------------------------------------ icon rail */
   .rail {
     width: 58px; flex: 0 0 58px; background: var(--rail); border-right: 1px solid var(--line);
-    align-items: center; gap: 12px; padding: 12px 0; position: sticky; top: 0; height: 100vh;
+    align-items: center; gap: 12px; padding: 12px 0; height: 100%;
   }
   .rail .mark {
     width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center;
@@ -53,7 +53,10 @@
   /* -------------------------------------------------------------- sidebar */
   .side {
     width: 248px; flex: 0 0 248px; background: var(--side); border-right: 1px solid var(--line);
-    padding: 12px 10px; gap: 3px; overflow-y: auto; position: sticky; top: 0; height: 100vh;
+    /* No scroller of its own: the sidebar is navigation and stays put. At a very
+       short window (under ~500 px) the bottom of it clips -- the fix then is to put
+       overflow-y: auto back here, not to move the nav into the main pane. */
+    padding: 12px 10px; gap: 3px; height: 100%; overflow: hidden;
   }
   .side .head { display: flex; align-items: center; gap: 8px; padding: 2px 6px 10px; }
   .side .head b { font-size: 14.5px; font-weight: 600; }
@@ -75,7 +78,7 @@
   .who { margin-top: auto; padding: 10px 8px 2px; border-top: 1px solid var(--line); font-size: 11.5px; color: var(--muted); }
 
   /* ----------------------------------------------------------------- main */
-  main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  main { flex: 1; min-width: 0; display: flex; flex-direction: column; height: 100%; overflow-y: auto; }
   header.top {
     display: flex; align-items: center; gap: 10px; padding: 10px 18px; border-bottom: 1px solid var(--line);
     background: var(--bg); position: sticky; top: 0; z-index: 5;
