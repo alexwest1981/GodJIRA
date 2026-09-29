@@ -22,6 +22,7 @@ import re
 import secrets
 import shutil
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 import tempfile
 import threading
 import time
@@ -111,13 +112,21 @@ def login() -> str:
 
 
 def github_state() -> dict:
-    who = login()
-    repos = seam("gh", "repo", "list", "--limit", "100", "--json",
-                 "name,description,visibility,isPrivate,updatedAt,primaryLanguage,stargazerCount")
-    prs = seam("gh", "search", "prs", "--owner=" + (who or "@me"), "--state=open", "--limit", "50", "--json",
-               "number,title,repository,updatedAt,isDraft,url")
-    issues = seam("gh", "search", "issues", "--owner=" + (who or "@me"), "--state=open", "--limit", "50", "--json",
-                  "number,title,repository,updatedAt,url")
+    # Fyra gh-anrop i rad tog ~4 s av panelens tio. De frågar olika saker, så de får
+    # gå samtidigt; "@me" betyder samma som inloggningsnamnet (mätt: samma svar).
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        jobs = {
+            "who": pool.submit(login),
+            # url: raden i Repon-vyn skall gå att klicka på, inte bara läsas.
+            "repos": pool.submit(seam, "gh", "repo", "list", "--limit", "100", "--json",
+                                 "name,description,visibility,isPrivate,updatedAt,primaryLanguage,stargazerCount,url"),
+            "prs": pool.submit(seam, "gh", "search", "prs", "--owner=@me", "--state=open", "--limit", "50", "--json",
+                               "number,title,repository,updatedAt,isDraft,url"),
+            "issues": pool.submit(seam, "gh", "search", "issues", "--owner=@me", "--state=open", "--limit", "50", "--json",
+                                  "number,title,repository,updatedAt,url"),
+        }
+    who = jobs["who"].result() or ""
+    repos, prs, issues = jobs["repos"].result(), jobs["prs"].result(), jobs["issues"].result()
     failed = [name for name, env in (("repos", repos), ("pull requests", prs), ("issues", issues))
               if not isinstance(env.get("payload"), list)]
     return {
@@ -289,15 +298,19 @@ def link_set(payload: dict) -> tuple[int, dict]:
 def state() -> dict:
     """En läsning: flödet räknar ut projektet, projektet läser ur registret, resten är Jira, GitHub och journalen."""
     def build() -> dict:
+        # Åtta anrop i rad tog ~10 s, och skalet stod tomt under tiden -- rälen finns
+        # först när svaret kommer, så Alex hade ingenting att klicka på. Delarna rör
+        # olika system (Jira, GitHub, flödet, registret, journalen) och får gå samtidigt.
         flow = flow_state()
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            jobs = {"jira": pool.submit(jira_state),
+                    "github": pool.submit(github_state),
+                    "project": pool.submit(project_of_the_link, flow),
+                    "automation": pool.submit(automation_state),
+                    "links": pool.submit(links_state),
+                    "journal": pool.submit(journal, 10)}
         return {"generatedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-                "jira": jira_state(),
-                "github": github_state(),
-                "flow": flow,
-                "project": project_of_the_link(flow),
-                "automation": automation_state(),
-                "links": links_state(),
-                "journal": journal(10)}
+                "flow": flow, **{name: job.result() for name, job in jobs.items()}}
     return dict(cached("state", build))
 
 

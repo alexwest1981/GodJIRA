@@ -783,13 +783,18 @@ async function repoOpen(name) {
   REPO.data = null;
   renderRepos();
   try {
-    const r = await fetch("/api/repo?name=" + encodeURIComponent(name), { cache: "no-store" });
+    const r = await fetch("/api/repo?name=" + encodeURIComponent(name),
+      { cache: "no-store", signal: AbortSignal.timeout(60000) });
     const answer = await r.json();
     if (!answer.ok) throw new Error(answer.error || "svaret gick inte att läsa");
     REPO.data = answer; REPO.note = "";
   } catch (e) {
     REPO.bad = true; REPO.note = e.message;
-  } finally { REPO.busy = false; renderRepos(); }
+  } finally {
+    REPO.busy = false; renderRepos();
+    // Detaljen ritas under listan: utan det har ser ett klick ut som ingenting.
+    document.getElementById("repoDetail").scrollIntoView({ block: "nearest" });
+  }
 }
 
 const ghRow = (url, key, title, side) => `<div class="r">${link(url, `<span class="key">${esc(key)}</span>`)} ` +
@@ -814,7 +819,9 @@ function renderRepoDetail() {
       ago(p.updatedAt))).join("") || `<div class="empty">inga öppna</div>`;
     const iss = (d.openIssues || []).map(i => ghRow(i.url, "#" + i.number, i.title, ago(i.updatedAt)))
       .join("") || `<div class="empty">inga öppna</div>`;
-    const cm = (d.commits || []).map(c => ghRow("", c.sha, c.summary, c.date)).join("")
+    // GitHub-adressen till en commit ar repots url + sha: inget nytt anrop behovs.
+    const commitUrl = c => ((a.url || "").replace(/\/$/, "") + "/commit/" + c.sha);
+    const cm = (d.commits || []).map(c => ghRow(a.url ? commitUrl(c) : "", c.sha, c.summary, c.date)).join("")
       || `<div class="empty">ingen historik</div>`;
     body.innerHTML =
       (a.description ? `<div class="t2" style="margin-bottom:10px">${esc(a.description)}</div>` : "") +
@@ -902,7 +909,7 @@ function renderRepos() {
       <th style="width:76px" class="num">Ärenden</th><th style="width:80px">Jira</th>
       <th style="width:80px">Senast</th></tr></thead>
      <tbody>${rows.map(r => `<tr data-repo="${esc(r.name)}" class="${REPO.name === r.name ? "on" : ""}">
-       <td><b>${esc(r.name)}</b>${r.description ? `<div class="muted" style="font-size:11.5px;max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.description)}</div>` : ""}</td>
+       <td>${link(r.url, `<b>${esc(r.name)}</b>`)}${r.description ? `<div class="muted" style="font-size:11.5px;max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.description)}</div>` : ""}</td>
        <td><span class="pill">${r.isPrivate ? "▣ privat" : "▢ publikt"}</span></td>
        <td class="muted">${esc((r.primaryLanguage && r.primaryLanguage.name) || "—")}</td>
        <td class="num">${r.stargazerCount || 0}</td>
@@ -1081,11 +1088,19 @@ function render() {
 async function load(refresh) {
   let next;
   try {
-    const r = await fetch(refresh ? "/api/refresh" : "/api/state", { cache: "no-store" });
+    // Tidsgransen är satt har: utan den kan skalet sta tomt i evighet medan anropet
+    // vantar, och da finns ingenting att klicka pa (matt: tva fall i webblasaren).
+    const r = await fetch(refresh ? "/api/refresh" : "/api/state",
+      { cache: "no-store", signal: AbortSignal.timeout(45000) });
     next = await r.json();
   } catch (e) {
-    document.getElementById("crumbs").innerHTML = `<span class="err">ingen kontakt med panelen på :8788</span>`;
-    return splashFail("ingen kontakt med panelen på :8788");
+    const why = (e && e.name === "TimeoutError") ? "panelen svarade inte inom 45 s"
+                                                : "ingen kontakt med panelen på :8788";
+    document.getElementById("crumbs").innerHTML = `<span class="err">${why}</span>`;
+    // Efter en lyckad lasning ar splash-fonstret borta och splashFail tiger (dess
+    // skydd). Behalle det som visas, sag det i brodsmulorna och forsok igen sjalv.
+    if (STATE) return retryLater();
+    return splashFail(why);
   }
   if (!refresh && STATE && next.generatedAt === STATE.generatedAt) return;   // same answer, leave the page alone
   STATE = next;
@@ -1104,6 +1119,13 @@ async function load(refresh) {
 // The first answer costs four CLI calls (see README: ~9 s). Say what is happening, and
 // say something different when it takes longer than usual.
 let splashDone = false, splashFailed = false;   // both stop the spinner's chatter
+// Ett misslyckat anrop nar skalet redan visar nagot: en klocka i taget, och tyst
+// aterhamtning -- annars star appen kvar med gammal data utan att saga varfor.
+let retryTimer = null;
+function retryLater() {
+  if (retryTimer) return;
+  retryTimer = setTimeout(() => { retryTimer = null; load(false); }, 10000);
+}
 function splashHide() {
   if (splashDone) return;
   splashDone = true;
