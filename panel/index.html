@@ -100,14 +100,21 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   ::-webkit-scrollbar-corner { background: transparent; }
   /* -------------------------------------------------------- repot ------ */
   /* Raden är klickbar: hela repot öppnas, inte bara namnet. */
-  #repoTable tbody tr { cursor: pointer; }
-  #repoTable tbody tr:hover { background: var(--card-hi); }
-  #repoTable tbody tr.on { background: var(--card-hi); box-shadow: inset 3px 0 0 var(--accent); }
   .badge { font-size: 9.5px; letter-spacing: .07em; text-transform: uppercase; white-space: nowrap;
            border: 1px solid var(--line-3); border-radius: 999px; padding: 1px 6px; color: var(--muted); }
   .badge.on { color: var(--accent); border-color: var(--accent); }
   .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 10px; }
   .facts .f { border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; background: var(--card); }
+  /* Långa commit-budskap skall bryta, inte trycka ihop sig med datumet intill. */
+  .r .t { min-width: 0; overflow-wrap: anywhere; }
+  .r .tside { flex: 0 0 auto; margin-left: 12px; }
+  /* [hidden] förlorade mot display:flex, så "dold" rad visades ändå (mätt: filterraden
+     stod kvar i Översikt, Importera, Automatik och Repon). Regeln skall vinna. */
+  [hidden] { display: none !important; }
+  /* Långa värden (sökvägar, reponamn) klipps på en rad med hela värdet i title --
+     bättre än att bryta mitt i ett ord. */
+  .facts .v { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  h3 .meta { white-space: normal; }
   .facts .f .l { font-size: 10px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
   .facts .f .v { font-size: 13px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; }
   .linkform { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 7px 10px; align-items: center; }
@@ -205,9 +212,19 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   .seg button.on { background: var(--card-hi); color: var(--text); }
   /* Flödesritningen: n8n:s egna nodpositioner är layouten, så rutan skrollar i
      sidled när flödet är brett i stället för att krympa texten oläslig. */
-  .graph { overflow-x: auto; }
-  .graph svg { display: block; min-width: 640px; }
+  /* Repolistan i sidofältet: 59 rader skall rymmas utan att putta ner foten. */
+  .repolist { max-height: 32vh; overflow-y: auto; }
+  .repolist .item { cursor: pointer; }
+  #repoSearch { margin: 2px 8px 4px; width: calc(100% - 16px); font-size: 12.5px; padding: 5px 8px; }
+  /* Flödesritningen: n8n:s egna nodpositioner är layouten. Rutan fyller panelen så
+     höjden inte blir tom skroll, och går att dra i (noder såväl som bakgrund). */
+  .graph svg { display: block; width: 100%; height: min(62vh, 620px); touch-action: none;
+               cursor: grab; border-radius: 10px; background: var(--card-hi); }
+  .graph svg.panning { cursor: move; }
+  .graph svg .fnode { cursor: grab; }
+  .graph svg.grabbing { cursor: grabbing; }
   .graph .empty { padding: 10px 2px; }
+  .flowtools { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
   .filters { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
   .chip {
     border: 1px solid var(--line-2); background: transparent; color: var(--text-2);
@@ -427,7 +444,6 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
     </section>
 
     <section class="view" id="v-repos">
-      <div class="tablewrap"><table id="repoTable"></table></div>
       <div class="two">
         <div class="panel">
           <h3>Repot <span class="meta" id="repoDetailMeta"></span></h3>
@@ -593,10 +609,28 @@ function renderRail() {
     `<div class="railitem ${v === view ? "on" : ""}" data-v="${v}"><span class="g">${glyph}</span>${label}</div>`).join("");
 }
 
+// Repolistan bor i sidofältet, för 59 rader i huvudrutan blev 50 m skroll innan
+// detaljen. Sökningen filtrerar raderna på plats i stället för att rita om: ett
+// fält som ritas om tappar fokus mitt i ett ord (samma skäl som önskemålsrutan).
+let repoFilter = "";
+
+function repoRows() {
+  const needle = repoFilter.trim().toLowerCase();
+  const rows = ((STATE.github || {}).repos || []).filter(r =>
+    !needle || (r.name || "").toLowerCase().includes(needle) ||
+               (r.description || "").toLowerCase().includes(needle));
+  return rows.map(r => `<div class="item ${REPO.name === r.name ? "on" : ""}" ` +
+    `data-repo="${esc(r.name)}" title="${esc(r.description || r.name)}">` +
+    `<span class="g">${r.isPrivate ? "▣" : "▢"}</span>${esc(r.name)}` +
+    `${linkOf(r.name) ? `<span class="badge on">${esc(linkOf(r.name).project || "?")}</span>` : ""}` +
+    `</div>`).join("") || `<div class="item muted">inget repo matchar</div>`;
+}
+
 function renderSide() {
+  // Står markören i sökfältet får en bakgrundsuppdatering inte röra fältet.
+  if (document.activeElement && document.activeElement.id === "repoSearch") return;
   const j = STATE.jira, g = STATE.github, b = board() || {};
   const all = boardItems().length, open = openItems().length;
-  const recent = g.repos.slice().sort((a, c) => (c.updatedAt || "").localeCompare(a.updatedAt || "")).slice(0, 7);
   const proj = (j.projects || [])[0] || {};
   document.getElementById("side").innerHTML = `
     <div class="head"><b>GodJIRA</b><span class="grow"></span>
@@ -613,7 +647,9 @@ function renderSide() {
     </div>
     <div class="sect">GitHub</div>
     <div class="item ${view === "repos" ? "on" : ""}" data-v="repos"><span class="g">⌥</span>${esc(g.login || "GitHub")}<span class="c">${g.repos.length}</span></div>
-    <div class="sub">${recent.map(r => `<div class="item" data-v="repos"><span class="g">${r.isPrivate ? "▣" : "▢"}</span>${esc(r.name)}${linkOf(r.name) ? `<span class="badge on">${esc(linkOf(r.name).project || "?")}</span>` : ""}</div>`).join("")}</div>
+    <input class="inp" id="repoSearch" placeholder="sök repo …" autocomplete="off"
+           value="${esc(repoFilter)}" aria-label="sök i repon">
+    <div class="sub repolist" id="repoList">${repoRows()}</div>
     <div class="who">${esc((j.account || {}).displayName || "")}<br>
       <span class="key">${esc((j.account || {}).email || "")}</span><br>${esc(j.mode || "")} · uppdaterad ${hhmm()}</div>`;
 }
@@ -666,6 +702,137 @@ function flowGlyphOf(type) {
   return map[type] || "▪";
 }
 
+// Ritningens egna delar: var noderna står just nu, vad man flyttat, och hur vyn är
+// panorerad/zoomad. Det sparas per flödesfil i webbläsaren -- filen i repot är
+// fortfarande sanningen om flödet, det här är bara hur man valde att titta på det.
+const FLOW = { file: "", pos: {}, base: {}, W: 250, H: 68 };
+
+function flowStore(file) {
+  const key = "godjira.flow." + file;
+  let store = null;
+  try { store = JSON.parse(localStorage.getItem(key) || "null"); } catch { store = null; }
+  store = store && typeof store === "object" ? store : {};
+  store.move = store.move && typeof store.move === "object" ? store.move : {};
+  if (!store.view) store.view = { x: 0, y: 0, s: 1 };
+  return store;
+}
+
+function flowPersist(file) {
+  if (!FLOW.stores || !FLOW.stores[file]) return;
+  try { localStorage.setItem("godjira.flow." + file, JSON.stringify(FLOW.stores[file])); } catch { /* utan lagring */ }
+}
+
+// Två rader ryms i rutan; hela namnet står i <title> och i nollställningens flöde.
+function flowWrap(name) {
+  const text = String(name || "");
+  if (text.length <= 30) return [text];
+  const cut = text.lastIndexOf(" ", 30);
+  const head = cut > 6 ? text.slice(0, cut) : text.slice(0, 30);
+  return [head, text.slice(head.length).trim().slice(0, 32)];
+}
+
+// Körordningen ur vägarna, inte ur positionerna: filens nodpositioner står kvar i ett
+// gammalt mönster (tre steg i samma kolumn) medan kedjan går Config -> steg 1 -> 2 -> 3.
+function flowOrder(flow) {
+  const order = {};
+  const queue = flow.nodes.filter(n => !(flow.edges || []).some(e => e.to === (n.key || n.name)))
+    .map(n => [n.key || n.name, 1]);
+  while (queue.length) {
+    const [key, step] = queue.shift();
+    if (order[key]) continue;
+    order[key] = step;
+    (flow.edges || []).filter(e => e.from === key).forEach(e => queue.push([e.to, step + 1]));
+  }
+  return order;
+}
+
+function flowEdgeD(a, b, W, H) {
+  const sx = a.x + W, sy = a.y + H / 2, tx = b.x, ty = b.y + H / 2;
+  const mid = Math.max(24, (tx - sx) / 2);
+  return `M ${sx} ${sy} C ${sx + mid} ${sy} ${tx - mid} ${ty} ${tx} ${ty}`;
+}
+
+const flowXf = view => `translate(${view.x} ${view.y}) scale(${view.s})`;
+
+// Efter en flytt ritas bara det som rör sig: gruppernas förskjutning och vägarna.
+// En omritning av hela SVG:en hade tappat taget om pekaren mitt i ett drag.
+function flowRepaint() {
+  const svg = document.getElementById("flowSvg");
+  if (!svg) return;
+  Object.entries(FLOW.pos).forEach(([key, p]) => {
+    const group = svg.querySelector(`[data-node="${key}"]`);
+    const base = FLOW.base[key];
+    if (group && base) group.setAttribute("transform", `translate(${p.x - base.x} ${p.y - base.y})`);
+  });
+  [...svg.querySelectorAll(".fedge")].forEach(path => {
+    const a = FLOW.pos[path.dataset.from], b = FLOW.pos[path.dataset.to];
+    if (a && b) path.setAttribute("d", flowEdgeD(a, b, FLOW.W, FLOW.H));
+  });
+}
+
+function flowBind(file, box) {
+  const svg = document.getElementById("flowSvg");
+  const scene = document.getElementById("flowScene");
+  if (!svg || !scene) return;
+  FLOW.stores = FLOW.stores || {};
+  const store = FLOW.stores[file] || (FLOW.stores[file] = flowStore(file));
+  const view = store.view;
+  const toSvg = ev => {                       // skärmpunkt -> SVG-enheter
+    const rect = svg.getBoundingClientRect();
+    return { x: box.x0 + (ev.clientX - rect.left) * (box.w / rect.width),
+             y: box.y0 + (ev.clientY - rect.top) * (box.h / rect.height) };
+  };
+  let drag = null;
+  svg.addEventListener("pointerdown", ev => {
+    if (ev.button !== 0) return;
+    const node = ev.target.closest("[data-node]");
+    ev.preventDefault();
+    drag = { key: node ? node.dataset.node : "", start: toSvg(ev),
+             from: node ? { ...FLOW.pos[node.dataset.node] } : { ...view }, moved: false };
+    try { svg.setPointerCapture(ev.pointerId); } catch { /* utan tag kapas draget av första klicket */ }
+    svg.classList.add(node ? "grabbing" : "panning");
+  });
+  svg.addEventListener("pointermove", ev => {
+    if (!drag) return;
+    const now = toSvg(ev), s = view.s || 1;
+    if (drag.key) {
+      FLOW.pos[drag.key] = { x: drag.from.x + (now.x - drag.start.x) / s,
+                             y: drag.from.y + (now.y - drag.start.y) / s };
+      flowRepaint();
+    } else {
+      view.x = drag.from.x + (now.x - drag.start.x);
+      view.y = drag.from.y + (now.y - drag.start.y);
+      scene.setAttribute("transform", flowXf(view));
+    }
+    drag.moved = true;
+  });
+  const stop = () => {
+    if (!drag) return;
+    if (drag.moved) {
+      if (drag.key) {
+        const base = FLOW.base[drag.key], p = FLOW.pos[drag.key];
+        store.move[drag.key] = [Math.round(p.x - base.x), Math.round(p.y - base.y)];
+      }
+      flowPersist(file);
+    }
+    svg.classList.remove("grabbing", "panning");
+    drag = null;
+  };
+  svg.addEventListener("pointerup", stop);
+  svg.addEventListener("pointercancel", stop);
+  svg.addEventListener("wheel", ev => {
+    ev.preventDefault();
+    const at = toSvg(ev), step = ev.deltaY < 0 ? 1.12 : 1 / 1.12;
+    const s2 = Math.min(4, Math.max(0.4, (view.s || 1) * step)), ratio = s2 / (view.s || 1);
+    // Punkten under markören skall stå still: flytta först, skala sedan kring den.
+    view.x = at.x - (at.x - view.x) * ratio;
+    view.y = at.y - (at.y - view.y) * ratio;
+    view.s = s2;
+    scene.setAttribute("transform", flowXf(view));
+    flowPersist(file);
+  }, { passive: false });
+}
+
 function renderFlow() {
   const chips = document.getElementById("flowChips");
   const canvas = document.getElementById("flowCanvas");
@@ -701,47 +868,58 @@ function renderFlow() {
       `${flow.error ? " — " + esc(flow.error) : ""}</div>`;
     return;
   }
-  // Layouten är n8n:s egen: nodernas positioner ritas som de står, ingenting räknas
-  // om här. Rutan är 224x54 -- n8n:s egen nodbredd -- och allt skalas med viewBox.
-  const W = 224, H = 54, PAD = 18;
-  const xs = flow.nodes.map(n => n.x), ys = flow.nodes.map(n => n.y);
+  // Layouten är n8n:s egen -- nodernas positioner ritas som de står -- men rutan är
+  // större och texten läses i full längd på två rader. Det man själv flyttar sparas
+  // lokalt i webbläsaren; filen i repot är fortfarande den enda sanningen om flödet.
+  const W = 250, H = 68, PAD = 22;
+  const store = flowStore(flow.file);
+  const order = flowOrder(flow);
+  FLOW.file = flow.file; FLOW.W = W; FLOW.H = H;
+  FLOW.pos = {}; FLOW.base = {};
+  flow.nodes.forEach(n => {
+    const key = n.key || n.name, [dx, dy] = store.move[key] || [0, 0];
+    FLOW.base[key] = { x: n.x, y: n.y };
+    FLOW.pos[key] = { x: n.x + dx, y: n.y + dy };
+  });
+  const xs = Object.values(FLOW.pos).map(p => p.x), ys = Object.values(FLOW.pos).map(p => p.y);
   const x0 = Math.min(...xs) - PAD, x1 = Math.max(...xs) + W + PAD;
   const y0 = Math.min(...ys) - PAD, y1 = Math.max(...ys) + H + PAD;
-  const at = Object.fromEntries(flow.nodes.map(n => [n.key || n.name, n]));
-  // Körordningen, räknad ur vägarna och inte ur positionerna: filens nodpositioner
-  // står kvar i ett gammalt mönster (tre steg i samma kolumn) medan kedjan går
-  // Config -> steg 1 -> steg 2 -> steg 3. Numret gör ordningen läsbar utan att
-  // layouten hittas på -- positionerna är fortfarande n8n:s egna.
-  const order = {}, queue = flow.nodes.filter(n => !(flow.edges || []).some(e => e.to === (n.key || n.name)))
-    .map(n => [n.key || n.name, 1]);
-  while (queue.length) {
-    const [key, step] = queue.shift();
-    if (order[key]) continue;
-    order[key] = step;
-    (flow.edges || []).filter(e => e.from === key).forEach(e => queue.push([e.to, step + 1]));
-  }
+  const view = store.view || { x: 0, y: 0, s: 1 };
+
   const edges = (flow.edges || []).map(e => {
-    const a = at[e.from], b = at[e.to];
+    const a = FLOW.pos[e.from], b = FLOW.pos[e.to];
     if (!a || !b) return "";
-    const sx = a.x + W, sy = a.y + H / 2, tx = b.x, ty = b.y + H / 2;
-    const mid = Math.max(24, (tx - sx) / 2);
-    return `<path d="M ${sx} ${sy} C ${sx + mid} ${sy} ${tx - mid} ${ty} ${tx} ${ty}" fill="none" ` +
-      `stroke="var(--line-2)" stroke-width="1.5" marker-end="url(#flowarrow)"/>`;
+    return `<path class="fedge" data-from="${esc(e.from)}" data-to="${esc(e.to)}" ` +
+      `d="${flowEdgeD(a, b, W, H)}" fill="none" stroke="var(--line-2)" stroke-width="1.6" ` +
+      `marker-end="url(#flowarrow)"/>`;
   }).join("");
-  const boxes = flow.nodes.map(n => `<g>` +
-    `<rect x="${n.x}" y="${n.y}" width="${W}" height="${H}" rx="9" fill="var(--card)" stroke="var(--line)"/>` +
-    `<text x="${n.x + 14}" y="${n.y + 23}" fill="var(--text)" font-size="12.5">` +
-      `${esc(flowGlyphOf(n.type))} ${esc(String(n.name).slice(0, 26))}</text>` +
-    `<text x="${n.x + 14}" y="${n.y + 40}" fill="var(--muted)" font-size="11">${esc(n.type)}</text>` +
-    (order[n.key || n.name] ? `<text x="${n.x + W - 12}" y="${n.y + 22}" fill="var(--muted)" ` +
-      `font-size="11" text-anchor="end">${order[n.key || n.name]}</text>` : "") +
-    `</g>`).join("");
-  canvas.innerHTML = `<svg viewBox="${x0} ${y0} ${x1 - x0} ${y1 - y0}" width="100%" ` +
-    `preserveAspectRatio="xMinYMin meet" role="img" ` +
+  const boxes = flow.nodes.map(n => {
+    const key = n.key || n.name, step = order[key], lines = flowWrap(n.name);
+    return `<g class="fnode" data-node="${esc(key)}">` +
+      `<title>${esc(n.name)} — ${esc(n.type)}${step ? " · steg " + step : ""}</title>` +
+      `<rect x="${n.x}" y="${n.y}" width="${W}" height="${H}" rx="10" fill="var(--card)" ` +
+        `stroke="var(--line-2)"/>` +
+      lines.map((line, i) => `<text x="${n.x + 15}" y="${n.y + 26 + i * 16}" fill="var(--text)" ` +
+        `font-size="13.5">${i === 0 ? esc(flowGlyphOf(n.type)) + "  " : ""}${esc(line)}</text>`).join("") +
+      `<text x="${n.x + 15}" y="${n.y + H - 12}" fill="var(--text)" opacity="0.62" ` +
+        `font-size="11.5">${esc(n.type)}</text>` +
+      (step ? `<text x="${n.x + W - 13}" y="${n.y + 22}" fill="var(--text)" opacity="0.55" ` +
+        `font-size="11.5" text-anchor="end">${step}</text>` : "") +
+      `</g>`;
+  }).join("");
+
+  canvas.innerHTML = `<svg id="flowSvg" viewBox="${x0} ${y0} ${x1 - x0} ${y1 - y0}" ` +
+    `preserveAspectRatio="xMidYMid meet" role="img" ` +
     `aria-label="${esc(flow.name || flow.file)}">` +
     `<defs><marker id="flowarrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" ` +
     `markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--line-2)"/>` +
-    `</marker></defs>${edges}${boxes}</svg>`;
+    `</marker></defs>` +
+    `<g id="flowScene" transform="${flowXf(view)}">${edges}${boxes}</g></svg>` +
+    `<div class="flowtools">` +
+      `<span class="meta">dra i en ruta för att flytta den · dra i bakgrunden för att panorera · ` +
+      `rullhjulet zoomar</span><span class="grow"></span>` +
+      `<button class="chip" data-act="flow-reset">nollställ vyn</button></div>`;
+  flowBind(flow.file, { x0, y0, w: x1 - x0, h: y1 - y0 });
 }
 
 function renderAutomation() {
@@ -892,7 +1070,7 @@ async function repoOpen(name) {
   if (!name || REPO.busy) return;
   REPO.name = name; REPO.busy = true; REPO.bad = false; REPO.note = "hämtar repot — det tar några sekunder";
   REPO.data = null;
-  renderRepos();
+  markRepo(); renderRepos();
   try {
     const r = await fetch("/api/repo?name=" + encodeURIComponent(name),
       { cache: "no-store", signal: AbortSignal.timeout(60000) });
@@ -902,9 +1080,7 @@ async function repoOpen(name) {
   } catch (e) {
     REPO.bad = true; REPO.note = e.message;
   } finally {
-    REPO.busy = false; renderRepos();
-    // Detaljen ritas under listan: utan det har ser ett klick ut som ingenting.
-    document.getElementById("repoDetail").scrollIntoView({ block: "nearest" });
+    REPO.busy = false; markRepo(); renderRepos();
   }
 }
 
@@ -912,6 +1088,15 @@ const ghRow = (url, key, title, side) => `<div class="r">${link(url, `<span clas
   `<span class="t">${esc(title || "")}</span>${side ? `<span class="tside">${esc(side)}</span>` : ""}</div>`;
 
 // Repot står stilla medan man tittar på kopplingen: fakta och koppling delar rad.
+// Markeringen i sidofältet följer valet. Egen liten funktion i stället för en
+// omritning: en omritning hade slitit sökfältet ur händerna på den som skriver.
+function markRepo() {
+  const host = document.getElementById("repoList");
+  if (!host) return;
+  [...host.querySelectorAll("[data-repo]")].forEach(el =>
+    el.classList.toggle("on", el.dataset.repo === REPO.name));
+}
+
 function renderRepoDetail() {
   const meta = document.getElementById("repoDetailMeta");
   const body = document.getElementById("repoDetail");
@@ -925,7 +1110,9 @@ function renderRepoDetail() {
     body.innerHTML = `<div class="empty err">${esc(REPO.note || "repot kunde inte läsas")}</div>`;
   } else {
     const a = d.about || {};
-    const fact = (l, v) => `<div class="f"><div class="l">${esc(l)}</div><div class="v">${v}</div></div>`;
+    const fact = (l, v, whole) =>
+      `<div class="f"><div class="l">${esc(l)}</div>` +
+      `<div class="v"${whole ? ` title="${esc(whole)}"` : ""}>${v}</div></div>`;
     const prs = (d.openPRs || []).map(p => ghRow(p.url, "#" + p.number, p.title + (p.isDraft ? " (utkast)" : ""),
       ago(p.updatedAt))).join("") || `<div class="empty">inga öppna</div>`;
     const iss = (d.openIssues || []).map(i => ghRow(i.url, "#" + i.number, i.title, ago(i.updatedAt)))
@@ -942,7 +1129,7 @@ function renderRepoDetail() {
         ${fact("stjärnor", String(a.stars || 0) + " · " + String(a.forks || 0) + " forkar")}
         ${fact("standardgren", `<span class="mono">${esc(a.branch || "—")}</span>`)}
         ${fact("senaste push", esc((a.pushedAt || "").slice(0, 10) || "—"))}
-        ${fact("lokal kopia", d.local ? `<span class="mono">${esc(d.local)}</span>` : "ingen hittad")}
+        ${fact("lokal kopia", d.local ? `<span class="mono">${esc(d.local)}</span>` : "ingen hittad", d.local || "")}
       </div>
       <div style="margin-top:14px"><div class="meta">öppna pull requests · ${(d.openPRs || []).length}</div>${prs}</div>
       <div style="margin-top:12px"><div class="meta">öppna ärenden · ${(d.openIssues || []).length}</div>${iss}</div>
@@ -1008,26 +1195,8 @@ async function linkSave(rm) {
 }
 
 function renderRepos() {
+  // Listan står i sidofältet (renderSide); här ritas bara det valda repot.
   const g = STATE.github;
-  const prBy = {}, issBy = {};
-  g.pullRequests.forEach(p => (prBy[p.repository.name] = prBy[p.repository.name] || []).push(p));
-  g.issues.forEach(i => (issBy[i.repository.name] = issBy[i.repository.name] || []).push(i));
-  const rows = g.repos.filter(r => matches({ key: r.name, summary: r.description }))
-    .sort((a, c) => (c.updatedAt || "").localeCompare(a.updatedAt || ""));
-  document.getElementById("repoTable").innerHTML =
-    `<thead><tr><th>Repo</th><th style="width:104px">Synlighet</th><th style="width:110px">Språk</th>
-      <th style="width:56px" class="num">★</th><th style="width:56px" class="num">PR</th>
-      <th style="width:76px" class="num">Ärenden</th><th style="width:80px">Jira</th>
-      <th style="width:80px">Senast</th></tr></thead>
-     <tbody>${rows.map(r => `<tr data-repo="${esc(r.name)}" class="${REPO.name === r.name ? "on" : ""}">
-       <td><b>${esc(r.name)}</b>${r.description ? `<div class="muted" style="font-size:11.5px;max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.description)}</div>` : ""}</td>
-       <td><span class="pill">${r.isPrivate ? "▣ privat" : "▢ publikt"}</span></td>
-       <td class="muted">${esc((r.primaryLanguage && r.primaryLanguage.name) || "—")}</td>
-       <td class="num">${r.stargazerCount || 0}</td>
-       <td class="num">${(prBy[r.name] || []).length}</td>
-       <td class="num">${(issBy[r.name] || []).length}</td>
-       <td>${linkBadge(r.name)}</td>
-       <td class="muted">${ago(r.updatedAt)}</td></tr>`).join("")}</tbody>`;
   const ghList = items => items.map(x => `<div class="r">${link(x.url,
       `<span class="key">${esc(x.repository.nameWithOwner || x.repository.name)}#${x.number}</span>`)}
       <span class="t">${link(x.url, esc(x.title))}</span><span class="tside">${ago(x.updatedAt)}</span></div>`).join("")
@@ -1196,12 +1365,25 @@ function render() {
   if (!STATE) return;
   renderRail(); renderSide(); renderCrumbs(); renderFilters();
   const filters = document.getElementById("filters");
-  filters.hidden = view === "overview" || view === "import" || view === "automatik";
-  document.getElementById("filter").hidden = !(view === "items" || view === "repos");
+  // Repon har sin egen sökning i sidofältet; en filterrad som inte filtrerar något
+  // där är bara i vägen.
+  filters.hidden = ["overview", "import", "automatik", "repos"].includes(view);
+  document.getElementById("filter").hidden = view !== "items";
   if (view === "overview") { renderStats(); renderAutomation(); renderFlowPick(); renderJournal(); renderRecent(); }
   if (view === "board") renderBoard();
   if (view === "items") renderItems();
-  if (view === "repos") renderRepos();
+  // In i Repon med inget valt: öppna det kopplade repot (annars det senast rörda),
+  // så huvudrutan visar något i stället för en tom plats.
+  if (view === "repos") {
+    if (!REPO.name && !REPO.busy) {
+      const linked = links()[0];
+      const newest = (((STATE.github || {}).repos) || [])[0];
+      const pick = (linked && linked.repo ? shortName(linked.repo) : "") ||
+                   (newest ? newest.name : "");
+      if (pick) repoOpen(pick);
+    }
+    renderRepos();
+  }
   if (view === "automatik") renderFlow();
   if (view === "import") renderImport();
 }
@@ -1296,6 +1478,12 @@ document.addEventListener("click", e => {
   if (e.target.closest('[data-act="link-save"]')) return linkSave(false);
   if (e.target.closest('[data-act="link-rm"]')) return linkSave(true);
   if (e.target.closest("[data-flow]")) { flowSel = e.target.closest("[data-flow]").dataset.flow; return renderFlow(); }
+  // Nollställningen kastar bara det man själv flyttat och panorerat: flödet i filen rörs inte.
+  if (e.target.closest('[data-act="flow-reset"]')) {
+    if (FLOW.stores) delete FLOW.stores[FLOW.file];
+    try { localStorage.removeItem("godjira.flow." + FLOW.file); } catch { /* utan lagring */ }
+    return renderFlow();
+  }
   if (e.target.closest('[data-act="imp-all"]')) { IMP.keep = new Set(IMP.plan.map((_, i) => i)); return renderImport(); }
   if (e.target.closest('[data-act="imp-none"]')) { IMP.keep = new Set(); return renderImport(); }
   if (e.target.closest('[data-act="splash-retry"]')) {
@@ -1347,6 +1535,15 @@ document.getElementById("impProposal").addEventListener("change", e => {
   renderImport();
 });
 document.getElementById("filter").addEventListener("input", render);
+// Sökningen filtrerar raderna i sidofältet direkt -- ingen omritning, så markören
+// står kvar i fältet medan man skriver.
+document.addEventListener("input", e => {
+  if (e.target && e.target.id === "repoSearch") {
+    repoFilter = e.target.value;
+    const host = document.getElementById("repoList");
+    if (host) host.innerHTML = repoRows();
+  }
+});
 window.addEventListener("hashchange", () => show(readHash()));
 show(readHash());
 load(false);

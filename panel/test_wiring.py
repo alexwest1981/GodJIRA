@@ -7,6 +7,9 @@ Run it with the panel up:  python3 panel/test_wiring.py
 It fails on exactly the things that made the view feel dead:
   * a repo row that opens github instead of the app -> the repo cannot be
                                                        pointed at a Jira project
+  * the repo list back in the main area      -> 50 m of scroll before the info
+  * the drawing without drag/pan/zoom        -> the flow cannot be read
+  * long node names cut off                  -> the step names become guesses
   * the repo detail losing its github link   -> the way out disappears
   * a flow file that is not drawn            -> the flow is invisible
   * drawn nodes/edges not matching the file  -> the drawing lies by omission
@@ -56,6 +59,18 @@ def main() -> int:
     # öppnar detaljen), inte hoppa till webben. GitHub-länken hör till detaljen.
     check("data-repo=" in html and "repoOpen(" in html,
           "the repo row opens the repo inside the app")
+    # Listan bor i sidofältet, för 59 rader i huvudrutan blev lång skroll innan
+    # detaljen. Sökningen filtrerar raderna på plats (ingen omritning = inget tappat
+    # fokus), och huvudrutan ritar bara det valda repot.
+    check("id=\"repoSearch\"" in html and "function repoRows()" in html,
+          "the repo list and its search live in the sidebar")
+    check("repoTable" not in html, "the long repo table is gone from the main area")
+    check("function markRepo()" in html, "the sidebar marks the open repo")
+    # [hidden] räckte inte mot display:flex: regeln sattes men raden visades ändå.
+    check("[hidden] { display: none !important; }" in html,
+          "the hidden attribute actually hides the filter row")
+    check('["overview", "import", "automatik", "repos"].includes(view)' in html,
+          "the filter row is hidden in the views that have nothing to filter")
     check("link(r.url," not in html,
           "the repo name is not a jump to github", "the detail owns that link")
     check("link(d.about.url," in html, "the repo detail carries the github link")
@@ -87,6 +102,16 @@ def main() -> int:
     check("STATE.flows" in html and "flowSel" in html, "the view draws the state's own graph")
     check("EveryHour" not in html, "no flow is drawn by hand in the page")
     check("renderFlow" in html and "v-automatik" in html, "the Automatik view exists")
+    # Ritningen skall gå att se och att flytta i: noderna bär data-node, vägarna
+    # data-from/data-to (så de kan ritas om för hand vid ett drag), och verktygen
+    # (dra, panorera, zooma, nollställ) finns.
+    check("data-node=" in html and "class=\"fedge\"" in html and "flowEdgeD" in html,
+          "the drawing can be redrawn piece by piece")
+    check("pointerdown" in html and "pointermove" in html and "wheel" in html,
+          "the drawing can be dragged, panned and zoomed")
+    check('data-act="flow-reset"' in html and "localStorage" in html,
+          "what you move is remembered, and can be reset")
+    check("flowWrap" in html, "long node names wrap instead of being cut")
     check("AbortSignal.timeout" in html, "the state fetch has a time limit")
     check("retryLater" in html, "a failed refresh is retried and said out loud")
 
