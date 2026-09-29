@@ -16,12 +16,16 @@ Commands
         you, move it to In Progress. With nothing of your own it proposes the most
         critical item that is someone else's and takes it only when the caller
         presses again with --expect KEY, naming that exact issue.
+    pick [--title TEXT] [--json]
+        The file dialog on this machine (zenity), one chosen path per line. The
+        panel uses it so a pick is the same process path as everything else, and
+        a machine without a dialog answers with an error instead of doing nothing.
     agent [list | add CMD | set CMD... | rm N|NAME]
         Your own list of agents, tried in order, first installed one answers.
         Kept in ~/.config/jira-flow/config.json ("agents"), so every user has
         their own and nobody's choice depends on someone else's. Shipped list:
         hermes, then agy. JIRA_FLOW_AGENT overrides it for one run.
-    plan [--text TEXT | --file PATH] [--context PATH]... [--repo DIR]
+    plan [--text TEXT | --file PATH] [--context PATH|URL]... [--repo DIR]
          [--create] [--json] [--project KEY]
         Hands the customer's wish to the agent you have chosen (JIRA_FLOW_AGENT,
         "claude -p" by default -- any CLI that reads a prompt on stdin and answers
@@ -56,8 +60,10 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
+import tempfile
 import urllib.request
 import zipfile
 from base64 import b64encode
@@ -85,6 +91,9 @@ AGENT = os.environ.get("JIRA_FLOW_AGENT", "")  # tom = användarens lista, sedan
 # den på stdin (Hermes läser den därifrån).
 AGENT_CHAIN = ("hermes chat --query-file -", "agy -p {prompt}")
 AGENT_TIMEOUT = int(os.environ.get("JIRA_FLOW_AGENT_TIMEOUT", "600"))
+# Ett agent-svar som inte gick att tolka hamnar här (0600). Annars finns ingenting
+# kvar att titta på när flödet säger att svaret var obrukbart.
+ANSWER_LOG = os.path.expanduser("~/.local/state/omarchy/jira-flow-answer.log")
 PLAN_MAX = int(os.environ.get("JIRA_FLOW_PLAN_MAX", "10"))
 
 # Underlaget agenten får utöver själva önskemålet. Taken finns för att en agent
@@ -94,6 +103,18 @@ DOC_CHARS = 6000        # per dokument
 TOTAL_CHARS = 20000     # alla dokument tillsammans
 MAX_FILES = 20          # filer ur en mapp, fler än så är inte ett önskemål
 COMMITS = 30            # rader ur git-historiken
+URL_BYTES = 20 * 1024 * 1024   # ett underlag från nätet, inte en film
+URL_UA = "GodJIRA/1.0 (jira_flow; +https://github.com/alexwest1981/GodJIRA)"
+
+# Vad servern säger att den skickar får bestämma hur svaret läses. Okänd typ faller
+# tillbaka på filnamnets ändelse och sedan på text — med skräpvakten i read_document.
+SUFFIX_BY_TYPE = {
+    "application/pdf": ".pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+    "application/vnd.oasis.opendocument.text": ".odt",
+}
 
 PLAN_PROMPT = """\
 You are a scrum master. Split the customer's wish below into Jira issues for project {project}.
@@ -131,6 +152,39 @@ def xml_text(xml: str) -> str:
     """XML -> läsbar text: stycken blir rader, taggarna bort."""
     xml = re.sub(r"</(w:p|w:tr|text:p|text:h|a:p|row|si)>", "\n", xml)
     return unescape(re.sub(r"<[^>]+>", "", xml))
+
+
+def html_text(markup: str) -> str:
+    """HTML -> läsbar text. Skript och stil är inte underlag, de är brus."""
+    markup = re.sub(r"(?is)<(script|style|noscript|svg|head)[^>]*>.*?</\1>", " ", markup)
+    markup = re.sub(r"(?s)<!--.*?-->", " ", markup)
+    markup = re.sub(r"(?i)<br\s*/?>|</(p|div|li|tr|h[1-6]|section|article|title|blockquote|pre)>",
+                    "\n", markup)
+    return xml_text(markup)
+
+
+def url_text(url: str) -> str:
+    """Ett underlag från nätet. Sidor och text läses direkt; pdf och annat binärt
+    landar i scratch och går genom exakt samma läsare som en lokal fil."""
+    request = urllib.request.Request(url, headers={"User-Agent": URL_UA})
+    with urllib.request.urlopen(request, timeout=60) as response:
+        ctype = (response.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        body = response.read(URL_BYTES)
+        clipped = bool(response.read(1))
+    name = os.path.basename(url.split("?")[0].split("#")[0].rstrip("/"))
+    suffix = SUFFIX_BY_TYPE.get(ctype) or Path(name).suffix.lower()
+    if ctype.startswith("text/") or suffix in (".html", ".htm", ".txt", ".md", ".json",
+                                               ".csv", ".xml", ".rst", ".log", ""):
+        text = body.decode("utf-8", "replace")
+        return html_text(text) if "html" in ctype or suffix in (".html", ".htm") else text
+    if clipped:
+        # En halv pdf läses inte alls: ett avhugget underlag ska säga det, inte gissa.
+        raise RuntimeError("{} is larger than {} MB; download it and pass the file"
+                           .format(url, URL_BYTES // 1024 // 1024))
+    folder = tempfile.mkdtemp(prefix="jira-flow-url-")
+    landed = Path(folder) / ("url" + suffix)
+    landed.write_bytes(body)
+    return read_document(landed)
 
 
 def zip_text(path) -> str:
@@ -181,39 +235,48 @@ def read_document(path) -> str:
     return text
 
 
+def context_items(raw):
+    """Underlaget som (post, namngiven): en fil blir en, en mapp blir de filer den
+    har, och en http(s)-länk hämtas. Panelens släpp ger file://-adresser."""
+    raw = re.sub(r"^file://(localhost)?", "", str(raw).strip())
+    if re.match(r"^https?://", raw, re.I):
+        return [(raw, True)]
+    p = Path(raw).expanduser()
+    if p.is_dir():
+        found = [f for f in sorted(p.iterdir())
+                 if f.is_file() and not f.name.startswith(".")][:MAX_FILES]
+        return [(f, False) for f in found]
+    return [(p, True)]
+
+
 def read_context(raw_paths):
-    """Dokumenten som text och vad som lästes. En namngiven fil som inte går att
-    läsa är ett fel; en fil som hittas i en mapp får hoppas över med besked."""
+    """Dokumenten som text och vad som lästes. En namngiven fil (eller länk) som
+    inte går att läsa är ett fel; en fil som hittas i en mapp får hoppas över med
+    besked — där är urvalet någon annans."""
     chunks, notes, used = [], [], 0
     for raw in raw_paths or []:
-        p = Path(raw).expanduser()
-        if p.is_dir():
-            found = [f for f in sorted(p.iterdir())
-                     if f.is_file() and not f.name.startswith(".")][:MAX_FILES]
-            if not found:
-                notes.append({"path": str(p), "chars": 0, "error": "folder is empty"})
-            pairs = [(f, False) for f in found]
-        else:
-            pairs = [(p, True)]
-        for path, named in pairs:
+        items = context_items(raw)
+        if not items:
+            notes.append({"path": str(raw), "chars": 0, "error": "folder is empty"})
+        for item, named in items:
             try:
-                text = read_document(path)
-            except (RuntimeError, OSError, zipfile.BadZipFile) as exc:
+                text = url_text(item) if isinstance(item, str) else read_document(item)
+            except (RuntimeError, OSError, zipfile.BadZipFile, ValueError) as exc:
                 if named:
                     raise RuntimeError(str(exc))
-                notes.append({"path": str(path), "chars": 0, "error": str(exc)})
+                notes.append({"path": str(item), "chars": 0, "error": str(exc)})
                 continue
             text = re.sub(r"[ \t]+\n", "\n", text.replace("\r\n", "\n"))
             text = re.sub(r"\n{3,}", "\n\n", text).strip()
             whole = len(text)
             keep = min(whole, DOC_CHARS, max(0, TOTAL_CHARS - used))
             shown = text[:keep]
-            note = {"path": str(path), "chars": len(shown), "documentChars": whole}
+            note = {"path": str(item), "chars": len(shown), "documentChars": whole}
             if keep < whole:
                 note["truncated"] = True
                 shown += "\n[... {} of {} characters shown]".format(len(shown), whole)
             used += len(shown)
-            chunks.append("### {}\n{}".format(path.name, shown))
+            chunks.append("### {}\n{}".format(str(item), shown))
             notes.append(note)
     return "\n\n".join(chunks), notes
 
@@ -649,17 +712,28 @@ def parse_plan(text: str):
     # strict=False: modeller skickar ofta ett literalt radbryt inuti en sträng,
     # vilket inte är giltig JSON men är precis vad de menade.
     decoder = json.JSONDecoder(strict=False)
-    items, index = None, body.find("[")
+    # Svaret kommer inuti en hel utskrift: agent-CLI:n skriver sin egen fråga, sina
+    # verktygsrader och en avslutande session-sammanfattning runt svaret (mätt
+    # 2026-09-29 med `hermes chat`). Att ta första "[" råkade då plocka en parentes
+    # ur utskriften. Nu samlas varje lista av ärendeobjekt in -- och den sista tas,
+    # för agentens svar är det sista den skriver.
+    candidates, index = [], body.find("[")
     while index >= 0:
         try:
-            items, _ = decoder.raw_decode(body[index:])
-            break
+            value, _ = decoder.raw_decode(body[index:])
         except ValueError:
-            index = body.find("[", index + 1)
-    if items is None:
-        raise ValueError("the agent answered without a JSON array of issues")
-    if not isinstance(items, list):
-        raise ValueError("the agent answered with JSON, but not a list of issues")
+            value = None
+        if (isinstance(value, list) and value
+                and all(isinstance(x, dict) for x in value)
+                and any("summary" in x for x in value)):
+            candidates.append(value)
+        index = body.find("[", index + 1)
+    if not candidates:
+        # Här hamnar också en lista där någon post inte är ett objekt: en halv lista
+        # blir inga ärenden, och en sträng som "result" ska aldrig bli ett ärende.
+        raise ValueError("the agent answered without a JSON array of issue objects "
+                         "(summary, type, description, priority)")
+    items = candidates[-1]
     out = []
     for item in items:
         summary = str((item or {}).get("summary") or "").strip()
@@ -800,6 +874,40 @@ def cmd_agent(args) -> int:
     return 0
 
 
+def pick_files(title: str) -> list:
+    """Filväljaren på maskinen. zenity är den Omarchy har — en egen dialog i QML
+    vore ett projekt, och den här fungerar från terminalen också."""
+    tool = shutil.which("zenity")
+    if not tool:
+        raise RuntimeError("no file dialog on this machine (zenity is missing)")
+    done = subprocess.run([tool, "--file-selection", "--multiple", "--separator", "\n",
+                           "--title", title,
+                           "--file-filter=Papers | *.pdf *.txt *.md *.docx *.odt "
+                           "*.xlsx *.pptx *.csv *.json *.rtf"],
+                          capture_output=True, text=True, timeout=900)
+    if done.returncode != 0:
+        # 1 = avbruten dialog och det är inget fel. Men zenity skriver också till
+        # stderr när den inte kan öppna en bildskärm alls — mätt: den vägen gav
+        # förut ett tomt val, alltså en knapp som ingenting händer med.
+        complaint = (done.stderr or "").strip()
+        if complaint:
+            raise RuntimeError(complaint.splitlines()[-1][:200])
+        return []
+    return [row.strip() for row in (done.stdout or "").splitlines() if row.strip()]
+
+
+def cmd_pick(args) -> int:
+    """Panelens filvalsknapp. Samma svarsväg som resten: JSON med ok/error."""
+    try:
+        files = pick_files(getattr(args, "title", "") or "Choose the papers")
+    except (RuntimeError, OSError) as exc:
+        say(args, {"ok": False, "error": str(exc)}, ["jira_flow: " + str(exc)])
+        return 2
+    say(args, {"ok": True, "files": files},
+        files if files else ["(nothing chosen)"])
+    return 0
+
+
 def cmd_plan(client_, args) -> int:
     """Kundens önskemål in, ärendeförslag ut. Ingenting skrivs förrän --create."""
     if getattr(args, "text", ""):
@@ -833,11 +941,27 @@ def cmd_plan(client_, args) -> int:
                                 types=", ".join(types) or "Story, Task, Bug",
                                 context=build_context(docs_text, repo_text, docs_notes),
                                 wish=wish.strip())
+    answer = ""
     try:
         answered_by = agent_argv(prompt)[0]
-        items = parse_plan(ask_agent(prompt))
+        answer = ask_agent(prompt)
+        items = parse_plan(answer)
     except (ValueError, RuntimeError) as exc:
-        message = str(exc)
+        # Ett svar som inte går att tolka sparas: annars är det borta för alltid och
+        # den som felsöker har bara felet att gå på. Svaret kan innehålla kundtext,
+        # så filen är 0600 och ligger i användarens egen state-katalog.
+        kept = ""
+        if answer and isinstance(exc, ValueError):
+            try:
+                os.makedirs(os.path.dirname(ANSWER_LOG), mode=0o700, exist_ok=True)
+                with open(ANSWER_LOG, "a", encoding="utf-8") as fh:
+                    os.chmod(ANSWER_LOG, 0o600)
+                    fh.write("\n--- {} | {} | {} chars\n{}\n".format(
+                        time.strftime("%Y-%m-%d %H:%M:%S"), answered_by, len(answer), answer))
+                kept = " -- the answer is kept in {}".format(ANSWER_LOG)
+            except OSError as keep_exc:
+                kept = " -- the answer could not be kept ({})".format(keep_exc)
+        message = str(exc) + kept
         say(args, {"ok": False, "error": message}, ["jira_flow: " + message])
         return 2
 
@@ -1146,9 +1270,31 @@ def selftest() -> int:
     checks += 1
     raw_newline = '[{"summary": "Boka tid", "description": "rad ett\nrad två", "type": "Task"}]'
     assert parse_plan(raw_newline)[0]["description"] == "rad ett\nrad två", "literalt radbryt"
-    two_arrays = 'Jag tänker [så här]:\n[{"summary": "A", "type": "Task"}]\n[{"summary": "B"}]'
-    assert [i["summary"] for i in parse_plan(two_arrays)] == ["A"], \
-        "första arrayen, inte två hopklistrade"
+    two_arrays = 'Ett exempel: [{"summary": "A", "type": "Task"}]\nOch svaret:\n' \
+                 '[{"summary": "B", "type": "Task"}]'
+    assert [i["summary"] for i in parse_plan(two_arrays)] == ["B"], \
+        "sista listan, för svaret kommer sist"
+    transcript = ("Query: dela upp [önskemålet] i ärenden\n"
+                  "  ┊ 🔌 Godjira · jira board  0.1s [tool_call takes exactly one entry]\n"
+                  "  ┊ grep  \"summary\": \"[^\"]*\"\n"
+                  "\u256d\u2500\u2500\n[\n  {\"summary\": \"Skicka bokningsbekräftelse\", "
+                  "\"type\": \"Task\", \"description\": \"VAD: mejla kunden.\"},\n"
+                  "  {\"summary\": \"Visa besked utan e-post\", \"type\": \"Task\"}\n]\n"
+                  "\u2570\u2500\u2500\nResume this session with: hermes --resume 20260929_090612\n")
+    transcript_items = parse_plan(transcript)
+    assert [i["summary"] for i in transcript_items] == ["Skicka bokningsbekräftelse",
+                                                        "Visa besked utan e-post"], transcript_items
+    assert transcript_items[0]["description"] == "VAD: mejla kunden."
+    # Mätt 2026-09-29: en agent svarade med strängar i listan och flödet dog på
+    # item.get. Nu ska varje post som inte är ett objekt namnges i ett besked —
+    # aldrig en krasch, och aldrig ett ärende som heter "result".
+    for rubbish in ('[42]', '[["summary", "Boka"]]', '["Flytta bokning mellan bilar"]',
+                    '[{"summary": "Boka"}, "result"]'):
+        try:
+            parse_plan(rubbish)
+            raise AssertionError("skräp i listan skulle ha vägrats: " + rubbish)
+        except ValueError as exc:
+            assert "issue objects" in str(exc), exc
     try:
         parse_plan('[{"summary": "<short imperative>", "type": "Story"}]')
         raise AssertionError("platshållartext skulle ha vägrats")
@@ -1174,7 +1320,9 @@ def selftest() -> int:
     checks += 1
 
     # Underlaget: dokument läses, klipps med besked, och skräp nekas.
+    import http.server
     import tempfile
+    import threading
     with tempfile.TemporaryDirectory() as tmp:
         base = Path(tmp)
         (base / "krav.txt").write_text("Krav: kunden ska kunna spara.\n")
@@ -1210,6 +1358,81 @@ def selftest() -> int:
                 raise AssertionError("skulle ha vägrat: " + needed)
             except (RuntimeError, OSError):
                 pass
+        # En länk läses på samma villkor som en fil: text blir text, html tappar
+        # taggarna och skriptet, och en 404 är ett fel — inte ett tomt underlag.
+        served = {"/krav.txt": ("text/plain", "K1. Bokningen ska kunna flyttas."),
+                  "/sida.html": ("text/html", "<html><head><title>Krav</title>"
+                                              "<style>p{color:red}</style></head><body>"
+                                              "<p>K2. Prislistan ska frysas.</p>"
+                                              "<script>var x=1;</script></body></html>")}
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                hit = served.get(self.path)
+                if not hit:
+                    self.send_error(404)
+                    return
+                raw = hit[1].encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", hit[0])
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+            def log_message(self, *ignored):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        host = "http://127.0.0.1:{}".format(server.server_address[1])
+        try:
+            from_url, url_notes = read_context([host + "/krav.txt", host + "/sida.html"])
+            assert "K1. Bokningen" in from_url and "K2. Prislistan" in from_url, from_url[:200]
+            assert "<p>" not in from_url and "var x=1" not in from_url, "html är rensad"
+            assert "color:red" not in from_url, "stilen är borta"
+            assert [n["path"] for n in url_notes] == [host + "/krav.txt", host + "/sida.html"]
+            try:
+                read_context([host + "/finns-inte"])
+                raise AssertionError("en 404 ska vara ett fel")
+            except RuntimeError as exc:
+                assert "404" in str(exc), str(exc)
+        finally:
+            server.shutdown()
+            server.server_close()
+        assert context_items("file:///tmp/krav.pdf")[0][0] == Path("/tmp/krav.pdf"), \
+            "panelens släpp ger file://-adresser"
+
+        # Filväljaren: avbruten dialog är inget fel, två val blir två rader.
+        if os.name == "posix":
+            with tempfile.TemporaryDirectory() as bin_dir:
+                stub = Path(bin_dir) / "zenity"
+                saved_path = os.environ.get("PATH", "")
+                os.environ["PATH"] = bin_dir
+                try:
+                    stub.write_text("#!/bin/sh\nexit 1\n")
+                    stub.chmod(0o755)
+                    assert pick_files("prova") == [], "avbruten dialog ger inget val"
+                    stub.write_text("#!/bin/sh\necho /tmp/a.pdf\necho /tmp/b.txt\n")
+                    stub.chmod(0o755)
+                    assert pick_files("prova") == ["/tmp/a.pdf", "/tmp/b.txt"], "valen läses radvis"
+                    stub.write_text("#!/bin/sh\necho 'Failed to open display' >&2\nexit 1\n")
+                    stub.chmod(0o755)
+                    try:
+                        pick_files("prova")
+                        raise AssertionError("ingen bildskärm ska vara ett fel, inte ett tomt val")
+                    except RuntimeError as exc:
+                        assert "display" in str(exc), str(exc)
+                finally:
+                    os.environ["PATH"] = saved_path
+            try:
+                os.environ["PATH"] = ""
+                pick_files("prova")
+                raise AssertionError("utan zenity ska det vara ett fel, inte tystnad")
+            except RuntimeError as exc:
+                assert "zenity" in str(exc), str(exc)
+            finally:
+                os.environ["PATH"] = saved_path
+
         assert build_context("", "", notes) == "", "inget underlag ger inget block"
         block = build_context(docs, "", notes)
         assert "knappen ska spara kunden" in block, "blocket bär underlaget"
@@ -1377,6 +1600,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="cmd")
     p_next = sub.add_parser("next", help="take the most critical item and start it")
     p_cur = sub.add_parser("current", help="the key you are on right now")
+    p_pick = sub.add_parser("pick", help="the file dialog on this machine, one path per line")
+    p_pick.add_argument("--title", default="", help="what the dialog asks for")
+    p_pick.add_argument("--json", action="store_true")
     p_ins = sub.add_parser("install", help="write the editor shims and the commit hook into a repo")
     sub.add_parser("login", help="store the Jira token in this machine's own store (reads stdin)")
     sub.add_parser("logout", help="remove it again")
@@ -1423,6 +1649,8 @@ def main(argv) -> int:
         return cmd_logout(args)
     if args.cmd == "agent":
         return cmd_agent(args)
+    if args.cmd == "pick":
+        return cmd_pick(args)
     jira = client()
     if args.cmd == "plan":
         return cmd_plan(jira, args)

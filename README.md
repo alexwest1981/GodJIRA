@@ -4,10 +4,6 @@
   <img src="assets/godjira-jira-ide.jpg" alt="Jira och IDE:erna, sammanbundna av GodJIRA" width="760">
 </p>
 
-<p align="center">
-  <img src="assets/godjira-logo.jpeg" alt="GodJIRA" width="320">
-</p>
-
 A Jira client inside your Omarchy shell. Board with drag-and-drop, backlog and
 summary views in one floating window, kept fresh by a periodic refresh. Add and
 delete issues when you have the right permissions.
@@ -253,6 +249,8 @@ thing from a shell:
 ```
 python3 bin/jira_flow.py plan --text "kunden vill kunna boka tid"
 python3 bin/jira_flow.py plan --file wish.md --create
+python3 bin/jira_flow.py plan --context krav.pdf --context https://kund.se/krav --create
+python3 bin/jira_flow.py pick --json          # the machine's file dialog (the panel's button)
 ```
 
 ### The papers and the history, before the issues
@@ -268,7 +266,9 @@ python3 bin/jira_flow.py plan --file wish.md \
   --repo ~/Documents/Skolgrejer/Systemarkitektur
 ```
 
-* `--context PATH` (repeatable) reads **pdf** (via `pdftotext`/poppler),
+* `--context PATH` (repeatable) reads a **file**, a **folder** (the files in it)
+  or an **https link** (fetched, then read the same way), and takes **pdf** (via
+  `pdftotext`/poppler),
   **docx/odt/xlsx/pptx** (zip + XML, no dependency), or anything textual; a
   *folder* reads the files in it. 6000 characters per document, 20000 in total,
   and what is cut is said so in the prompt — a short answer must never look like a
@@ -277,9 +277,19 @@ python3 bin/jira_flow.py plan --file wish.md \
 * `--repo DIR` adds the branch, the 30 newest commits, the uncommitted count and,
   when the remote is GitHub and `gh` is signed in, the open PRs and issues. The
   local clone alone is enough for the direction; a missing `gh` never stops a wish.
+* A page fetched from a link is read as text, with `<script>`, `<style>` and the
+  markup stripped, so a spec page reads like a spec; anything larger than 20 MB is
+  refused with a message rather than handed over half.
 * The prompt also tells the agent to read the board first when its Jira tools are
   within reach, so it proposes what is *missing* and lets each description say
   which existing issue it rests on.
+* **In the panel** the same list is filled in three ways — drag and drop it on the
+  wish box (a file *or* a link), pick it from the disk with *Add file…*
+  (`jira_flow.py pick`, the machine's own dialog), or paste a link in the field
+  next to it. What went in is listed with an ✕ each, so it is visible what the
+  agent was given, and pressing *Create* clears the list — a second press must
+  never create the same issues twice. What could not be read (a broken file in a
+  dropped folder, a dead link) is named under the buttons.
 
 Both flags are read-only: `--create` is still what writes, and exactly the list you
 read. With `--json` the answer carries a `context` block saying what was read and
