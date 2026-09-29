@@ -194,6 +194,88 @@ def t_journal(args):
     return run_bridge(["journal", args.get("limit") or 50])
 
 
+def t_attachments(args):
+    key = args["key"]
+    if args.get("download"):
+        argv = ["download", key, str(args["download"])]
+        if args.get("dir"):
+            argv.append(str(args["dir"]))
+        if args.get("force"):
+            argv.append("--force")
+        return run_bridge(argv, WRITE_TIMEOUT)
+    return run_bridge(["attachments", key])
+
+
+def t_attach(args):
+    return run_bridge(["attach", args["key"], args["file"]], WRITE_TIMEOUT)
+
+
+def t_links(args):
+    return run_bridge(["links", args["key"]])
+
+
+def t_link(args):
+    return run_bridge(["link", args["key"], args["type"], args["other"]], WRITE_TIMEOUT)
+
+
+def t_worklogs(args):
+    return run_bridge(["worklogs", args["key"]])
+
+
+def t_worklog_add(args):
+    argv = ["log-work", args["key"], args["time"]]
+    if args.get("comment"):
+        argv += ["--comment", str(args["comment"])]
+    if args.get("started"):
+        argv += ["--started", str(args["started"])]
+    return run_bridge(argv, WRITE_TIMEOUT)
+
+
+def t_sprints(args):
+    board, err = board_or_error(args)
+    if err:
+        return False, err
+    return run_bridge(["sprints", str(board.get("id"))])
+
+
+def t_sprint(args):
+    action = (args.get("action") or "").strip().lower()
+    if action == "create":
+        board, err = board_or_error(args)
+        if err:
+            return False, err
+        argv = ["sprint-create", str(board.get("id")), args["name"]]
+        for flag, name in (("--start", "start"), ("--end", "end"), ("--goal", "goal")):
+            if args.get(name):
+                argv += [flag, str(args[name])]
+        return run_bridge(argv, WRITE_TIMEOUT)
+    if action == "add":
+        keys = [str(k) for k in args.get("keys") or []]
+        if not args.get("sprint") or not keys:
+            return False, {"error": "add needs sprint and at least one key"}
+        return run_bridge(["sprint-add", str(args["sprint"])] + keys, WRITE_TIMEOUT)
+    if action in ("start", "close"):
+        sprint = str(args.get("sprint") or "")
+        if not sprint:
+            return False, {"error": "{} needs sprint".format(action)}
+        # Enkelriktat och på teamets tavla: agenten upprepar sprintens id, samma
+        # tvåtrycks-regel som panelen och flödets övertagande använder.
+        if str(args.get("confirm") or "") != sprint:
+            return False, {"error": "confirm must repeat the sprint id '{}' — {} is one-way "
+                                    "and the board is shared".format(sprint, action),
+                           "hint": "read the sprint with jira_sprints first"}
+        return run_bridge(["sprint-" + action, sprint, "--yes"], WRITE_TIMEOUT)
+    return False, {"error": "action must be one of create, add, start, close"}
+
+
+def t_versions(args):
+    return run_bridge(["versions", args["project"]])
+
+
+def t_version_create(args):
+    return run_bridge(["version-create", args["project"], args["name"]], WRITE_TIMEOUT)
+
+
 def tool(name, description, properties=None, required=(), run=None):
     schema = {"type": "object", "properties": properties or {}, "additionalProperties": False}
     if required:
@@ -252,6 +334,44 @@ TOOLS = [
          KEY, ("key",), t_dev),
     tool("jira_options", "Vad redigeringsformuläret kan erbjuda: personer, prioriteringar, "
                          "ärendetyper.", {"project": {"type": "string"}}, ("project",), t_options),
+    tool("jira_attachments", "Bilagorna på ett ärende. Med download (bilagans id eller "
+                             "filnamn) sparas filen i stället och sökvägen svaras.",
+         dict(KEY, download={"type": "string", "description": "Bilagans id eller filnamn"},
+              dir={"type": "string", "description": "Mapp att spara i (annars ~/Downloads)"},
+              force={"type": "boolean", "description": "Skriv över en fil som redan finns"}),
+         ("key",), t_attachments),
+    tool("jira_attach", "Ladda upp en lokal fil till ett ärende. Filen läses tillbaka med "
+                        "sin storlek efter skrivningen.",
+         dict(KEY, file={"type": "string", "description": "Sökväg till filen"}),
+         ("key", "file"), t_attach),
+    tool("jira_links", "Ärendets länkar, plus länktyperna sajten erbjuder.",
+         KEY, ("key",), t_links),
+    tool("jira_link", "Länka två ärenden; key blir den utgående sidan. Typen är en av dem "
+                      "jira_links visar.",
+         dict(KEY, type={"type": "string", "description": "Länktyp, t.ex. Relates"},
+              other={"type": "string", "description": "Det andra ärendets nyckel"}),
+         ("key", "type", "other"), t_link),
+    tool("jira_worklogs", "Tiden som loggats på ett ärende.", KEY, ("key",), t_worklogs),
+    tool("jira_worklog_add", "Logga tid på ett ärende. Tiden skrivs som Jira skriver den "
+                             "(\"10m\", \"1h 30m\", \"2d\").",
+         dict(KEY, time={"type": "string"}, comment={"type": "string"},
+              started={"type": "string", "description": "YYYY-MM-DD eller Jiras tidsstämpel"}),
+         ("key", "time"), t_worklog_add),
+    tool("jira_sprints", "Tavlans sprintar och deras läge (future/active/closed).",
+         PROJECT, run=t_sprints),
+    tool("jira_sprint", "Skapa, fylla, starta eller avsluta en sprint. action är create, "
+                        "add, start eller close. start och close är enkelriktade: sätt "
+                        "confirm till sprintens id så som jira_sprints visar det.",
+         dict(PROJECT, action={"type": "string"}, name={"type": "string"},
+              sprint={"type": "string"}, confirm={"type": "string"},
+              keys={"type": "array", "items": {"type": "string"}},
+              start={"type": "string"}, end={"type": "string"}, goal={"type": "string"}),
+         ("action",), t_sprint),
+    tool("jira_versions", "Projektets versioner.", {"project": {"type": "string"}},
+         ("project",), t_versions),
+    tool("jira_version_create", "Skapa en version på projektet.",
+         {"project": {"type": "string"}, "name": {"type": "string"}},
+         ("project", "name"), t_version_create),
     tool("jira_journal", "Pluginens egen journal: varje skrivning med tid, nyckel och utfall. "
                          "Här ser du vad agenten (eller panelen) gjort.",
          {"limit": {"type": "integer"}}, run=t_journal),
@@ -343,11 +463,27 @@ def selftest():
         assert gone not in names, "{} ska inte ligga ute".format(gone)
 
     assert "jira_next" in names, names
+    for added in ("jira_attachments", "jira_attach", "jira_links", "jira_link",
+                  "jira_worklogs", "jira_worklog_add", "jira_sprints", "jira_sprint",
+                  "jira_versions", "jira_version_create"):
+        assert added in names, "{} saknas".format(added)
     peek = rpc({"jsonrpc": "2.0", "id": 5, "method": "tools/call",
                 "params": {"name": "jira_next", "arguments": {"dryRun": True}}})["result"]
     assert peek["isError"] is False, peek
     seen = json.loads(peek["content"][0]["text"])
     assert seen.get("dryRun") is True and seen.get("wouldTake", {}).get("key"), seen
+
+    st = rpc({"jsonrpc": "2.0", "id": 6, "method": "tools/call",
+              "params": {"name": "jira_status", "arguments": {}}})["result"]
+    mode = json.loads(st["content"][0]["text"]).get("mode")
+    if mode == "real":
+        sp = rpc({"jsonrpc": "2.0", "id": 7, "method": "tools/call",
+                  "params": {"name": "jira_sprints", "arguments": {}}})["result"]
+        assert sp["isError"] is False, sp
+        board = json.loads(sp["content"][0]["text"])
+        assert board["sprints"] and board["sprints"][0]["state"], board
+    else:
+        print("mock-läge: sprint-provet hoppas över")
 
     err = rpc({"jsonrpc": "2.0", "id": 3, "method": "does/not/exist"})
     assert err["error"]["code"] == -32601, err

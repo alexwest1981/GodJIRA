@@ -48,6 +48,24 @@ user can encounter):
   configure <json> [--replace]    Store UI/config keys. The identity keys
                                   (mode, siteUrl, email) are refused while a
                                   working connection exists unless --replace.
+  attachments <issueKey>          Files on an issue (id, name, size, author, when)
+  attach <issueKey> <file>        Upload a local file; read back with its size
+  download <issueKey> <id|name> [dir] [--force]
+                                  Save an attachment; the bytes are counted
+  links <issueKey>                The issue's links, plus the site's link types
+  link <issueKey> <type> <otherKey>   Link two issues (outward from <issueKey>)
+  worklogs <issueKey>             Time logged on an issue
+  log-work <issueKey> <time> [--comment <text>] [--started <date|iso>]
+                                  Log work, e.g. "1h 30m". --started takes
+                                  YYYY-MM-DD or a full Jira timestamp
+  sprints <boardId>               The board's sprints and their state
+  sprint-create <boardId> <name> [--start D] [--end D] [--goal T]
+                                  A future sprint on that board
+  sprint-start <sprintId> --yes   Start one (--yes is required: a started
+  sprint-close <sprintId> --yes   sprint cannot be un-started in Jira)
+  sprint-add <sprintId> <key>...  Move issues into a sprint
+  versions <projectKey>           The project's versions
+  version-create <projectKey> <name>  A new version on the project
   mock-reset                      Rebuild the mock dataset
 
 Anything else (bad args, bad JSON, a crash) is a bug in the helper and exits 1.
@@ -56,14 +74,17 @@ Anything else (bad args, bad JSON, a crash) is a bug in the helper and exits 1.
 import base64
 import datetime
 import json
+import mimetypes
 import os
 import re
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 
 SCHEMA = 1
 SERVICE = "custom.jira"
@@ -336,42 +357,70 @@ def jira_post(cfg, path, body, token=None):
     return jira_request(cfg, "POST", path, body, token=token)
 
 
-def jira_request(cfg, method, path, body=None, token=None):
+def auth_header(cfg, token=None):
+    """The Authorization header for this site: one place decides Bearer vs Basic."""
     if token is None:
         token = load_secret(account_for(cfg))
     if not token:
         raise RuntimeError(t("err.noTokenKeyring"))
-    site = cfg["siteUrl"].rstrip("/")
-    url = site + path
     # Scoped personal access tokens (ATCTT...) authenticate as "Bearer <token>"
     # with no account. Classic API tokens (ATATT...) use Basic <email>:<token>.
-    if token.startswith("ATCTT") or cfg.get("auth") == "bearer":
-        auth = "Bearer " + token
-    else:
-        auth = "Basic " + base64.b64encode("{}:{}".format(cfg["email"], token).encode()).decode()
+    if token.startswith("ATCTT") or (cfg or {}).get("auth") == "bearer":
+        return "Bearer " + token
+    return "Basic " + base64.b64encode(
+        "{}:{}".format(cfg["email"], token).encode()).decode()
+
+
+def http_error_message(exc):
+    """Jira's own explanation out of an HTTPError, or ''."""
+    detail = ""
+    try:
+        parsed = json.loads(exc.read().decode("utf-8", "replace"))
+        messages = parsed.get("errorMessages") or []
+        if isinstance(parsed.get("errors"), dict):
+            messages = messages + list(parsed["errors"].values())
+        detail = " — " + "; ".join(str(m) for m in messages if m)
+    except Exception:
+        pass
+    return detail
+
+
+def multipart_body(filename, content, content_type, field="file", boundary=None):
+    """One file as a multipart/form-data body. Pure, so the wire format has a test.
+
+    ponytail: the filename goes in the header verbatim. Jira takes UTF-8 names on
+    this path; a name holding a quote or a CRLF needs RFC 2231 encoding instead.
+    """
+    boundary = boundary or ("----GodJIRA" + uuid.uuid4().hex)
+    head = ("--{b}\r\nContent-Disposition: form-data; name=\"{f}\"; filename=\"{n}\"\r\n"
+            "Content-Type: {c}\r\n\r\n").format(b=boundary, f=field, n=filename,
+                                                    c=content_type)
+    tail = "\r\n--{b}--\r\n".format(b=boundary)
+    return (head.encode("utf-8") + content + tail.encode("utf-8"),
+            "multipart/form-data; boundary=" + boundary)
+
+
+def jira_request(cfg, method, path, body=None, token=None, raw=False,
+                 content_type=None, extra_headers=None):
+    auth = auth_header(cfg, token)
+    url = cfg["siteUrl"].rstrip("/") + path
     data = None
     if body is not None:
-        data = json.dumps(body).encode()
+        data = body if raw else json.dumps(body).encode()
     req = urllib.request.Request(url, data=data, method=method)
     req.add_header("Authorization", auth)
     req.add_header("Accept", "application/json")
     if data is not None:
-        req.add_header("Content-Type", "application/json")
+        req.add_header("Content-Type", content_type or "application/json")
+    for name, value in (extra_headers or {}).items():
+        req.add_header(name, value)
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             raw = resp.read().decode("utf-8", "replace")
             return json.loads(raw) if raw.strip() else {}
     except urllib.error.HTTPError as exc:
-        detail = ""
-        try:
-            parsed = json.loads(exc.read().decode("utf-8", "replace"))
-            messages = parsed.get("errorMessages") or []
-            if isinstance(parsed.get("errors"), dict):
-                messages = messages + list(parsed["errors"].values())
-            detail = " — " + "; ".join(str(m) for m in messages if m)
-        except Exception:
-            pass
-        raise RuntimeError("Jira svarade {} {}{}".format(exc.code, exc.reason, detail))
+        raise RuntimeError("Jira svarade {} {}{}".format(
+            exc.code, exc.reason, http_error_message(exc)))
 
 
 def paginate(cfg, path):
@@ -1076,6 +1125,335 @@ def real_report(cfg, bid, sprint_id):
     except RuntimeError:
         pass
     return out
+
+
+# ------------------------------------- filer, tid, länkar, sprintar, versioner
+#
+# Fem ytor som bryggan saknade (Rovo-MCP:n har dem). Samma näts som resten:
+# journalrad för varje skrivning och ett kvitto där svaret läses tillbaka. Inget
+# förstörande ligger här — en bilaga, en länk, en worklog, en sprint eller en
+# version tas bort i Jira, inte genom det här verktyget. Det finns alltså ingen
+# nyckel till den delen att lägga i en agent.
+
+def real_only(cfg, feature):
+    """Mock-datat har inga filer, länkar, sprintar eller versioner att skriva till."""
+    if (cfg or {}).get("mode") != "real":
+        raise RuntimeError(
+            "'{}' needs a live connection (mode is '{}'); connect a site first"
+            .format(feature, (cfg or {}).get("mode") or ""))
+
+
+class _DropAuthOnRedirect(urllib.request.HTTPRedirectHandler):
+    """Jira skickar bilagor vidare till en försignerad media-URL. Webbplatsens
+    credential ska inte följa med dit."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        fresh = urllib.request.HTTPRedirectHandler.redirect_request(
+            self, req, fp, code, msg, headers, newurl)
+        if fresh is not None:
+            fresh.headers.pop("Authorization", None)
+        return fresh
+
+
+def fetch_bytes(cfg, url):
+    """GET a binary resource with the site credential (dropped on redirect)."""
+    req = urllib.request.Request(url, method="GET")
+    req.add_header("Authorization", auth_header(cfg))
+    opener = urllib.request.build_opener(_DropAuthOnRedirect())
+    try:
+        with opener.open(req, timeout=60) as resp:
+            return resp.read()
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError("Jira svarade {} {}{}".format(
+            exc.code, exc.reason, http_error_message(exc)))
+
+
+def real_attachments(cfg, key):
+    data = jira_get(cfg, "/rest/api/3/issue/{}?fields=attachment".format(key))
+    rows = []
+    for row in ((data.get("fields") or {}).get("attachment")) or []:
+        rows.append({
+            "id": str(row.get("id") or ""),
+            "filename": row.get("filename") or "",
+            "size": row.get("size") or 0,
+            "mimeType": row.get("mimeType") or "",
+            "createdMs": parse_iso(row.get("created")),
+            "authorName": (row.get("author") or {}).get("displayName") or "",
+            "content": row.get("content") or "",
+        })
+    return rows
+
+
+def real_attach(cfg, key, filepath):
+    """Ladda upp en fil och läs tillbaka att den finns med samma storlek."""
+    path = os.path.abspath(os.path.expanduser(str(filepath or "")))
+    if not os.path.isfile(path):
+        raise RuntimeError("File not found: {}".format(filepath))
+    filename = os.path.basename(path)
+    with open(path, "rb") as fh:
+        blob = fh.read()
+    ctype = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    body, header = multipart_body(filename, blob, ctype)
+    # Ändpunkten är plural: /attachments. Singular svarar 404 "No endpoint ...".
+    jira_request(cfg, "POST", "/rest/api/3/issue/{}/attachments".format(key),
+                 body=body, raw=True, content_type=header,
+                 extra_headers={"X-Atlassian-Token": "no-check"})
+    for row in real_attachments(cfg, key):
+        if row["filename"] == filename and int(row["size"]) == len(blob):
+            return row, len(blob)
+    seen = ", ".join(r["filename"] for r in real_attachments(cfg, key)) or "none"
+    raise RuntimeError("{} ({} bytes) is not on {} after the upload; the issue shows: {}"
+                       .format(filename, len(blob), key, seen))
+
+
+def real_download(cfg, key, want, dest_dir="", overwrite=False):
+    """Spara en bilaga. Storleken på filen jämförs med Jiras eget svar."""
+    rows = real_attachments(cfg, key)
+    wanted = str(want or "").strip()
+    hits = [r for r in rows if r["id"] == wanted] or \
+           [r for r in rows if r["filename"].lower() == wanted.lower()]
+    if not hits:
+        known = ", ".join("{} ({})".format(r["filename"], r["id"]) for r in rows) or "none"
+        raise RuntimeError("{} has no attachment '{}'; it has: {}".format(key, want, known))
+    if len(hits) > 1:
+        raise RuntimeError("'{}' matches {} attachments on {} ({}); pass the id instead"
+                           .format(want, len(hits), key,
+                                   ", ".join(r["id"] for r in hits)))
+    row = hits[0]
+    if not row["content"]:
+        raise RuntimeError("Jira gave no download URL for attachment {}".format(row["id"]))
+    target_dir = os.path.abspath(os.path.expanduser(
+        str(dest_dir) or (os.path.join(HOME, "Downloads")
+                          if os.path.isdir(os.path.join(HOME, "Downloads")) else os.getcwd())))
+    if not os.path.isdir(target_dir):
+        os.makedirs(target_dir, exist_ok=True)
+    dest = os.path.join(target_dir, row["filename"])
+    if os.path.exists(dest) and not overwrite:
+        raise RuntimeError("{} already exists; move it or pass --force".format(dest))
+    blob = fetch_bytes(cfg, row["content"])
+    if len(blob) != int(row["size"]):
+        raise RuntimeError("{} bytes came down, Jira says {} for '{}' — nothing was kept"
+                           .format(len(blob), row["size"], row["filename"]))
+    with open(dest, "wb") as fh:
+        fh.write(blob)
+    return {"path": dest, "filename": row["filename"], "size": len(blob),
+            "id": row["id"], "mimeType": row["mimeType"]}
+
+
+def real_link_types(cfg):
+    data = jira_get(cfg, "/rest/api/3/issueLinkType")
+    return [{"id": str(r.get("id") or ""), "name": r.get("name") or "",
+             "inward": r.get("inward") or "", "outward": r.get("outward") or ""}
+            for r in data.get("issueLinkTypes") or []]
+
+
+def real_links(cfg, key):
+    data = jira_get(cfg, "/rest/api/3/issue/{}?fields=issuelinks".format(key))
+    out = []
+    for row in ((data.get("fields") or {}).get("issuelinks")) or []:
+        for side, direction in (("outwardIssue", "outward"), ("inwardIssue", "inward")):
+            other = row.get(side)
+            if not other:
+                continue
+            fields = other.get("fields") or {}
+            out.append({
+                "id": str(row.get("id") or ""),
+                "typeName": (row.get("type") or {}).get("name") or "",
+                "direction": direction,
+                "key": other.get("key") or "",
+                "summary": fields.get("summary") or "",
+                "statusName": (fields.get("status") or {}).get("name") or "",
+            })
+    return out
+
+
+def real_link(cfg, key, type_name, other):
+    """Länka två ärenden: <key> blir den utgående sidan."""
+    ours = str(key or "").strip().upper()
+    theirs = str(other or "").strip().upper()
+    if not ours or not theirs:
+        raise RuntimeError("linking needs two issue keys")
+    if ours == theirs:
+        raise RuntimeError("an issue cannot be linked to itself ({})".format(ours))
+    types = real_link_types(cfg)
+    want = str(type_name or "").strip().lower()
+    picked = next((r for r in types
+                   if want in (r["name"].lower(), r["inward"].lower(), r["outward"].lower())), None)
+    if picked is None:
+        raise RuntimeError("unknown link type '{}'; this site has: {}".format(
+            type_name, ", ".join(r["name"] for r in types) or "none"))
+    # Jiras riktning: det som står i "inwardIssue" är ärendet som *ser* länken som
+    # utgående. Mätt 2026-09-29: med outwardIssue=<key> visade <key> länken som
+    # inkommande, tvärtemot vad kommandoraden lovar.
+    jira_post(cfg, "/rest/api/3/issueLink",
+              {"type": {"name": picked["name"]},
+               "inwardIssue": {"key": ours}, "outwardIssue": {"key": theirs}})
+    for row in real_links(cfg, ours):
+        if row["key"] == theirs and row["direction"] == "outward":
+            return row
+    raise RuntimeError("{} does not show the link to {} after the write".format(ours, theirs))
+
+
+def real_worklogs(cfg, key):
+    data = jira_get(cfg, "/rest/api/3/issue/{}/worklog?maxResults=100".format(key))
+    out = []
+    for row in data.get("worklogs") or []:
+        comment = row.get("comment")
+        out.append({
+            "id": str(row.get("id") or ""),
+            "authorName": (row.get("author") or {}).get("displayName") or "",
+            "timeSpent": row.get("timeSpent") or "",
+            "seconds": row.get("timeSpentSeconds") or 0,
+            "startedMs": parse_iso(row.get("started")),
+            "comment": comment if isinstance(comment, str) else adf_to_text(comment),
+        })
+    return out
+
+
+def jira_started(value):
+    """Jira vill ha 'YYYY-MM-DDTHH:MM:SS.mmm+0000'. Enbart datum blir kl 09:00 UTC."""
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    if "T" not in raw:
+        raw += "T09:00:00.000+0000"
+    return raw
+
+
+def real_add_worklog(cfg, key, time_spent, comment="", started=""):
+    """Logga tid och läs tillbaka samma antal sekunder som Jira svarade med."""
+    body = {"timeSpent": str(time_spent or "").strip()}
+    if not body["timeSpent"]:
+        raise RuntimeError("time is required, written as Jira writes it: '10m', '1h 30m', '2d'")
+    when = jira_started(started)
+    if when:
+        body["started"] = when
+    if str(comment or "").strip():
+        body["comment"] = text_to_adf(comment)
+    created = jira_post(cfg, "/rest/api/3/issue/{}/worklog".format(key), body)
+    wid = str((created or {}).get("id") or "")
+    if not wid:
+        raise RuntimeError("Jira answered the worklog write without an id")
+    back = jira_get(cfg, "/rest/api/3/issue/{}/worklog/{}".format(key, wid))
+    want_secs = (created or {}).get("timeSpentSeconds")
+    got_secs = back.get("timeSpentSeconds")
+    if want_secs is not None and int(got_secs or -1) != int(want_secs):
+        raise RuntimeError("worklog {} reads back as {}s, wrote {}s".format(wid, got_secs, want_secs))
+    comment_back = back.get("comment")
+    return {"id": wid, "timeSpent": back.get("timeSpent") or "",
+            "seconds": int(got_secs or 0), "startedMs": parse_iso(back.get("started")),
+            "comment": (comment_back if isinstance(comment_back, str)
+                        else adf_to_text(comment_back)),
+            "authorName": (back.get("author") or {}).get("displayName") or ""}
+
+
+def sprint_row(raw):
+    """En sprint som bryggan visar den. None när svaret inte är en sprint."""
+    if not isinstance(raw, dict) or not raw.get("id"):
+        return None
+    return {"id": str(raw.get("id") or ""), "name": raw.get("name") or "",
+            "state": raw.get("state") or "", "goal": raw.get("goal") or "",
+            "startDate": (raw.get("startDate") or "")[:10],
+            "endDate": (raw.get("endDate") or "")[:10],
+            "originBoardId": str(raw.get("originBoardId") or "")}
+
+
+def real_sprint(cfg, sprint_id):
+    return sprint_row(jira_get(cfg, "/rest/agile/1.0/sprint/{}".format(sprint_id)))
+
+
+def real_sprints(cfg, board_id):
+    data = jira_get(cfg, "/rest/agile/1.0/board/{}/sprint?maxResults=50".format(board_id))
+    return [row for row in (sprint_row(r) for r in data.get("values") or []) if row]
+
+
+def real_sprint_create(cfg, board_id, name, start="", end="", goal=""):
+    label = str(name or "").strip()
+    if not label:
+        raise RuntimeError("a sprint needs a name")
+    board = int(board_id) if str(board_id).strip().isdigit() else board_id
+    body = {"name": label, "originBoardId": board}
+    if str(start or "").strip():
+        body["startDate"] = str(start).strip()
+    if str(end or "").strip():
+        body["endDate"] = str(end).strip()
+    if str(goal or "").strip():
+        body["goal"] = str(goal).strip()
+    created = jira_post(cfg, "/rest/agile/1.0/sprint", body)
+    sid = str((created or {}).get("id") or "")
+    if not sid:
+        raise RuntimeError("Jira answered the sprint write without an id")
+    got = real_sprint(cfg, sid)
+    if not got or got["name"] != label:
+        raise RuntimeError("sprint {} does not read back as '{}' (it says '{}')".format(
+            sid, label, (got or {}).get("name") or "nothing"))
+    return got
+
+
+def real_sprint_state(cfg, sprint_id, state):
+    jira_post(cfg, "/rest/agile/1.0/sprint/{}".format(sprint_id), {"state": state})
+    got = real_sprint(cfg, sprint_id)
+    if not got or got["state"] != state:
+        raise RuntimeError("sprint {} reads back as '{}', asked for '{}'".format(
+            sprint_id, (got or {}).get("state") or "nothing", state))
+    return got
+
+
+def settled(read, tries=5, delay=2.0):
+    """Jiras agila sökindex släpar efter en skrivning: läs om innan vi kallar det fel.
+
+    Mätt 2026-09-29: två ärenden som låg i sprinten sekunder senare såg ut som noll
+    i den direkta omläsningen — en lyckad skrivning hade rapporterats som ett fel.
+    """
+    for attempt in range(tries):
+        found = read()
+        if found:
+            return found
+        if attempt < tries - 1:
+            time.sleep(delay)
+    return None
+
+
+def real_sprint_add(cfg, sprint_id, keys):
+    wanted = [str(k).strip().upper() for k in (keys or []) if str(k).strip()]
+    if not wanted:
+        raise RuntimeError("at least one issue key is required")
+    jira_post(cfg, "/rest/agile/1.0/sprint/{}/issue".format(sprint_id), {"issues": wanted})
+
+    def read():
+        back = jira_get(cfg, "/rest/agile/1.0/sprint/{}/issue?maxResults=100".format(sprint_id))
+        have = {row.get("key") or "" for row in back.get("issues") or []}
+        return have if all(k in have for k in wanted) else None
+
+    have = settled(read)
+    missing = [k for k in wanted if k not in (have or set())]
+    if missing:
+        raise RuntimeError("{} did not land in sprint {} (it has {} issues after {}s)"
+                           .format(", ".join(missing), sprint_id,
+                                   len(have or []), 5 * 2))
+    return sorted(have)
+
+
+def real_versions(cfg, pkey):
+    rows = jira_get(cfg, "/rest/api/3/project/{}/versions".format(pkey))
+    return [{"id": str(r.get("id") or ""), "name": r.get("name") or "",
+             "released": bool(r.get("released")), "archived": bool(r.get("archived")),
+             "startDate": r.get("startDate") or "", "releaseDate": r.get("releaseDate") or ""}
+            for r in rows or [] if isinstance(r, dict)]
+
+
+def real_version_create(cfg, pkey, name):
+    label = str(name or "").strip()
+    if not label:
+        raise RuntimeError("a version needs a name")
+    created = jira_post(cfg, "/rest/api/3/version", {"project": pkey, "name": label})
+    vid = str((created or {}).get("id") or "")
+    if not vid:
+        raise RuntimeError("Jira answered the version write without an id")
+    hit = next((r for r in real_versions(cfg, pkey) if r["id"] == vid), None)
+    if hit is None:
+        raise RuntimeError("version {} is not on {} after the write".format(vid, pkey))
+    return hit
 
 
 # ----------------------------------------------------------------- mock
@@ -2238,6 +2616,182 @@ def status_payload(cfg):
 
 # ----------------------------------------------------------------- main
 
+# -------------------------------------------------------- filer, tid, länkar
+#
+# Ett kommando per yta, samlade här i stället för utspridda i main(): fjorton
+# block till hade gjort main() till en halv fil. Svarsformen är bryggans vanliga
+# (payload/err_payload), och varje skrivning lämnar en journalrad.
+
+EXTRAS = ("attachments", "attach", "download", "links", "link", "worklogs",
+          "log-work", "sprints", "sprint-create", "sprint-start", "sprint-close",
+          "sprint-add", "versions", "version-create")
+
+
+def run_extras(cmd, cfg, argv):
+    def arg(i):
+        return argv[i] if len(argv) > i else ""
+
+    flags = [a for a in argv[2:] if a.startswith("--")]
+
+    if cmd in ("attachments", "attach", "download"):
+        key = arg(2)
+        try:
+            if not key:
+                raise RuntimeError("'{}' needs an issue key".format(cmd))
+            real_only(cfg, cmd)
+            if cmd == "attachments":
+                rows = real_attachments(cfg, key)
+                ok_payload(key=key, attachments=rows)
+            if cmd == "download":
+                want = arg(3)
+                if not want:
+                    raise RuntimeError("download needs an attachment id or a filename")
+                dest = next((a for a in argv[4:] if not a.startswith("--")), "")
+                saved = real_download(cfg, key, want, dest, "--force" in flags)
+                ok_payload(key=key, saved=saved)
+            filepath = arg(3)
+            if not filepath:
+                raise RuntimeError("attach needs a file path")
+            row, size = real_attach(cfg, key, filepath)
+            log_action(cfg, "attach", key,
+                       detail="{} ({} bytes)".format(row["filename"], size),
+                       extra={"attachmentId": row["id"]})
+            ok_payload(key=key, attachment=row)
+        except RuntimeError as exc:
+            if cmd == "attach":
+                log_action(cfg, "attach", key or "", detail=arg(3), ok=False, reason=str(exc))
+            err_payload(str(exc))
+
+    if cmd in ("links", "link"):
+        key = arg(2)
+        try:
+            if not key:
+                raise RuntimeError("'{}' needs an issue key".format(cmd))
+            real_only(cfg, cmd)
+            if cmd == "links":
+                ok_payload(key=key, links=real_links(cfg, key), types=real_link_types(cfg))
+            other = arg(4)
+            if not arg(3) or not other:
+                raise RuntimeError("link needs a type and the other issue key")
+            row = real_link(cfg, key, arg(3), other)
+            log_action(cfg, "link", key, detail="{} → {}".format(row["typeName"], row["key"]),
+                       extra={"linkId": row["id"], "other": row["key"]})
+            ok_payload(key=key, link=row, links=real_links(cfg, key))
+        except RuntimeError as exc:
+            if cmd == "link":
+                log_action(cfg, "link", key or "",
+                           detail="{} → {}".format(arg(3), arg(4)), ok=False, reason=str(exc))
+            err_payload(str(exc))
+
+    if cmd in ("worklogs", "log-work"):
+        key = arg(2)
+        try:
+            if not key:
+                raise RuntimeError("'{}' needs an issue key".format(cmd))
+            real_only(cfg, cmd)
+            if cmd == "worklogs":
+                ok_payload(key=key, worklogs=real_worklogs(cfg, key))
+            # En väg till startdatumet: flaggan. Ett positionellt argument på plats
+            # fyra blev flaggan själv så fort --comment användes (mätt 2026-09-29).
+            row = real_add_worklog(cfg, key, arg(3),
+                                   flag_value(argv, "--comment") or "",
+                                   flag_value(argv, "--started") or "")
+            log_action(cfg, "log-work", key,
+                       detail="{} ({}s)".format(row["timeSpent"], row["seconds"]),
+                       extra={"worklogId": row["id"]})
+            ok_payload(key=key, worklog=row, worklogs=real_worklogs(cfg, key))
+        except RuntimeError as exc:
+            if cmd == "log-work":
+                log_action(cfg, "log-work", key or "", detail=arg(3), ok=False, reason=str(exc))
+            err_payload(str(exc))
+
+    if cmd == "sprints":
+        board = arg(2) or (cfg.get("selectedBoardId") or "")
+        try:
+            if not board:
+                raise RuntimeError("sprints needs a board id (none is selected)")
+            real_only(cfg, cmd)
+            ok_payload(boardId=str(board), sprints=real_sprints(cfg, board))
+        except RuntimeError as exc:
+            err_payload(str(exc))
+
+    if cmd == "sprint-create":
+        board = arg(2)
+        try:
+            if not board or not arg(3):
+                raise RuntimeError("sprint-create needs a board id and a name")
+            real_only(cfg, cmd)
+            row = real_sprint_create(cfg, board, arg(3), flag_value(argv, "--start") or "",
+                                     flag_value(argv, "--end") or "",
+                                     flag_value(argv, "--goal") or "")
+            log_action(cfg, "sprint-create", row["id"],
+                       detail="{} på tavla {}".format(row["name"], board),
+                       extra={"board": str(board)})
+            ok_payload(sprint=row, sprints=real_sprints(cfg, board))
+        except RuntimeError as exc:
+            log_action(cfg, "sprint-create", "", detail=arg(3), ok=False, reason=str(exc))
+            err_payload(str(exc))
+
+    if cmd in ("sprint-start", "sprint-close"):
+        sprint_id = arg(2)
+        action = cmd.split("-")[1]
+        try:
+            if not sprint_id:
+                raise RuntimeError("{} needs a sprint id".format(cmd))
+            real_only(cfg, cmd)
+            # Båda är enkelriktade på riktigt: en startad sprint går inte att
+            # starta om i Jira (bara att avsluta), och en avslutad sprint flyttar
+            # sina oavslutade ärenden. Därför samma uttalade ja som för delete.
+            if "--yes" not in flags:
+                why = ("a started sprint cannot be un-started in Jira" if action == "start"
+                       else "closing a sprint moves its unfinished issues")
+                err_payload(refuse(cfg, cmd, sprint_id,
+                                   "'{}' needs --yes: {}".format(cmd, why),
+                                   detail="unconfirmed"))
+            row = real_sprint_state(cfg, sprint_id, "active" if action == "start" else "closed")
+            log_action(cfg, cmd, sprint_id, detail="{} → {}".format(row["name"], row["state"]))
+            ok_payload(sprint=row)
+        except RuntimeError as exc:
+            log_action(cfg, cmd, sprint_id or "", detail=action, ok=False, reason=str(exc))
+            err_payload(str(exc))
+
+    if cmd == "sprint-add":
+        sprint_id = arg(2)
+        keys = [a for a in argv[3:] if not a.startswith("--")]
+        try:
+            if not sprint_id or not keys:
+                raise RuntimeError("sprint-add needs a sprint id and at least one issue key")
+            real_only(cfg, cmd)
+            have = real_sprint_add(cfg, sprint_id, keys)
+            log_action(cfg, "sprint-add", sprint_id,
+                       detail="{} ärenden → sprint {}".format(len(keys), sprint_id),
+                       extra={"issues": keys})
+            ok_payload(sprintId=sprint_id, added=keys, sprintIssues=have)
+        except RuntimeError as exc:
+            log_action(cfg, "sprint-add", sprint_id or "", detail=", ".join(keys),
+                       ok=False, reason=str(exc))
+            err_payload(str(exc))
+
+    if cmd in ("versions", "version-create"):
+        pkey = arg(2) or (cfg.get("selectedProjectKey") or "")
+        try:
+            if not pkey:
+                raise RuntimeError("'{}' needs a project key".format(cmd))
+            real_only(cfg, cmd)
+            if cmd == "versions":
+                ok_payload(projectKey=pkey, versions=real_versions(cfg, pkey))
+            row = real_version_create(cfg, pkey, arg(3))
+            log_action(cfg, "version-create", "", detail="{} på {}".format(row["name"], pkey),
+                       extra={"versionId": row["id"], "project": pkey})
+            ok_payload(version=row, versions=real_versions(cfg, pkey))
+        except RuntimeError as exc:
+            if cmd == "version-create":
+                log_action(cfg, "version-create", "", detail=arg(3), ok=False, reason=str(exc))
+            err_payload(str(exc))
+
+    err_payload("not an extras command: {}".format(cmd))
+
+
 def main(argv):
     cmd = argv[1] if len(argv) > 1 else "status"
     set_language(load_config())
@@ -2539,6 +3093,9 @@ def main(argv):
         capture_baseline(cfg, snap)
         payload(snap)
 
+    if cmd in EXTRAS:
+        run_extras(cmd, load_config(), argv)
+
     if cmd == "journal":
         cfg = load_config()
         limit = int(argv[2]) if len(argv) > 2 and str(argv[2]).isdigit() else 50
@@ -2745,5 +3302,40 @@ def run():
         err_payload("{}: {}".format(type(exc).__name__, exc))
 
 
+def selftest():
+    """Formen på det vi skickar och läser, utan nät. En rad per sak som gick
+    sönder i utvecklingen, så nästa ändring får samma svar direkt."""
+    body, header = multipart_body("a b.txt", b"hej\n", "text/plain", boundary="BOUND")
+    assert header == "multipart/form-data; boundary=BOUND", header
+    assert body.startswith(b"--BOUND\r\n"), body[:40]
+    assert b'filename="a b.txt"' in body and b"name=\"file\"" in body, body
+    assert body.endswith(b"\r\n--BOUND--\r\n"), body[-30:]
+    assert b"\r\n\r\nhej\n\r\n" in body, body
+    # Varje byte ska komma fram: en binär fil får inte tolkas som text.
+    payload = bytes(range(256))
+    framed, _ = multipart_body("x.bin", payload, "application/octet-stream", boundary="B")
+    assert payload in framed
+    # Jira-datum: ett datum blir en tid, en tid står kvar.
+    assert jira_started("2026-09-29") == "2026-09-29T09:00:00.000+0000"
+    assert jira_started("2026-09-29T08:15:00.000+0000") == "2026-09-29T08:15:00.000+0000"
+    assert jira_started("") == ""
+    # En sprintrad har en ägare; tomma svar blir None, inte en halv rad.
+    assert sprint_row({"id": 7, "name": "S1", "state": "future"})["id"] == "7"
+    assert sprint_row({"name": "utan id"}) is None
+    assert sprint_row(None) is None
+    assert real_only.__name__ == "real_only"
+    # settled: tomt svar läses om, men bara till taket, och det som finns går först.
+    tries = {"n": 0}
+    def flaky():
+        tries["n"] += 1
+        return "klart" if tries["n"] == 2 else None
+    assert settled(flaky, tries=3, delay=0) == "klart" and tries["n"] == 2
+    assert settled(lambda: None, tries=2, delay=0) is None
+    print("OK: multipart, Jira-datum och sprintrader")
+
+
 if __name__ == "__main__":
-    run()
+    if "--selftest" in sys.argv:
+        selftest()
+    else:
+        run()

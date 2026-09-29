@@ -183,6 +183,20 @@ python3 bin/jira_bridge.py options WEB                  # assignable people, pri
 python3 bin/jira_bridge.py activity WEB 25              # recently changed issues
 python3 bin/jira_bridge.py report 1 7                   # burndown + sprint report + velocity
 python3 bin/jira_bridge.py dev WEB-41                   # git/PR/build status + issue history
+python3 bin/jira_bridge.py attachments WEB-41             # files on the issue
+python3 bin/jira_bridge.py attach WEB-41 ./skiss.png      # upload; size is read back
+python3 bin/jira_bridge.py download WEB-41 10001 ./ner    # save by id or filename
+python3 bin/jira_bridge.py links WEB-41                   # the issue's links + link types
+python3 bin/jira_bridge.py link WEB-41 Relates WEB-42     # WEB-41 is the outward side
+python3 bin/jira_bridge.py worklogs WEB-41                # time logged
+python3 bin/jira_bridge.py log-work WEB-41 "1h 30m" --comment "parprogrammering" [--started 2026-09-28]
+python3 bin/jira_bridge.py sprints 1                      # the board's sprints and their state
+python3 bin/jira_bridge.py sprint-create 1 "Sprint 4" --start 2026-10-05 --end 2026-10-16
+python3 bin/jira_bridge.py sprint-add 12 WEB-41 WEB-42    # into a sprint
+python3 bin/jira_bridge.py sprint-start 12 --yes          # one-way; --yes required
+python3 bin/jira_bridge.py sprint-close 12 --yes          # moves unfinished issues
+python3 bin/jira_bridge.py versions WEB                  # the project's versions
+python3 bin/jira_bridge.py version-create WEB "1.2.0"
 python3 bin/jira_bridge.py configure '<json>'             # e.g. {"mode":"real","language":"de"}
 python3 bin/jira_bridge.py strings [lang]                 # the text table the UI renders (see Languages)
 python3 bin/jira_bridge.py watch                          # diff vs baseline; notifies if changed
@@ -204,7 +218,8 @@ watch a notification appear without a second user.
 
 `bin/jira_mcp.py` exposes the bridge over MCP (stdio, JSON-RPC), so a coding
 agent can read the backlog and move issues without a second Jira client:
-fifteen tools (`jira_next` among them), and every one of them shells out to
+twenty-five tools (`jira_next`, `jira_attach`, `jira_link`, `jira_sprint` among
+them), and every one of them shells out to
 `jira_bridge.py` — the
 credential, the read-back verification and the journal/trash nets stay in one
 place. `delete`, `restore`, `configure`, `login` and `logout` are deliberately
@@ -221,6 +236,13 @@ Antigravity reads that globally from `~/.gemini/config/mcp_config.json` (or per
 workspace from `.agents/mcp_config.json`); any other MCP client works the same
 way. Self-check: `python3 bin/jira_mcp.py --selftest` (handshake, tool list,
 and a real backlog read through the bridge).
+
+Attachments, worklogs, issue links, sprints and versions are readable and
+writable, but nothing here **removes** one: an attachment, a link, a worklog, a
+sprint or a version is deleted in Jira, not by an agent. `sprint-start` and
+`sprint-close` are the two writes that ask for an explicit `--yes` (through MCP:
+`confirm` repeating the sprint id) — Jira cannot un-start a sprint, and closing
+one moves its unfinished issues.
 
 ### The customer's wish, in the panel
 
