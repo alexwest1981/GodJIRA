@@ -151,6 +151,11 @@ custom.jira/
 │                            no build step) + check.py + test_import.py (the upload
 │                            door: a document in, a proposal out, nothing written)
 ├── panel/fixtures/          bestallarkrav.pdf, the 860-byte document the check parses
+├── assets/godjira.svg      the mark: Inkscape's A4 page cropped to the drawing (the
+│                            artwork sat outside its own viewBox, so a plain link to
+│                            the original renders nothing). 76 % of the height is the
+│                            creature, the last 21 % the wordmark: the rail shows the
+│                            creature alone, because 30 px turns the wordmark to mush.
 ├── n8n/                     the flow on a canvas: bin/flow-call.sh (the seam),
 │                            workflows/*.workflow.ts, README.md
 └── bin/jira_bridge.py       everything network/credential related (Python stdlib only)

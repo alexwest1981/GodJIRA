@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="/godjira.svg">
 <title>GodJIRA</title>
 <style>
   /* Plane's anatomy, our data: icon rail + nav sidebar, breadcrumb header with a
@@ -40,7 +41,9 @@
     border-radius: 50%; animation: spin .9s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
-  .mark.big { width: 38px; height: 38px; border-radius: 11px; font-size: 16px; }
+  /* Märket ligger i assets/godjira.svg (beskuret från A4-sidan i originalet: motivet
+     låg utanför sin egen viewBox och syntes inte alls förrän det beskars). */
+  .logo { height: 68px; width: auto; }
   .grow { flex: 1; }
   .muted { color: var(--muted); }
   .key { font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
@@ -66,8 +69,11 @@
     align-items: center; gap: 12px; padding: 12px 0; height: 100%;
   }
   .rail .mark {
-    width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center;
-    background: linear-gradient(135deg, var(--blue), var(--violet)); font-weight: 700; color: #fff;
+    width: 34px; height: 30px; border-radius: 9px;
+    /* bara odjuret: motivet är 76 % av höjden, ordmärket de sista 21 procenten.
+       Rita om logotypen -> räkna om 39px (30 / 0,7625). ponytail: ett fast mått,
+       blir logotypen en annan form får det bli en egen ikonfil i stället. */
+    background: var(--panel) url(/godjira.svg) center top / auto 39px no-repeat;
   }
   .railitem {
     width: 46px; display: grid; place-items: center; gap: 3px; padding: 6px 0; border-radius: 8px;
@@ -228,8 +234,7 @@
 <body>
 <div class="splash" id="splash">
   <div class="splash-box">
-    <div class="mark big">G</div>
-    <b>GodJIRA</b>
+    <img class="logo" src="/godjira.svg" alt="GodJIRA" height="68">
     <div class="spin"></div>
     <div class="note" id="splashNote">hämtar Jira, GitHub och flödets nästa …</div>
   </div>
@@ -441,7 +446,7 @@ const link = (url, inner) => url ? `<a href="${esc(url)}" target="_blank" rel="n
 
 /* ------------------------------------------------------------- render ---- */
 function renderRail() {
-  document.getElementById("rail").innerHTML = `<div class="mark">G</div>` + Object.entries(TEXT.views).map(([v, [label, glyph]]) =>
+  document.getElementById("rail").innerHTML = `<div class="mark" title="GodJIRA"></div>` + Object.entries(TEXT.views).map(([v, [label, glyph]]) =>
     `<div class="railitem ${v === view ? "on" : ""}" data-v="${v}"><span class="g">${glyph}</span>${label}</div>`).join("");
 }
 

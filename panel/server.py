@@ -31,6 +31,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SEAM = ROOT / "n8n" / "bin" / "flow-call.sh"
 UI = Path(__file__).resolve().parent / "index.html"
+LOGO = Path(__file__).resolve().parent.parent / "assets" / "godjira.svg"
 PORT = int(os.environ.get("PANEL_PORT", "8788"))
 BIND = os.environ.get("PANEL_BIND", "0.0.0.0")
 TTL = int(os.environ.get("PANEL_TTL", "60"))
@@ -259,6 +260,9 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         if path in ("/", "/index.html"):
             self._send(200, UI.read_bytes(), "text/html; charset=utf-8")
+            return
+        if path in ("/godjira.svg", "/favicon.ico"):
+            self._send(200, LOGO.read_bytes(), "image/svg+xml")
             return
         if path == "/api/state":
             self._send(200, json.dumps(state(), ensure_ascii=False).encode(), "application/json; charset=utf-8")
