@@ -189,6 +189,11 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   .lay { display: flex; align-items: center; gap: 8px; padding: 3px 0; cursor: pointer; }
   .lay input { accent-color: var(--accent); }
   .two:has(> .panel[hidden]) { grid-template-columns: 1fr; }
+  .two:not(:has(> .panel:not([hidden]))) { display: none; }
+  .mv { padding: 0 7px; font-size: 11px; line-height: 19px; }
+  /* Utan egen stil på en avstängd knapp ser den tryckbar ut, och då trycker man på den
+     och ingenting händer. */
+  .mv:disabled { opacity: .3; cursor: default; }
   .dir { margin-top: 7px; }
   .dir > .mono { color: var(--muted); }
   .dir ul.tight { margin: 2px 0 0 14px; }
@@ -466,13 +471,13 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
 
   <div class="wrap">
     <section class="view on" id="v-overview">
-      <div class="stats" id="stats"></div>
-      <div class="panel" data-ov="automation">
+      <div class="stats" id="stats" data-unit="stats"></div>
+      <div class="panel" data-ov="automation" data-unit="automation">
         <h3>Projektet du är kopplad till <span class="meta" id="automationMeta"></span>
           <span class="grow"></span><a class="chip" id="automationLink" hidden>öppna flödet</a></h3>
         <div class="body" id="automation"></div>
       </div>
-      <div class="two">
+      <div class="two" data-unit="pair">
         <div class="panel" data-ov="flow">
           <h3>Flödets nästa <span class="meta">jira_flow.py next --dry-run</span></h3>
           <div class="body" id="flowPick"></div>
@@ -482,7 +487,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
           <div class="body" id="journal"></div>
         </div>
       </div>
-      <div class="panel" data-ov="recent">
+      <div class="panel" data-ov="recent" data-unit="recent">
         <h3>Senast rörda repon <span class="meta" id="recentMeta"></span></h3>
         <div class="body" id="recent"></div>
       </div>
@@ -920,6 +925,11 @@ const OVERVIEW_BLOCKS = [["automation", "Projektet du är kopplad till"],
 // var i gränssnittet något råkade hamna.
 const STATUS_CARDS = [["ov:stat:jira", "Jira — öppna ärenden"], ["ov:stat:gh", "GitHub — väntar på dig"],
   ["ov:stat:repos", "GitHub — repon"], ["ov:stat:flow", "n8n — flödets nästa"]];
+// Raderna på Översikt, i den ordning de står i filen. Alla är direkta barn till vyn, så
+// ordningen sätts med det inbyggda order -- ingen flytt av noder i trädet.
+const ORDER_KEY = "godjira.order";
+const UNITS = [["stats", "Statuskorten"], ["automation", "Projektet du är kopplad till"],
+  ["pair", "Flödets nästa + egna skrivningar"], ["recent", "Senast rörda repon"]];
 // Översikt är vägen tillbaka och Inställningar är där man slår på igen: de två går inte
 // att stänga av.
 const LOCKED_VIEWS = ["overview", "settings"];
@@ -933,6 +943,31 @@ function hiddenPrefs(raw) {
   return [...new Set(list.filter(x => typeof x === "string" && /^(ov|view):[a-z]+(:[a-z]+)?$/.test(x)))];
 }
 
+// Ren funktion: sparad ordning först, resten i filens ordning efter. Ett nytt block
+// läggs alltså sist i stället för att försvinna, och skräp i lagringen ger filens ordning.
+function orderOf(raw, ids) {
+  let saved = null;
+  try { saved = JSON.parse(raw == null ? "[]" : raw); } catch { saved = null; }
+  if (!Array.isArray(saved)) saved = [];
+  const first = saved.filter(id => typeof id === "string" && ids.includes(id));
+  return [...new Set(first)].concat(ids.filter(id => !first.includes(id)));
+}
+
+function orderNow() {
+  try { return orderOf(localStorage.getItem(ORDER_KEY), UNITS.map(([id]) => id)); }
+  catch { return UNITS.map(([id]) => id); }
+}
+
+function orderMove(id, dir) {
+  const list = orderNow();
+  const at = list.indexOf(id), to = at + dir;
+  if (at < 0 || to < 0 || to >= list.length) return;
+  [list[at], list[to]] = [list[to], list[at]];
+  try { localStorage.setItem(ORDER_KEY, JSON.stringify(list)); } catch { /* utan lagring */ }
+  applyLayout();
+  renderLayoutPrefs();
+}
+
 function hiddenNow() {
   try { return hiddenPrefs(localStorage.getItem(HIDDEN_KEY)); } catch { return []; }
 }
@@ -942,6 +977,10 @@ function applyLayout() {
   for (const el of document.querySelectorAll("[data-ov]")) el.hidden = off.has("ov:" + el.dataset.ov);
   for (const el of document.querySelectorAll(".railitem[data-v]")) {
     if (!LOCKED_VIEWS.includes(el.dataset.v)) el.hidden = off.has("view:" + el.dataset.v);
+  }
+  const order = orderNow();
+  for (const el of document.querySelectorAll("[data-unit]")) {
+    el.style.order = String(order.indexOf(el.dataset.unit));
   }
 }
 
@@ -970,7 +1009,14 @@ function renderLayoutPrefs() {
     `<div class="meta" style="margin:11px 0 5px">Statuskort högst upp</div>` +
     STATUS_CARDS.map(([id, label]) => row(id, label)).join("") +
     `<div class="meta" style="margin:11px 0 5px">Block på Översikt</div>` +
-    OVERVIEW_BLOCKS.map(([key, label]) => row("ov:" + key, label)).join("");
+    OVERVIEW_BLOCKS.map(([key, label]) => row("ov:" + key, label)).join("") +
+    `<div class="meta" style="margin:11px 0 5px">Ordning på Översikt</div>` +
+    orderNow().map((id, i) => {
+      const label = (UNITS.find(u => u[0] === id) || [, id])[1];
+      return `<div class="lay"><span style="flex:1">${i + 1}. ${esc(label)}</span>` +
+        `<button class="chip mv" data-mv="${id}" data-dir="-1" title="flytta upp"${i === 0 ? " disabled" : ""}>▲</button>` +
+        `<button class="chip mv" data-mv="${id}" data-dir="1" title="flytta ner"${i === UNITS.length - 1 ? " disabled" : ""}>▼</button></div>`;
+    }).join("");
 }
 
 /* ----------------------------------------------------------- automaten ---- */
@@ -2505,6 +2551,8 @@ document.addEventListener("click", e => {
   if (e.target.closest('[data-act="refresh"]')) return load(true);
   const lay = e.target.closest('[data-act="lay"]');
   if (lay) return layoutToggle(lay.dataset.id);
+  const mv = e.target.closest("[data-mv]");
+  if (mv) return orderMove(mv.dataset.mv, Number(mv.dataset.dir));
   if (e.target.closest('[data-act="imp-parse"]')) return impParse();
   if (e.target.closest('[data-act="imp-apply"]')) return impApply();
   if (e.target.closest('[data-act="link-save"]')) return linkSave(false);

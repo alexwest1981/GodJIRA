@@ -201,6 +201,28 @@ console.log(fel.length ? "FEL " + fel.join(" | ") : "OK");
               "trasig lagring ger inga avstängningar, dubbletter räknas en gång",
               (prefs_run.stdout + prefs_run.stderr).strip()[:140])
 
+    # Ordningen: sparad ordning först, resten i filens ordning efter -- annars försvinner
+    # ett nytt block ur vyn när listan läses, eller hamnar före allt man själv flyttat.
+    fn = re.search(r"function orderOf\(raw, ids\) \{.*?\n\}", html, re.S)
+    check(bool(fn), "ordningslistan går att läsa")
+    if fn:
+        with _tf.NamedTemporaryFile("w", suffix=".js", delete=False, encoding="utf-8") as fh:
+            fh.write(fn.group(0) + """
+const ids = ["a", "b", "c"];
+const fall = [[null, "a,b,c"], ["[]", "a,b,c"], ['["c"]', "c,a,b"], ['["c","c"]', "c,a,b"],
+  ['["x","b"]', "b,a,c"], ["trasigt", "a,b,c"], ['{"a":1}', "a,b,c"], ['[1,"b"]', "b,a,c"],
+  ['["b","c","a"]', "b,c,a"]];
+const fel = fall.filter(([raw, want]) => orderOf(raw, ids).join(",") !== want)
+  .map(([raw, want]) => raw + " -> " + orderOf(raw, ids).join(",") + " (ville " + want + ")");
+console.log(fel.length ? "FEL " + fel.join(" | ") : "OK");
+""")
+            order_js = fh.name
+        order_run = _sp.run(["node", order_js], capture_output=True, text=True)
+        _os.unlink(order_js)
+        check(order_run.stdout.strip() == "OK",
+              "ett nytt block hamnar sist, skräp ger filens ordning",
+              (order_run.stdout + order_run.stderr).strip()[:140])
+
     if table:
         named = set(re.findall(r"(\w+):\s*\[", table.group(1)))
         sections = set(re.findall(r'<section class="view[^"]*" id="v-(\w+)"', html))
