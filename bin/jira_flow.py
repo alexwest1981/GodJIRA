@@ -2325,7 +2325,7 @@ def selftest() -> int:
     assert repo_slug("alexwest1981/GodJIRA/") == "alexwest1981/GodJIRA"
     assert repo_slug("GodJIRA") == "GodJIRA" and repo_slug("") == ""
     checks += 1
-    global LINKS_FILE, project_caps
+    global LINKS_FILE, project_caps, client
     # Kopplingen läser rollen ur Jiras svar (Alex' regel: ingen Jira-koppling utan
     # påkopplad API). Provet styr det svaret i stället för att gå ut på nätet, och
     # prövar längre ner att ett uteblivet svar nekar kopplingen.
@@ -2389,11 +2389,23 @@ def selftest() -> int:
         def utan_api(bridge, projekt):
             raise RuntimeError("ingen API-token i nyckelringen")
 
+        # Kontrollen gäller en riktig anslutning: i provläget sätts länken utan roll,
+        # med flit. Den måste därför köra mot en klient som säger "real" i stället för
+        # att låna maskinens egen config -- annars blir svaret olika på olika maskiner,
+        # och den som just klonat repot får en röd rad utan att något är fel.
+        class RealClient:
+            cfg = {"mode": "real"}
+
+        verklig_client, verklig_caps = client, project_caps
+        client = lambda: RealClient()          # noqa: E731 -- ett stubb, inte en regel
         project_caps = utan_api
-        with quiet:
-            assert cmd_link(argparse.Namespace(action="set", repo="utan-api", project="SCRUM",
-                                               issue="", note="", json=True)) == 1, \
-                "utan API nekas kopplingen"
+        try:
+            with quiet:
+                assert cmd_link(argparse.Namespace(action="set", repo="utan-api", project="SCRUM",
+                                                   issue="", note="", json=True)) == 1, \
+                    "utan API nekas kopplingen"
+        finally:
+            client, project_caps = verklig_client, verklig_caps
         assert link_for("utan-api") == {}, "och ingen länk skrivs av en halv koppling"
         checks += 1
     finally:
@@ -2570,20 +2582,39 @@ def selftest() -> int:
     # riktig agent, och aldrig läsa på en riktig stdin (den kan vara en pipe som
     # aldrig tar slut). Båda anropen går mot samma fejkade agent.
     class Quiet:
-        def write(self, *a):
-            return None
+        """Tystar utskriften, men behaller det sista som sades.
+
+        Ett fall ska forklara sig sjalvt: kontrollen nedan provar att ett forslag gar
+        igenom, och utan den har raden ar felet bara "det gick inte" -- pa en maskin
+        ingen kan undersoka.
+        """
+
+        def __init__(self):
+            self.said = []
+
+        def write(self, text, *a):
+            if str(text).strip():
+                self.said.append(str(text).strip())
+            return len(str(text))
 
         def flush(self):
             return None
 
-    original_agent, original_stdin, original_stdout = ask_agent, sys.stdin, sys.stdout
+    original_agent, original_argv, original_stdin, original_stdout = \
+        ask_agent, agent_argv, sys.stdin, sys.stdout
     try:
         globals()["ask_agent"] = lambda prompt: '[{"summary": "Boka tid", "type": "Story"}]'
+        # agent_argv letar efter en installerad agent och kastar om ingen finns. Den har
+        # kontrollen galler sjalva plan-vagen, inte vad som rakar vara installerat pa
+        # maskinen -- annars ar provet gront pa en utvecklarmaskin och rott hos alla andra.
+        globals()["agent_argv"] = lambda prompt: ["selftest-agent", prompt]
         sys.stdin = type("S", (), {"isatty": lambda self: False, "read": lambda self: "kunden vill boka"})()
-        sys.stdout = Quiet()
+        sys.stdout = quiet_out = Quiet()
 
         plan_argv.text = "kunden vill boka"
-        assert cmd_plan(fake, plan_argv) == 0, "förslaget ska gå igenom utan att skriva"
+        assert cmd_plan(fake, plan_argv) == 0, (
+            "förslaget ska gå igenom utan att skriva"
+            + (" -- sade: " + quiet_out.said[-1] if quiet_out.said else ""))
         assert fake.written == [], "utan --create får ingenting skrivas"
         assert fake.written == [], "utan --create får ingenting skrivas"
 
@@ -2652,7 +2683,8 @@ def selftest() -> int:
                                           project="SCRUM", proposal=str(scratch / "finns-inte.json"))
         assert cmd_plan(FakeClient(), missing_argv) == 2, "en fil som inte finns ska ge fel"
     finally:
-        globals()["ask_agent"], sys.stdin, sys.stdout = original_agent, original_stdin, original_stdout
+        globals()["ask_agent"], globals()["agent_argv"], sys.stdin, sys.stdout = \
+            original_agent, original_argv, original_stdin, original_stdout
     checks += 2
     # Listan är användarens: egen lista vinner, miljövariabeln vinner över allt,
     # och en tom lista faller tillbaka på den skeppade i stället för på ingenting.

@@ -189,10 +189,22 @@ def account_for(cfg):
 # ---------------------------------------------------------------- keyring
 
 def store_secret(token, account):
-    subprocess.run(
-        ["secret-tool", "store", "--label=" + LABEL,
-         "service", SERVICE, "account", account],
-        input=token.encode(), check=True)
+    """Nyckelringen, eller ett besked om vad som saknas.
+
+    En server eller en minimal installation har ingen secret-tool. Samma undantagstyp
+    som forut -- den som fangar OSError skall fortsatta gora det -- men med vagen ut
+    i texten: paketet att installera, och 0600-filen dar det inte finns nagon ring.
+    """
+    try:
+        subprocess.run(
+            ["secret-tool", "store", "--label=" + LABEL,
+             "service", SERVICE, "account", account],
+            input=token.encode(), check=True)
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            "secret-tool saknas (installera libsecret-tools), eller lagg token i {} "
+            "(chmod 600) pa en maskin utan skrivbordsnyckelring".format(FLOW_CONFIG_PATH)
+        ) from None
 
 
 def clear_secret(account):
