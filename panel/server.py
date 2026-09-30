@@ -398,6 +398,20 @@ def repo_detail(name: str) -> dict:
     return data
 
 
+def project_can() -> dict:
+    """Får kontot skapa projekt? Bryggan frågar Jira -- panelen upprepar bara svaret.
+
+    Att skapa ett projekt kräver den globala behörigheten "Administer Jira", som är
+    en annan sak än "Administer Projects". Svaret bär därför sin egen förklaring, så
+    ytan kan säga varför i stället för att visa en knapp som inte gör något.
+    """
+    env = seam("bridge", "project-can", timeout=60)
+    data = env.get("payload") or {}
+    if env.get("exitCode") != 0 or not isinstance(data, dict) or not data.get("ok"):
+        return {"may": False, "error": data.get("error") or first_line(env)}
+    return data.get("canCreate") or {"may": False}
+
+
 def link_set(payload: dict) -> tuple[int, dict]:
     """Koppla ett repo till ett Jira-projekt, och till ärendet man jobbar mot.
 
@@ -447,7 +461,11 @@ def state() -> dict:
                     "automation": pool.submit(automation_state),
                     "links": pool.submit(links_state),
                     "journal": pool.submit(journal, 10),
-                    "flows": pool.submit(lambda: cached("flows", flow_graphs))}
+                    "flows": pool.submit(lambda: cached("flows", flow_graphs)),
+                    # Bara frågan om behörigheten (ett anrop): projektlistan finns
+                    # redan i jira-svaret. Utan den här raden vore "nytt projekt" en
+                    # knapp som inte gör något på en sajt där kontot inte får skapa.
+                    "projectCan": pool.submit(lambda: cached("projectCan", project_can))}
         return {"generatedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                 "flow": flow, **{name: job.result() for name, job in jobs.items()}}
     return dict(cached("state", build))

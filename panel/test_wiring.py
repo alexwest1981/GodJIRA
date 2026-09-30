@@ -120,6 +120,12 @@ def main() -> int:
     # En färsk ritning måste sätta den sparade förskjutningen: gjorde den inte det
     # stod rutorna kvar på filens plats medan vägarna pekade någon helt annanstans.
     check("n8n:s egen tavla" in html, "the view says whether the drawing is n8n's own")
+    # Nytt projekt kräver "Administer Jira", som är en annan behörighet än
+    # "Administer Projects". Utan den skall raden säga varför -- inte vara en knapp.
+    check('STATE.projectCan' in html and 'data-v="board"' in html,
+          "the sidebar says whether a project may be created")
+    check("def project_can" in (HERE / "server.py").read_text(),
+          "the API carries the permission answer")
     check('transform="translate(${spot.x - n.x} ${spot.y - n.y})"' in html,
           "a fresh drawing applies the moves you made")
     check("AbortSignal.timeout" in html, "the state fetch has a time limit")

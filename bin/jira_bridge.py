@@ -64,6 +64,13 @@ user can encounter):
   sprint-start <sprintId> --yes   Start one (--yes is required: a started
   sprint-close <sprintId> --yes   sprint cannot be un-started in Jira)
   sprint-add <sprintId> <key>...  Move issues into a sprint
+  projects                        The projects the account can see
+  project-can                    May this account create a project? Jira answers
+  project-create <KEY> <Name> [--template scrum|kanban|basic] [--lead me] --yes
+                                  A new project (software + the Scrum template by
+                                  default, which brings a board). --yes is required,
+                                  and the global "Administer Jira" permission must
+                                  be there -- otherwise this refuses before calling
   versions <projectKey>           The project's versions
   version-create <projectKey> <name>  A new version on the project
   mock-reset                      Rebuild the mock dataset
@@ -1505,6 +1512,75 @@ def real_versions(cfg, pkey):
             for r in rows or [] if isinstance(r, dict)]
 
 
+# Nyckel -> mall. Nycklarna är de klassiska (company-managed) mallarna; "scrum" är
+# den som ger ett projekt med tavla. Projekttypen är alltid software här -- hubben
+# är en Scrum-hubb, och en tom "business"-mall vore en annan produkt.
+PROJECT_TEMPLATES = {
+    "scrum": "com.pyxis.greenhopper.jira:gh-scrum-template",
+    "kanban": "com.pyxis.greenhopper.jira:gh-kanban-template",
+    "basic": "com.atlassian.jira-core-project-templates:jira-core-simplified-project-management",
+}
+PROJECT_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]{1,9}$")
+
+
+def real_project_may_create(cfg):
+    """Får kontot skapa projekt? Jira svarar självt -- vi gissar inte.
+
+    Att skapa ett projekt kräver den GLOBALA behörigheten "Administer Jira"
+    (Atlassians dokumentation för POST /rest/api/3/project). Den är en annan sak
+    än "Administer Projects", som bara räcker inom ett projekt man redan är med i.
+    """
+    data = jira_get(cfg, "/rest/api/3/mypermissions?permissions=ADMINISTER")
+    have = bool((((data or {}).get("permissions") or {}).get("ADMINISTER") or {})
+                .get("havePermission"))
+    site = str((cfg or {}).get("siteUrl") or "").replace("https://", "").strip("/")
+    return {"may": have, "permission": "ADMINISTER", "site": site,
+            "reason": "" if have else
+            ("kontot {} har inte den globala behörigheten Administer Jira på {} -- "
+             "projekt skapas av en site-admin, eller där du själv äger sajten"
+             .format((cfg or {}).get("email") or "", site or "sajten"))}
+
+
+def real_project_create(cfg, key, name, template="scrum", lead=""):
+    """Skapa ett projekt. Refuserar innan anropet om behörigheten saknas."""
+    key = str(key or "").strip().upper()
+    name = str(name or "").strip()
+    if not PROJECT_KEY_RE.match(key):
+        raise RuntimeError("projektnyckeln {!r} duger inte: 2-10 tecken, A-Z och 0-9, "
+                           "och den måste börja med en bokstav (t.ex. AUTO)".format(key))
+    if not name:
+        raise RuntimeError("projektet behöver ett namn")
+    mall = PROJECT_TEMPLATES.get(str(template or "scrum").strip().lower())
+    if not mall:
+        raise RuntimeError("okänd mall {!r}; välj {}".format(
+            template, ", ".join(sorted(PROJECT_TEMPLATES))))
+    may = real_project_may_create(cfg)
+    if not may["may"]:
+        raise RuntimeError(may["reason"])
+    # Ledaren: en accountId, inte ett namn. "me" slås upp hos Jira själv.
+    lead_id = str(lead or "").strip()
+    if lead_id.lower() in ("", "me", "mig"):
+        lead_id = ((jira_get(cfg, "/rest/api/3/myself") or {}).get("accountId") or "")
+    body = {"key": key, "name": name, "projectTypeKey": "software",
+            "projectTemplateModuleKey": mall}
+    if lead_id:
+        body["leadAccountId"] = lead_id
+    jira_post(cfg, "/rest/api/3/project", body)
+    # Läs tillbaka: Jira kan svara 201 och ändå inte ha projektet där.
+    try:
+        made = jira_get(cfg, "/rest/api/3/project/" + key)
+    except RuntimeError as exc:
+        raise RuntimeError("projektet {} går inte att läsa efter skrivningen: {}"
+                           .format(key, exc))
+    if not (made or {}).get("key"):
+        raise RuntimeError("Jira svarade utan projekt för {}".format(key))
+    return {"key": made.get("key"), "id": str(made.get("id") or ""),
+            "name": made.get("name"), "type": made.get("projectTypeKey"),
+            "style": made.get("style"),
+            "url": "{}/browse/{}".format(str((cfg or {}).get("siteUrl") or "").rstrip("/"),
+                                         made.get("key"))}
+
+
 def real_version_create(cfg, pkey, name):
     label = str(name or "").strip()
     if not label:
@@ -2689,6 +2765,7 @@ def status_payload(cfg):
 # (payload/err_payload), och varje skrivning lämnar en journalrad.
 
 EXTRAS = ("attachments", "attach", "download", "links", "link", "worklogs",
+          "projects", "project-can", "project-create",
           "log-work", "sprints", "sprint-create", "sprint-start", "sprint-close",
           "sprint-add", "versions", "version-create")
 
@@ -2853,6 +2930,32 @@ def run_extras(cmd, cfg, argv):
         except RuntimeError as exc:
             if cmd == "version-create":
                 log_action(cfg, "version-create", "", detail=arg(3), ok=False, reason=str(exc))
+            err_payload(str(exc))
+
+    if cmd in ("projects", "project-can", "project-create"):
+        try:
+            real_only(cfg, cmd)
+            if cmd == "project-can":
+                ok_payload(canCreate=real_project_may_create(cfg))
+            if cmd == "projects":
+                rows = jira_get(cfg, "/rest/api/3/project/search?maxResults=100")
+                ok_payload(projects=[{"key": p.get("key"), "name": p.get("name"),
+                                      "type": p.get("projectTypeKey"),
+                                      "style": p.get("style")}
+                                     for p in (rows or {}).get("values") or []])
+            if "--yes" not in argv:
+                raise RuntimeError("'project-create' needs --yes: projektet skapas på "
+                                   "riktigt i Jira och kan inte tas bort härifrån igen")
+            made = real_project_create(cfg, arg(2), arg(3),
+                                       flag_value(argv, "--template"),
+                                       flag_value(argv, "--lead"))
+            log_action(cfg, "project-create", made["key"], detail=made["name"],
+                       extra={"projectId": made["id"], "type": made["type"]})
+            ok_payload(project=made, canCreate=real_project_may_create(cfg))
+        except RuntimeError as exc:
+            if cmd == "project-create" and "--yes" in argv:
+                log_action(cfg, "project-create", str(arg(2) or ""),
+                           detail=str(arg(3) or ""), ok=False, reason=str(exc))
             err_payload(str(exc))
 
     err_payload("not an extras command: {}".format(cmd))

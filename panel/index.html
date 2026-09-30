@@ -23,19 +23,25 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
        märkets teal mörknad till #007d61: originalet #04997a ger bara 3,21:1 på
        ljus kanvas, den här ger 4,57:1 med samma hue. */
     color-scheme: light dark;
-    --bg: light-dark(#f2f2f3, #0f0f10);
-    --rail: light-dark(#f9f9f9, #141415);
-    --side: light-dark(#fcfcfc, #181a1b);
-    --panel: light-dark(#ffffff, #1d1f20);
-    --card: light-dark(#ffffff, #1d1f20);
-    --card-hi: light-dark(#f9f9f9, #222425);
-    --line: light-dark(#eaebec, #222425);
-    --line-2: light-dark(#e1e2e3, #2c2e30);
-    --line-3: light-dark(#d5d7d9, #36393a);
-    --text: light-dark(#0f0f10, #e4e6e7);
-    --text-2: light-dark(#313435, #cacdce);
-    --muted: light-dark(#494d50, #afb3b6);
-    --accent: light-dark(#007d61, #04997a);
+    /* Ljust: kanvasen är en mjuk grå (#e7eae9 i stället för #f2f2f3) och bara
+       KORTET är nära vitt. Förut var sidofält, panel och kort alla #ffffff och
+       nästan-vita, så hela skärmen lyste -- mätt var fyra av fem ytor vitare än
+       #f9f9f9. Stegen klättrar fortfarande uppåt, och texten mörknar något
+       (#1a1e1d) så svart-på-vitt-glansen försvinner. Accenten mörknades ett steg
+       (#007d61 -> #00775c) för att hålla 4,5:1 mot den nya kanvasen. */
+    --bg: light-dark(#e7eae9, #0f0f10);
+    --rail: light-dark(#ecefee, #141415);
+    --side: light-dark(#f2f4f3, #181a1b);
+    --panel: light-dark(#f4f6f5, #1d1f20);
+    --card: light-dark(#fdfdfc, #1d1f20);
+    --card-hi: light-dark(#f3f5f4, #222425);
+    --line: light-dark(#dfe3e1, #222425);
+    --line-2: light-dark(#d5d9d7, #2c2e30);
+    --line-3: light-dark(#c9cecb, #36393a);
+    --text: light-dark(#1a1e1d, #e4e6e7);
+    --text-2: light-dark(#3c4240, #cacdce);
+    --muted: light-dark(#5a605e, #afb3b6);
+    --accent: light-dark(#00775c, #04997a);
     --navy: #1a6ba8; --green: light-dark(#25743b, #7bcf6a);
     --amber: light-dark(#973c00, #e0a33e); --red: light-dark(#a5261d, #e5545f);
     --r: 6px;
@@ -655,6 +661,7 @@ function renderSide() {
     <div class="item ${view === "items" && F.pool !== "backlog" ? "on" : ""}" data-v="items"><span class="g">☰</span>${TEXT.allTasks}<span class="c">${all + ghItems().length}</span></div>
     <div class="item ${view === "import" ? "on" : ""}" data-v="import"><span class="g">⇪</span>Importera<span class="c">${IMP.created.length || ""}</span></div>
     <div class="sect">Jira</div>
+    ${STATE.projectCan && STATE.projectCan.may === false ? `<div class="item muted" title="${esc(STATE.projectCan.reason || "behörigheten saknas")}"><span class="g">＋</span>nytt projekt<span class="c">nej</span></div>` : ""}
     <div class="item" data-v="items"><span class="g">◆</span>${esc(proj.key || "Jira")}<span class="c">${all}</span></div>
     <div class="sub">
       <div class="item ${view === "board" ? "on" : ""}" data-v="board"><span class="g">▤</span>${esc(b.name || "Tavlan")}<span class="c">${open}</span></div>

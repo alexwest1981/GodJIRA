@@ -72,6 +72,12 @@ def main():
             if lum(b) < lum(a) - 1e-9:
                 fel.append("%s: ytan --%s (%s) är mörkare än --%s (%s), stegen går bakåt"
                            % (tema, over, b, under, a))
+        # Ljusläget skall inte lysa: högst EN yta får vara nära vit (#f9f9f9 och
+        # uppåt). Fyra vita ytor var "flashbangen" -- panelen, sidofältet, rälen
+        # och kortet var alla #ffffff eller nästan.
+        vita = [n for n in LADDER if lum(TOKENS[n][0]) > 0.94] if i == 0 else []
+        if len(vita) > 1:
+            fel.append("ljust: %d ytor är nära vita (%s), högst en" % (len(vita), ", ".join(vita)))
         if TOKENS["card-hi"][i] == TOKENS["card"][i]:
             fel.append("%s: --card-hi är samma färg som --card, ingen hover syns" % tema)
         for namn, krav in [("accent", 4.5)] + [(t, 4.5) for t in TEXT] + [(g, 3.0) for g in GLYF]:
