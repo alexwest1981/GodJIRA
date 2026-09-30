@@ -2,7 +2,7 @@ name: distros
 
 # Two legs, on purpose.
 #
-# suite: the three test files plus the CLI's own self-check, on the oldest Python
+# suite: every test file plus the CLI's own self-check, on the oldest Python
 #   the code supports (3.9, measured on Rocky 9) and a current one. Runs with an
 #   empty HOME, which is the state a person who just cloned this repo is in --
 #   that is the case the self-check kept getting wrong.
@@ -40,6 +40,8 @@ jobs:
           python3 panel/test_i18n.py
           python3 panel/test_guard.py
           python3 panel/test_coldstart.py
+          python3 panel/test_palette.py
+          python3 panel/test_install.py
           python3 bin/jira_flow.py --selftest
 
   distros:
