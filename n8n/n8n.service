@@ -5,12 +5,14 @@ After=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/alex
-# Node 22 (mise), not the machine's 26: n8n's own dependencies build a native
-# module that has no prebuilt binary for 26, and a failed build takes the whole
-# global install with it. Absolute paths, because a service gets no mise shims.
-ExecStart=/home/alex/.local/share/mise/installs/node/22.23.3/bin/n8n start
-Environment=PATH=/home/alex/.local/share/mise/installs/node/22.23.3/bin:/usr/local/bin:/usr/bin:/bin
+# install.sh writes this file and substitutes @N8N@ (the n8n it found on PATH),
+# @N8N_PATH@ (its directory) and @ROOT@ (the clone the flow calls into). The
+# version-and-mise paths that stood here belonged to one machine: on another, the
+# service would fail with "no such file". Nothing is copied from PATH into the
+# unit by hand -- the lookup happens at install time.
+WorkingDirectory=%h
+ExecStart=@N8N@ start
+Environment=PATH=@N8N_PATH@:/usr/local/bin:/usr/bin:/bin
 Environment=N8N_HOST=127.0.0.1
 # n8n's own default is America/New_York: without this, a 07:30 schedule fires at 13:30.
 Environment=GENERIC_TIMEZONE=Europe/Stockholm
@@ -25,9 +27,12 @@ Environment=N8N_DIAGNOSTICS_ENABLED=false
 Environment=NODES_EXCLUDE=[]
 Environment=N8N_VERSION_NOTIFICATIONS_ENABLED=false
 # The flow reads the Jira token from the session keyring; without these it answers
-# "err.noTokenKeyring" (measured on the MCP server, same path).
-Environment=XDG_RUNTIME_DIR=/run/user/1000
-Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+# "err.noTokenKeyring" (measured on the MCP server, same path). %U is this user's uid.
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%U/bus
+# The flow's Config node asks for the repo here instead of carrying a path of its
+# own: import the workflows anywhere, and this is what they call.
+Environment=GODJIRA_REPO=@ROOT@
 Restart=on-failure
 RestartSec=5
 

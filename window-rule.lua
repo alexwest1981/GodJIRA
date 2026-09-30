@@ -1,12 +1,10 @@
--- GodJIRA (custom.jira): OPTIONAL rule that floats the Jira window, kept as a recipe.
+-- GodJIRA: the window rule the installer adds to ~/.config/hypr/hyprland.lua.
 --
--- NOT in force. The panel is a real tile now: ~/.config/hypr/hyprland.lua has
---     o.window({ class = "^org.quickshell$", title = "^Jira$" }, { tile = true })
--- which is also what Hyprland does by default (a Quickshell window tiles like any
--- other app when no rule floats it). Copy the line below to the end of that file,
--- save (Hyprland reloads on save) or run `hyprctl reload`, to get the old behaviour.
+-- The panel is a real tile by default, like any other app window. This rule makes
+-- it float and centre itself instead. install.sh appends the line below (or
+-- replaces an older GodJIRA rule) and reloads Hyprland; nothing here is read at
+-- runtime.
 --
--- The floated window centres itself and honours its own size limits (min 720x500,
--- fitted to the screen).
-
+-- The marker below is how the installer finds its own line again.
+-- godjira-window-rule
 o.window({ class = "^org.quickshell$", title = "^Jira$" }, { float = true, center = true })

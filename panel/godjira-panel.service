@@ -5,15 +5,20 @@ After=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/alex/Projects/godjira
-ExecStart=/usr/bin/python3 /home/alex/Projects/godjira/panel/server.py
+# install.sh writes this file and substitutes @ROOT@ (the clone), @PYTHON@ (the
+# interpreter it found) and @PORT@/@BIND@ on the way. A leftover @-word fails
+# loudly in `systemctl --user status` instead of starting in someone else's home.
+WorkingDirectory=@ROOT@
+ExecStart=@PYTHON@ @ROOT@/panel/server.py
 # The panel reads `gh` and the Jira token: gh lives in ~/.local/bin, and the token
-# in the session keyring (without the two variables below it answers err.noTokenKeyring).
-Environment=PANEL_PORT=8788
-Environment=PANEL_BIND=0.0.0.0
-Environment=PATH=/home/alex/.local/bin:/usr/local/bin:/usr/bin:/bin
-Environment=XDG_RUNTIME_DIR=/run/user/1000
-Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+# in the session keyring (without the two variables below it answers
+# err.noTokenKeyring). %h and %U are systemd's own: this user's home and uid.
+Environment=PANEL_PORT=@PORT@
+Environment=PANEL_BIND=@BIND@
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%U/bus
+Environment=PYTHONDONTWRITEBYTECODE=1
 Restart=on-failure
 RestartSec=5
 

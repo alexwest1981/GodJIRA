@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "id": "custom.jira",
+  "id": "GodJIRA.plugin",
   "name": "Jira",
   "version": "0.2.0",
   "author": "Alex Weström",

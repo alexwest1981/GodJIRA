@@ -108,7 +108,7 @@ The commands carry no project key: the CLI takes it from the repo link, so this 
                 {
                     id: '57df65fa-26d0-4a09-94ab-72d48519ddef',
                     name: 'repo',
-                    value: '/home/alex/Projects/godjira',
+                    value: "={{ $env.GODJIRA_REPO || $env.HOME + '/Projects/godjira' }}",
                     type: 'string',
                 },
                 {

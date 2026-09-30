@@ -723,7 +723,7 @@ def local_clone(name: str) -> str:
             continue
         seen = {}
         # Roten själv först: en kopia behöver inte heta samma som repot (hubben ligger
-        # i sin plugin-katalog, custom.jira). Sedan kataloger som *heter* något av
+        # i sin plugin-katalog). Sedan kataloger som *heter* något av
         # namnet -- jämfört utan skiftläge, för katalogen heter AutoCore medan repot
         # heter autocore, och glob är skiftlägeskänsligt (mätt: gav ingen kopia alls).
         try:

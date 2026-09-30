@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bridge between the custom.jira Omarchy plugin and a Jira site.
+"""Bridge between the GodJIRA.plugin Omarchy plugin and a Jira site.
 
 The QML shell never talks HTTP or stores credentials: it calls this helper and
 reads one JSON document from stdout. The helper owns every API call and every
@@ -101,7 +101,11 @@ import urllib.request
 import uuid
 
 SCHEMA = 1
-SERVICE = "custom.jira"
+SERVICE = "godjira"
+# Nyckelringen kan ha nyckeln från före namnbytet (gamla plugin-id:t var
+# nyckelringens namn). Letar man bara under det nya namnet ser en sparad nyckel ut
+# som ingen nyckel alls.
+SERVICE_OLD = "custom.jira"
 LABEL = "Custom Jira"
 TOKEN_PAGE = "https://id.atlassian.com/manage-profile/security/api-tokens"
 
@@ -225,11 +229,37 @@ def pick_token(keyring_token, env_token, file_token):
     return keyring_token or env_token or file_token or None
 
 
+def lookup_service(name, account):
+    return subprocess.run(
+        ["secret-tool", "lookup", "service", name, "account", account],
+        capture_output=True)
+
+
+def move_from_old_name(account):
+    """Lyfter nyckeln ur nyckelringen under det gamla plugin-namnet.
+
+    Nyckelringen döptes efter plugin-id:t, och id:t byttes (custom.jira -> godjira).
+    Utan den här flytten ser en sparad nyckel ut som ingen nyckel alls. Mätt före
+    bytet: nyckeln låg under custom.jira (192 tecken) och ingenting under godjira.
+    """
+    old = lookup_service(SERVICE_OLD, account)
+    token = old.stdout.decode("utf-8", "replace").strip() if old.returncode == 0 else ""
+    if not token:
+        return None
+    try:
+        store_secret(token, account)
+    except (OSError, subprocess.SubprocessError):
+        pass          # flytten får strula: nyckeln fungerar ändå, den här gången
+    return token
+
+
 def load_secret(account):
     try:
-        proc = subprocess.run(
-            ["secret-tool", "lookup", "service", SERVICE, "account", account],
-            capture_output=True)
+        proc = lookup_service(SERVICE, account)
+        if proc.returncode != 0:
+            moved = move_from_old_name(account)
+            if moved:
+                return moved
     except FileNotFoundError:
         # En server har ingen secret-tool alls; det är inte ett fel, det är en maskin
         # utan skrivbord. Miljön och filen nedan är dess väg in.

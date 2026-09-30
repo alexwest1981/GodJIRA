@@ -4,16 +4,16 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
-// Root plugin item for custom.jira.
+// Root plugin item for GodJIRA.plugin.
 //
 // Omarchy loads this file as a "panel" plugin (kinds: panel + bar-widget,
 // keepLoaded: true) through the shell's on-demand loader. The shell calls
 // open()/close(), and everything else happens through the IpcHandler below
-// (target "custom.jira"), which is what the bar widget drives:
+// (target "GodJIRA.plugin"), which is what the bar widget drives:
 //
-//   omarchy-shell shell toggle custom.jira '{}'   <- bar icon
-//   omarchy-shell shell call custom.jira refresh  <- bar right-click
-//   omarchy-shell shell call custom.jira view timeline   <- jump to a view
+//   omarchy-shell shell toggle GodJIRA.plugin '{}'   <- bar icon
+//   omarchy-shell shell call GodJIRA.plugin refresh  <- bar right-click
+//   omarchy-shell shell call GodJIRA.plugin view timeline   <- jump to a view
 //       (summary, board, backlog, timeline, reports, dev, activity)
 //
 // The root owns the FloatingWindow (the actual client), every bit of
@@ -59,7 +59,7 @@ Item {
 
   function requestClose() {
     if (root.shell && typeof root.shell.hide === "function") {
-      root.shell.hide("custom.jira")
+      root.shell.hide("GodJIRA.plugin")
     } else {
       root.close()
     }
@@ -115,7 +115,7 @@ Item {
   // typed or not), so the panel's view is chosen from config instead - see
   // `startView` in ~/.config/omarchy/jira.json.
   IpcHandler {
-    target: "custom.jira"
+    target: "GodJIRA.plugin"
     function open(): string { return root.open("{}") }
     function close(): string { return root.close() }
     function toggle(): string { return root.toggle() }
@@ -125,11 +125,16 @@ Item {
 
   // ------------------------------------------------------------- config
   readonly property string configDir: Quickshell.env("HOME") + "/.config/omarchy"
-  readonly property string bridgePath: configDir + "/plugins/custom.jira/bin/jira_bridge.py"
+  // Sökvägen räknas fram ur den här filens egen plats i stället för ur mappnamnet:
+  // pluginmappen heter samma sak som id:t, men en kopia som döpts om skall ändå hitta
+  // sina CLI:er. decodeURIComponent för ett hem med mellanslag i.
+  readonly property string bridgePath: decodeURIComponent(
+    Qt.resolvedUrl("./bin/jira_bridge.py").toString().replace(/^file:\/\//, ""))
   // Flödet (välj det kritiska, sätt mig, In Progress) ligger i samma bin/ som
   // bryggan och körs som en underprocess, precis som den: QML rör aldrig HTTP.
   // Repot är publikt, så en kollega får CLI:n, bryggan och MCP-servern i en klon.
-  readonly property string flowPath: configDir + "/plugins/custom.jira/bin/jira_flow.py"
+  readonly property string flowPath: decodeURIComponent(
+    Qt.resolvedUrl("./bin/jira_flow.py").toString().replace(/^file:\/\//, ""))
   readonly property string pythonPath: "python3"
 
   property bool booted: false
@@ -289,13 +294,13 @@ Item {
           root.procBusy = false
           if (job && job.onDone) {
             try { job.onDone(parsed, txt) } catch (e) {
-              console.warn("custom.jira: bridge callback threw", e)
+              console.warn("godjira: bridge callback threw", e)
             }
           }
         } catch (e) {
           root.currentJob = null
           root.procBusy = false
-          console.warn("custom.jira: stdout handling failed", e)
+          console.warn("godjira: stdout handling failed", e)
         }
         root.pumpBridge()
       }
@@ -1263,7 +1268,7 @@ Item {
             }
             onStatusChanged: {
               if (viewLoader.status === Loader.Error)
-                console.warn("custom.jira view failed:", viewLoader.source)
+                console.warn("godjira view failed:", viewLoader.source)
             }
           }
         }

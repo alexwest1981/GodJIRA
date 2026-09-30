@@ -63,49 +63,67 @@ delete issues when you have the right permissions.
 - Mock-first: ships with a deterministic fake dataset, no credentials needed.
   A real Jira Cloud mode uses the same UI, rendering path and bridge commands.
 
-## Install (Omarchy)
+## Install
 
 This repo is the application (panel, CLI, n8n flows) **and** the source of the
-bar plugin. Clone it where you keep code, then let the installer copy the
-shell's files into the plugin folder:
+bar plugin. Clone it where you keep code and run the installer once — it
+installs the lot, for whoever runs it:
 
 ```
 git clone https://github.com/alexwest1981/GodJIRA.git ~/Projects/godjira
 ~/Projects/godjira/install.sh
-omarchy plugin enable custom.jira     # put the Jira widget in the right section
 ```
 
-`install.sh` copies manifest + QML + views/components + i18n + assets, validates
-the manifest and rescans the shell. It also writes one generated shim per CLI
-(`bin/jira_bridge.py`, `bin/jira_flow.py`) into the plugin folder; the shims hand
-the work to this repo. That is deliberate: the shell hot-reloads a local plugin
-on *any* file change inside its folder, so the app must not be edited there. Run
-`install.sh` again after pulling changes to QML, i18n or the manifest — edits to
-`bin/`, `panel/` or `n8n/` need no reinstall (the panel reads them live).
+| What | Where it lands |
+|---|---|
+| The panel, as a user service | `~/.config/systemd/user/godjira-panel.service` |
+| The menu icon | `~/.local/share/applications/godjira.desktop` |
+| The window rule (float and centre) | appended to `~/.config/hypr/hyprland.lua` |
+| The bar plugin | `~/.config/omarchy/plugins/GodJIRA.plugin/` |
+| n8n's service and icon | only if n8n is already installed here |
+
+Nothing needs root, and running it again is safe. Every path is filled in from
+the machine it runs on: the templates in the repo carry `@ROOT@`, `@PYTHON@`,
+`@PORT@`, `@BIND@`, `@LAUNCHER@`, `@N8N@` and `@N8N_PATH@` instead of someone
+else's home directory, so a colleague's install cannot end up pointing at this
+one. A unit with an `@`-word left in it fails loudly in `systemctl --user status`
+rather than running the wrong thing.
+
+The plugin folder is a **copy**, not a checkout: the shell hot-reloads a local
+plugin on *any* file change inside its folder, so the app must not be edited
+there. `install.sh` copies manifest + QML + views/components + i18n + assets and
+writes one generated shim per CLI (`bin/jira_bridge.py`, `bin/jira_flow.py`) that
+hands the work to this repo. Run it again after pulling changes to QML, i18n or
+the manifest — edits to `bin/`, `panel/` or `n8n/` need no reinstall (the panel
+reads them live).
+
+Variables: `PANEL_PORT=9000` (default 8788), `PANEL_BIND=0.0.0.0` to also answer
+on the local network (the panel shows your Jira token's data, so it listens on
+localhost only unless you say otherwise), `PLUGIN_DIR=...` for the plugin copy.
 
 ### Floating window (Hyprland)
 
 The panel is a normal Quickshell window, so Hyprland tiles it like any other
-app unless a window rule floats it. Add the rule that ships with the plugin
-(`window-rule.lua`) once to the end of `~/.config/hypr/hyprland.lua`:
+app. `install.sh` appends this rule to `~/.config/hypr/hyprland.lua` (and
+replaces an older GodJIRA rule for the same window, since two rules for one
+window contradict each other), then reloads Hyprland:
 
 ```lua
 o.window({ class = "^org.quickshell$", title = "^Jira$" }, { float = true, center = true })
 ```
 
-Save the file (Hyprland reloads on save) or run `hyprctl reload`. The window
-then floats and centers, and honours its own size limits (minimum 720x500,
-fitted to the screen). Without this rule the window opens tiled instead of
-floating.
+The window floats and centers, and honours its own size limits (minimum 720x500,
+fitted to the screen). Without the rule it opens tiled. The rule text lives in
+`window-rule.lua`; the marker comment on the line above it is how the installer
+finds its own rule again on the next run.
 
 Managing it later:
 
 ```
-omarchy bar move custom.jira --section right  # move the bar widget
-omarchy plugin disable custom.jira            # hide the widget (keeps files)
-omarchy plugin enable custom.jira             # re-enable after a disable
-omarchy plugin update custom.jira             # pull the latest version
-omarchy plugin remove custom.jira             # uninstall (removes the folder)
+omarchy bar move GodJIRA.plugin --section right  # move the bar widget
+omarchy plugin disable GodJIRA.plugin            # hide the widget (keeps files)
+omarchy plugin enable GodJIRA.plugin             # re-enable after a disable
+omarchy plugin remove GodJIRA.plugin             # uninstall (removes the folder)
 ```
 
 ### Updating
@@ -116,12 +134,17 @@ cd ~/Projects/godjira && git pull
 systemctl --user restart godjira-panel.service    # the hub's front door
 ```
 
-`omarchy plugin update custom.jira` no longer applies: the plugin folder is a
+`omarchy plugin update GodJIRA.plugin` no longer applies: the plugin folder is a
 copy, not a git checkout, so it has nothing to pull. QML edits land when
 `install.sh` re-copies them (the shell hot-reloads the folder on the write).
 
 Requires `git` and `python3` on PATH (the bridge is Python stdlib-only; `secret-tool`
 is only needed for the real Jira Cloud mode, see below).
+
+Coming from a version where the plugin id was `custom.jira`: the installer renames
+the plugin folder, keeps the widget's place in the bar layout, and moves the Jira
+token from the old keyring name to `godjira` the first time the bridge looks for it
+— nothing to do by hand.
 
 ## Quick start (mock)
 
@@ -129,19 +152,19 @@ The plugin defaults to `mode: mock`. Toggle the window from the bar widget
 (Jira) or with:
 
 ```
-omarchy-shell shell toggle custom.jira '{}'
+omarchy-shell shell toggle GodJIRA.plugin '{}'
 ```
 
 The mock dataset can be rebuilt at any time:
 
 ```
-python3 ~/.config/omarchy/plugins/custom.jira/bin/jira_bridge.py mock-reset
+python3 ~/.config/omarchy/plugins/GodJIRA.plugin/bin/jira_bridge.py mock-reset
 ```
 
 ## Files
 
 ```
-custom.jira/
+GodJIRA.plugin/
 ├── manifest.json            plugin manifest (panel + bar widget)
 ├── JiraPanel.qml            root: bridge process, connection, routing
 ├── BarWidget.qml            bar launcher
@@ -347,7 +370,7 @@ place. `delete`, `restore`, `configure`, `login` and `logout` are deliberately
 
 ```
 {"mcpServers": {"godjira": {"command": "python3",
-    "args": ["/home/<you>/.config/omarchy/plugins/custom.jira/bin/jira_mcp.py"]}}}
+    "args": ["<path to this repo>/bin/jira_mcp.py"]}}}
 ```
 
 The args are passed to the process literally, so the path has to be absolute.
@@ -570,11 +593,11 @@ only a token.
 
 | Thing | Location |
 | --- | --- |
-| Plugin | `~/.config/omarchy/plugins/custom.jira/` |
+| Plugin | `~/.config/omarchy/plugins/GodJIRA.plugin/` |
 | Config (mode, site, email, startView, language) | `~/.config/omarchy/jira.json` |
 | Mock dataset | `~/.local/state/omarchy/jira-mock.json` |
 | Watcher baseline | `~/.local/state/omarchy/jira-watch.json` |
-| API token (real mode) | system keyring, service `custom.jira` |
+| API token (real mode) | system keyring, service `godjira` |
 | Skrivjournal | `~/.local/state/omarchy/jira-actions.log` (0600) |
 | Lokal papperskorg | `~/.local/state/omarchy/jira-trash/` (0600 per fil) |
 
@@ -585,7 +608,7 @@ Which view the window opens on is a config value — pick it under
 time the shell loads the plugin, since a loaded plugin's code is kept):
 
 ```
-python3 ~/.config/omarchy/plugins/custom.jira/bin/jira_bridge.py \
+python3 ~/.config/omarchy/plugins/GodJIRA.plugin/bin/jira_bridge.py \
     configure '{"startView":"timeline"}'
 ```
 
@@ -595,7 +618,7 @@ Accepted values: `summary`, `board` (default), `backlog`, `timeline`, `reports`,
 The language is a config value too, and changing it writes nothing else:
 
 ```
-python3 ~/.config/omarchy/plugins/custom.jira/bin/jira_bridge.py \
+python3 ~/.config/omarchy/plugins/GodJIRA.plugin/bin/jira_bridge.py \
     configure '{"language":"sv"}'
 ```
 
@@ -678,7 +701,7 @@ ta bort rättigheten *Delete Issues* från vanliga medlemmar — en status räck
   a view is loaded.
 - A plugin's IPC surface is fixed to the methods it had when the shell first
   loaded it: adding a method to the `IpcHandler` does not make it callable
-  (`omarchy-shell shell call custom.jira <name>` answers `unknown`), and an
+  (`omarchy-shell shell call GodJIRA.plugin <name>` answers `unknown`), and an
   untyped parameter is rejected outright - "Type of argument 1 (x: QVariant)
   cannot be used across IPC". That is why the view to open with is a config
   value rather than an IPC argument.

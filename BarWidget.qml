@@ -4,7 +4,7 @@ import qs.Ui
 
 BarWidget {
   id: root
-  moduleName: "custom.jira"
+  moduleName: "GodJIRA.plugin"
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
@@ -34,9 +34,9 @@ BarWidget {
       if (!root.bar) return
       if (button === Qt.RightButton) {
         // Right click forces a refresh of an already-open window.
-        root.bar.run("omarchy-shell shell call custom.jira refresh '{}'")
+        root.bar.run("omarchy-shell shell call GodJIRA.plugin refresh '{}'")
       } else {
-        root.bar.run("omarchy-shell shell toggle custom.jira '{}'")
+        root.bar.run("omarchy-shell shell toggle GodJIRA.plugin '{}'")
       }
     }
   }

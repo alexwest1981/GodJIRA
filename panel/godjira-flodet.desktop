@@ -2,8 +2,8 @@
 Type=Application
 Name=GodJIRA — flödet
 Comment=Flödet på en canvas: körningar, historik, klockan
-Exec=omarchy-launch-webapp http://127.0.0.1:5678
-Icon=/home/alex/Projects/godjira/assets/godjira.svg
+Exec=@LAUNCHER@ http://127.0.0.1:@N8N_PORT@
+Icon=@ROOT@/assets/godjira.svg
 Terminal=false
 Categories=Development;
 Keywords=n8n;workflow;jira;flow;
