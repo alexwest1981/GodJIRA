@@ -23,6 +23,10 @@ live on the sample data; the account card says *mock*, and **Kom igång** is whe
 real Jira key and `gh auth login` go when you are ready. Nothing to undo: no key,
 no keyring entry, no file in the repo.
 
+The panel's own interface is **Swedish** today (the screenshots below are what it
+looks like). The bar widget and the CLI do ship nine languages in `i18n/`; the panel
+picking them up is the next thing on the list — say something if you want it sooner.
+
 <p align="center">
   <img src="docs/screenshots/board.png" alt="The board: kanban columns from the sprint" width="440">
   <img src="docs/screenshots/flow.png" alt="The flow: the n8n workflow drawn from its own file" width="440">
