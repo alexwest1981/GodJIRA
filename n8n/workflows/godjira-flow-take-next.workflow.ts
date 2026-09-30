@@ -89,12 +89,6 @@ One press of *Execute workflow* is the whole gesture. The panel still needs two;
                     value: '/home/alex/Projects/godjira',
                     type: 'string',
                 },
-                {
-                    id: '14afb972-0970-4d46-b141-65214350fbac',
-                    name: 'project',
-                    value: 'SCRUM',
-                    type: 'string',
-                },
             ],
         },
         options: {},
@@ -108,8 +102,7 @@ One press of *Execute workflow* is the whole gesture. The panel still needs two;
         position: [360, 180],
     })
     Step1ThePickDryRun = {
-        command:
-            "={{ $('Config').first().json.repo }}/n8n/bin/flow-call.sh flow next --dry-run --json --project {{ $('Config').first().json.project }}",
+        command: "={{ $('Config').first().json.repo }}/n8n/bin/flow-call.sh flow next --dry-run --json",
         executeOnce: true,
     };
 
@@ -181,7 +174,7 @@ return [{ json: { key: own ? own.key : '', wouldTake: own, reason: reason } }];`
     })
     Step2TakeExactlyThatKey = {
         command:
-            "={{ $('Config').first().json.repo }}/n8n/bin/flow-call.sh flow next --json --expect \"{{ $json.key }}\" --project {{ $('Config').first().json.project }}",
+            '={{ $(\'Config\').first().json.repo }}/n8n/bin/flow-call.sh flow next --json --expect "{{ $json.key }}"',
         executeOnce: true,
     };
 

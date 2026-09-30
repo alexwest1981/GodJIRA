@@ -584,6 +584,51 @@ def link_for(name: str) -> dict:
     return {}
 
 
+# Vad en koppling behöver veta om kontot. Listan är Jiras egna behörighetsnamn.
+PROJECT_PERMISSIONS = ("BROWSE_PROJECTS", "CREATE_ISSUES", "EDIT_ISSUES", "ASSIGN_ISSUES",
+                       "TRANSITION_ISSUES", "MANAGE_SPRINTS_PERMISSION", "ADMINISTER_PROJECTS")
+
+
+def path_of(url: str) -> str:
+    """\"/rest/...\" ur en absolut rollänk -- jira_get tar en sökväg, inte en sajt."""
+    at = str(url or "").find("/rest/")
+    return str(url)[at:] if at >= 0 else ""
+
+
+def project_caps(bridge, project: str) -> dict:
+    """Kontot, rollen och vad man får i ett projekt.
+
+    Kopplar man ett repo till en Jira skall API:t vara på plats först: den här läser
+    kontot och projektet med samma token som resten använder, så en länk utan
+    fungerande API kan inte skapas. Rollen kommer ur projektets egna roller; en
+    next-gen-tavla kan svara att den inte har några, och då står behörigheterna kvar
+    som svar i stället för en påhittad roll.
+
+    ponytail: ett token per installation, inte per länk. Den dag två sajter skall
+    kopplas samtidigt får länken bära sajt + tokenreferens i stället.
+    """
+    me = bridge.get("/rest/api/3/myself") or {}
+    data = bridge.get("/rest/api/3/mypermissions?projectKey={}&permissions={}".format(
+        project, ",".join(PROJECT_PERMISSIONS))) or {}
+    have = {name: bool((row or {}).get("havePermission"))
+            for name, row in (data.get("permissions") or {}).items()}
+    account = str((me or {}).get("accountId") or "")
+    role, note = "", ""
+    try:
+        for label, url in (bridge.get("/rest/api/3/project/{}/role".format(project)) or {}).items():
+            body = bridge.get(path_of(url)) if path_of(url) else {}
+            if any(str(((a or {}).get("actorUser") or {}).get("accountId") or "") == account
+                   for a in (body or {}).get("actors") or []):
+                role = label
+                break
+    except Exception as exc:      # noqa: BLE001 -- rollen är en upplysning, inte porten
+        note = "{}: {}".format(type(exc).__name__, exc)
+    return {"account": (me or {}).get("displayName") or "", "accountId": account,
+            "role": role, "roleNote": note,
+            "can": sorted(name for name, yes in have.items() if yes),
+            "cannot": sorted(name for name, yes in have.items() if not yes)}
+
+
 def link_project(args, repo_dir: str = "") -> tuple:
     """(projekt, varifrån) -- flaggan vinner, sedan länken, sedan standarden.
 
@@ -1442,9 +1487,26 @@ def cmd_link(args) -> int:
         message = "which Jira project? (--project KEY)"
         say(args, {"ok": False, "error": message}, ["jira_flow: " + message])
         return 2
+    # API:t först: en koppling utan fungerande token vore en koppling som ser ut att
+    # finnas. Rollen och behörigheterna sparas med länken, så den som frågar vad man
+    # får göra i projektet får Jiras svar i stället för en gissning.
+    # Kravet gäller en riktig anslutning: i provläget finns ingen API av
+    # konstruktion, och då skall länken kunna sättas utan att ljuga om en roll.
+    bridging = client()
+    try:
+        caps = (project_caps(bridging, project.upper())
+                if str(getattr(bridging, "cfg", {}).get("mode") or "") == "real" else {})
+    except Exception as exc:      # noqa: BLE001 -- allt som inte svarar är samma svar
+        message = ("kan inte koppla {} till {}: API:t för Jira svarar inte ({}). "
+                   "Koppla på din API först (`jira_flow login`) och försök igen."
+                   .format(name, project.upper(), exc))
+        say(args, {"ok": False, "error": message}, ["jira_flow: " + message])
+        return 1
     entry = {"project": project.upper(),
              "issue": (getattr(args, "issue", "") or "").strip().upper(),
              "note": (getattr(args, "note", "") or "").strip(),
+             "account": caps.get("account") or "", "role": caps.get("role") or "",
+             "can": caps.get("can") or [], "roleNote": caps.get("roleNote") or "",
              "at": time.strftime("%Y-%m-%dT%H:%M:%S")}
     links[name] = {key: value for key, value in entry.items() if value}
     save_links(links)
@@ -1922,7 +1984,13 @@ def selftest() -> int:
     assert repo_slug("alexwest1981/GodJIRA/") == "alexwest1981/GodJIRA"
     assert repo_slug("GodJIRA") == "GodJIRA" and repo_slug("") == ""
     checks += 1
-    global LINKS_FILE
+    global LINKS_FILE, project_caps
+    # Kopplingen läser rollen ur Jiras svar (Alex' regel: ingen Jira-koppling utan
+    # påkopplad API). Provet styr det svaret i stället för att gå ut på nätet, och
+    # prövar längre ner att ett uteblivet svar nekar kopplingen.
+    project_caps = lambda bridge, projekt: {
+        "account": "Test", "role": "Developer", "roleNote": "",
+        "can": ["CREATE_ISSUES", "TRANSITION_ISSUES"]}
     kept_file = LINKS_FILE
     # Ingen tempfile här: funktionen importerar tempfile längre ner, och ett namn som
     # binds senare är lokal i hela kroppen (mätt: UnboundLocalError).
@@ -1976,6 +2044,16 @@ def selftest() -> int:
                                                issue="", note="", json=True)) == 0
         assert link_for("HellCrawlers") == {}, "borttagningen tar med skiftläget"
         assert json.loads(LINKS_FILE.read_text())["GodJIRA"]["issue"] == "SCRUM-133", "resten står kvar"
+
+        def utan_api(bridge, projekt):
+            raise RuntimeError("ingen API-token i nyckelringen")
+
+        project_caps = utan_api
+        with quiet:
+            assert cmd_link(argparse.Namespace(action="set", repo="utan-api", project="SCRUM",
+                                               issue="", note="", json=True)) == 1, \
+                "utan API nekas kopplingen"
+        assert link_for("utan-api") == {}, "och ingen länk skrivs av en halv koppling"
         checks += 1
     finally:
         LINKS_FILE = kept_file

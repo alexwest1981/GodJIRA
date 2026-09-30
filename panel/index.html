@@ -1195,6 +1195,12 @@ function renderRepoLink() {
       <div class="f"><div class="l">repo</div><div class="v mono">${esc((REPO.data && REPO.data.repo) || REPO.name)}</div></div>
       <div class="f"><div class="l">projekt</div><div class="v">${project ? esc(project) : "—"}</div></div>
       <div class="f"><div class="l">jobbar mot</div><div class="v mono">${issue ? esc(issue) : "—"}</div></div>
+      <div class="f"><div class="l">din roll</div><div class="v" title="${esc((l.can || []).length
+        ? "i " + project + ": " + l.can.join(", ")
+        : (l.account ? "kopplingen är äldre — kör link set igen" : ""))}">${esc(l.role || "—")}</div>
+        <div class="l" style="margin-top:4px">${esc((l.can || []).length
+          ? (l.can.includes("CREATE_ISSUES") ? "får skriva ärenden" : "får inte skriva ärenden")
+          : (l.account ? "rollen är inte läst" : ""))}</div></div>
     </div>
     <div class="linkform" style="margin-top:12px">
       <label for="lnkProject">projekt</label>
@@ -1282,6 +1288,19 @@ const impTargetText = () => {
            : "repot är inte kopplat — projektet blir " + projectKey();
 };
 
+// Rollen styr verktyget: får man inte CREATE_ISSUES i projektet importen pekar på
+// skall knappen vara av och säga varför, inte låta Jira neka efteråt. Saknar länken
+// behörigheter (äldre koppling) gäller Jiras svar vid skrivningen i stället.
+function mayCreateIssues() {
+  const name = (document.getElementById("impRepo") || {}).value || "";
+  const l = name ? linkOf(shortName(name)) : {};
+  const can = (l || {}).can || [];
+  return { ok: !can.length || can.includes("CREATE_ISSUES"),
+           project: (l || {}).project || projectKey(),
+           role: (l || {}).role || "",
+           can: can };
+}
+
 function renderImport() {
   // Repot man jobbar mot: de kopplade först, sedan alla andra. Valet är det som
   // avgör projektet -- och när ett enda repo är kopplat står det redan förvalt.
@@ -1303,9 +1322,12 @@ function renderImport() {
   }
   document.getElementById("impTarget").textContent = impTargetText();
   document.getElementById("impFiles").textContent = filesLabel();
+  const write = mayCreateIssues();       // före noten: noten säger varför knappen är av
   const note = document.getElementById("impNote");
   note.className = "meta" + (IMP.note ? (IMP.bad ? " err" : "") : "");
-  note.textContent = IMP.note;
+  note.textContent = IMP.note ||
+    (write.ok ? "" : "din roll i " + write.project + " (" + (write.role || "okänd") +
+                      ") får inte skapa ärenden där");
   const parse = document.getElementById("impParse");
   parse.disabled = IMP.busy || !IMP.files.length;
   parse.textContent = IMP.busy ? "tolkar …" : "Tolka → förslag";
@@ -1334,7 +1356,7 @@ function renderImport() {
         <button class="chip" data-act="imp-all">bocka alla</button>
         <button class="chip" data-act="imp-none">bocka av alla</button>
         <span class="grow"></span>
-        <button class="chip on" data-act="imp-apply" ${IMP.keep.size && !IMP.busy && !IMP.spent ? "" : "disabled"}>
+        <button class="chip on" data-act="imp-apply" ${IMP.keep.size && !IMP.busy && !IMP.spent && mayCreateIssues().ok ? "" : "disabled"}>
           Skapa ${plural(IMP.keep.size, "ärende", "ärenden")} i ${esc(IMP.project || projectKey())} (${jiraMode()})
         </button>
       </div>`;
