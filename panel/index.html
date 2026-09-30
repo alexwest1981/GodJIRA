@@ -299,7 +299,11 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
     background: var(--panel); border: 1px solid var(--line-2); border-radius: var(--r); color: var(--text);
     padding: 5px 10px; font: inherit; font-size: 12.5px; min-width: 200px;
   }
-  .wrap { padding: 24px 28px 56px; display: flex; flex-direction: column; gap: 16px; }
+  /* flex: 1 0 auto -- annars krymper rutan till sin egen padding (mätt: höjd 80 px =
+     24 + 56) och vyerna lägger sig utanför den. Då slår sidopaddingen inte igenom och
+     innehållet hamnar kant i kant med fönstret (mätt: luft vänster 0 px, höger 11 px =
+     bara scrollbaren). Rutan skall fylla main och aldrig krympa under sitt innehåll. */
+  .wrap { flex: 1 0 auto; padding: 24px 28px 56px; display: flex; flex-direction: column; gap: 16px; }
   .view { display: none; flex-direction: column; gap: 16px; }
   .view.on { display: flex; }
 
@@ -534,7 +538,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
         </div>
       </div>
     </section>
-  </div>
+
     <section class="view" id="v-admin">
       <div class="meta">Det som annars kräver en tur in i Jiras webbgränssnitt: rollerna och vilka
         som sitter i dem, och sajtens fält. Bara läsning — och bara det din roll får se.</div>
@@ -570,7 +574,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
         </div>
       </div>
     </section>
-
+  </div>
 </main>
 
 <script>

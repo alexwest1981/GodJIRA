@@ -170,6 +170,25 @@ def main() -> int:
           "the API carries the permission answer")
     check('transform="translate(${spot.x - n.x} ${spot.y - n.y})"' in html,
           "a fresh drawing applies the moves you made")
+    # Luften kommer ur .wrap (padding 24/28/56). Ett tidigt </div> gjorde att admin,
+    # setup och settings hamnade utanfor rutan: de arvde ingen padding och lag kant i
+    # kant med fonstret (matt: luft vanster 0 px, hoger 11 px = bara scrollbaren).
+    parents, stack = {}, []
+    for tok in re.finditer(r"<(/?)(\w+)([^>]*)>", html):
+        close, tag, attrs = tok.group(1), tok.group(2).lower(), tok.group(3)
+        if tag in ("meta", "link", "br", "img", "input", "hr"):
+            continue
+        if close:
+            if stack:
+                stack.pop()
+            continue
+        if tag == "section" and 'class="view' in attrs:
+            parents[re.search(r'id="v-(\w+)"', attrs).group(1)] = stack[-1] if stack else "?"
+        stack.append(tag)
+    without = sorted(k for k, v in parents.items() if v != "div")
+    check(bool(parents) and not without, "varje vy ligger i luft-rutan, inte direkt i main",
+          "utanfor: %s" % without)
+
     check("AbortSignal.timeout" in html, "the state fetch has a time limit")
     check("retryLater" in html, "a failed refresh is retried and said out loud")
 
