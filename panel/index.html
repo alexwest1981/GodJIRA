@@ -83,7 +83,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   @keyframes spin { to { transform: rotate(360deg); } }
   /* Märket ligger i assets/godjira.svg (beskuret från A4-sidan i originalet: motivet
      låg utanför sin egen viewBox och syntes inte alls förrän det beskars). */
-  .logo { height: 68px; width: auto; }
+  .logo { height: 84px; width: auto; }
   /* Märket är tvåfärgat i originalet (teal + marinblå): här blir det en färg -- svart i
      ljust tema, vitt i mörkt. brightness(0) gör allt svart, invert(1) vänder det till
      vitt. Utan data-theme följer panelen skrivbordet, därför media-frågan; ett eget val
@@ -116,7 +116,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   ::-webkit-scrollbar-corner { background: transparent; }
   /* -------------------------------------------------------- repot ------ */
   /* Raden är klickbar: hela repot öppnas, inte bara namnet. */
-  .badge { font-size: 9.5px; letter-spacing: .07em; text-transform: uppercase; white-space: nowrap;
+  .badge { font-size: 10px; letter-spacing: .07em; text-transform: uppercase; white-space: nowrap;
            border: 1px solid var(--line-3); border-radius: 999px; padding: 1px 6px; color: var(--muted); }
   .badge.on { color: var(--accent); border-color: var(--accent); }
   /* Blocken i en vy behöver samma rytm som vyn själv har mellan sig. */
@@ -150,11 +150,11 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   .gmon { position: absolute; top: 0; bottom: 0; padding-left: 5px; border-left: 1px solid var(--line-2);
           color: var(--muted); font-size: 10px; font-style: normal; letter-spacing: .06em; text-transform: uppercase; }
   .gtoday { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px dashed var(--accent); }
-  .gtoday b { position: absolute; bottom: 0; left: 3px; color: var(--accent); font-size: 9.5px;
+  .gtoday b { position: absolute; bottom: 0; left: 3px; color: var(--accent); font-size: 10px;
               font-weight: 500; letter-spacing: .05em; }
   .gnone { position: absolute; top: 4px; left: 6px; font-size: 11px; }
   .gbar { position: absolute; top: 6px; height: 11px; padding: 0 6px; border-radius: 6px; background: var(--accent);
-          color: var(--bg); font-size: 9.5px; font-style: normal; line-height: 11px; white-space: nowrap; overflow: hidden; }
+          color: var(--bg); font-size: 10px; font-style: normal; line-height: 11px; white-space: nowrap; overflow: hidden; }
   .gbar.sprint { background: color-mix(in oklab, var(--accent) 32%, var(--line-3)); color: var(--text); }
   .gbar.sprint.on { background: var(--accent); color: var(--bg); }
 
@@ -216,6 +216,9 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   .inp { background: var(--panel); color: var(--text); border: 1px solid var(--line-2); border-radius: 7px;
          padding: 5px 8px; font: inherit; font-size: 12.5px; }
   .inp:focus { outline: none; border-color: var(--accent); }
+  /* Tangentbordet far en ring, musen ingen: :focus-visible tands inte av ett klick.
+     !important behövs for att .inp:focus (0,2,0) annars vinner over den (0,1,0). */
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px !important; }
   a.chip { text-decoration: none; }
   .mono { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px; }
 
@@ -243,9 +246,9 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   }
   .rail .mark {
     position: relative;
-    width: 34px; height: 30px; border-radius: 9px;
+    width: 41px; height: 36px; border-radius: 11px;
     /* bara odjuret: motivet är 76 % av höjden, ordmärket de sista 21 procenten.
-       Rita om logotypen -> räkna om 39px (30 / 0,7625). ponytail: ett fast mått,
+       Rita om logotypen -> räkna om 47px (36 / 0,7625). ponytail: ett fast mått,
        blir logotypen en annan form får det bli en egen ikonfil i stället. */
     background: var(--panel);
   }
@@ -254,14 +257,14 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
      rutan, chippet inräknat. */
   .rail .mark::before {
     content: ""; position: absolute; inset: 0; background-color: var(--text);
-    -webkit-mask: url(/godjira.svg) center top / auto 39px no-repeat;
-    mask: url(/godjira.svg) center top / auto 39px no-repeat;
+    -webkit-mask: url(/godjira.svg) center top / auto 47px no-repeat;
+    mask: url(/godjira.svg) center top / auto 47px no-repeat;
   }
   .railitem {
     /* 64 = bredaste etiketten ("Importera" 56,6 px) + luft: vid 46 px spillde tre av
        fem etiketter över sin egen ruta, alltså var hover-ytan smalare än sin text. */
     width: 64px; display: grid; place-items: center; gap: 3px; padding: 6px 0; border-radius: 8px;
-    color: var(--muted); cursor: pointer; font-size: 9px; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--muted); cursor: pointer; font-size: 10px; letter-spacing: .04em; text-transform: uppercase;
   }
   .railitem .g { font-size: 15px; line-height: 1; }
   .railitem:hover { background: var(--panel); color: var(--text-2); }
@@ -454,7 +457,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
 <body>
 <div class="splash" id="splash">
   <div class="splash-box">
-    <img class="logo" src="/godjira.svg" alt="GodJIRA" height="68">
+    <img class="logo" src="/godjira.svg" alt="GodJIRA" height="84">
     <div class="spin"></div>
     <div class="note" id="splashNote">hämtar Jira, GitHub och flödets nästa …</div>
   </div>
