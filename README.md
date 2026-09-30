@@ -709,6 +709,10 @@ python3 tools/i18n_report.py            # what is missing, per language
 python3 panel/test_i18n.py              # every file must match the source list
 ```
 
+<p align="center">
+  <img src="docs/screenshots/settings.png" alt="Settings: the language dropdown, next to the token card" width="620">
+</p>
+
 `i18n_report.py --missing de` prints exactly the lines a translator has to fill in,
 and `--prune` drops keys that no longer exist in the panel. Add a language by
 dropping `panel/i18n/<code>.json` next to the others; the dropdown in Settings finds
