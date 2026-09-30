@@ -93,6 +93,16 @@ def main():
             "/".join("%.1f" % contrast(TOKENS[t][i], TOKENS["bg"][i]) for t in TEXT),
             "/".join("%.1f" % contrast(TOKENS[g][i], TOKENS["bg"][i]) for g in GLYF)))
 
+    # Märket: den tvåfärgade logotypen ska bli en färg per tema. Rälens märke målas med
+    # --text (mask), logotypen i splash-fönstret filtreras. Tappar någon någon av dem står
+    # logotypen kvar i marinblått mot mörk botten och syns knappt -- det var felet.
+    if "background-color: var(--text);" not in HTML or "url(/godjira.svg)" not in HTML:
+        fel.append("rälens märke målas inte med --text (mask), logotypen följer inte temat")
+    for val in ('[data-theme="light"] .logo { filter: brightness(0); }',
+                '[data-theme="dark"] .logo { filter: brightness(0) invert(1); }'):
+        if val not in HTML:
+            fel.append("logotypen saknar filterregel: " + val)
+
     if fel:
         print("\n".join("FEL: " + f for f in fel))
         return 1
