@@ -186,6 +186,13 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   /* Kryssraderna i Inställningar, och den halva raden: är ett av de två blocken
      avstängt får det andra hela bredden i stället för att lämna ett tomrum. */
   #stats:empty { display: none; }
+  /* Ändra-läget: raderna går att dra, och den man håller i syns. Bara enheterna blir
+     dragbara -- raden med knappen står still. */
+  .ovtools { display: flex; align-items: center; gap: 9px; }
+  #v-overview.editing [data-unit] { cursor: grab; }
+  #v-overview.editing [data-unit]:hover { outline: 1px dashed var(--line-3); outline-offset: 3px; }
+  #v-overview.editing [data-unit] > * { pointer-events: none; }
+  [data-unit].dragging { opacity: .45; }
   .lay { display: flex; align-items: center; gap: 8px; padding: 3px 0; cursor: pointer; }
   .lay input { accent-color: var(--accent); }
   .two:has(> .panel[hidden]) { grid-template-columns: 1fr; }
@@ -471,6 +478,10 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
 
   <div class="wrap">
     <section class="view on" id="v-overview">
+      <div class="ovtools">
+        <button class="chip" data-act="ov-edit" id="editChip">✎ ändra</button>
+        <span class="meta" id="editNote" hidden>dra raderna dit du vill ha dem — ordningen sparas</span>
+      </div>
       <div class="stats" id="stats" data-unit="stats"></div>
       <div class="panel" data-ov="automation" data-unit="automation">
         <h3>Projektet du är kopplad till <span class="meta" id="automationMeta"></span>
@@ -978,10 +989,38 @@ function applyLayout() {
   for (const el of document.querySelectorAll(".railitem[data-v]")) {
     if (!LOCKED_VIEWS.includes(el.dataset.v)) el.hidden = off.has("view:" + el.dataset.v);
   }
-  const order = orderNow();
-  for (const el of document.querySelectorAll("[data-unit]")) {
-    el.style.order = String(order.indexOf(el.dataset.unit));
+  applyOrder();
+}
+
+// Flyttar noderna till den sparade ordningen. appendChild flyttar en nod (kopierar den
+// inte), så enheterna hamnar i listans ordning efter varandra -- och raden med
+// ändra-knappen, som ligger först i markupen, står kvar överst.
+function applyOrder() {
+  const host = document.getElementById("v-overview");
+  if (!host) return;
+  for (const id of orderNow()) {
+    const el = host.querySelector(`[data-unit="${id}"]`);
+    if (el) host.appendChild(el);
   }
+}
+
+// Ordningen läses ur trädet och sparas: det man ser är det som sparas.
+function saveOrderFromDom() {
+  const host = document.getElementById("v-overview");
+  if (!host) return;
+  const list = [...host.querySelectorAll(":scope > [data-unit]")].map(el => el.dataset.unit);
+  try { localStorage.setItem(ORDER_KEY, JSON.stringify(list)); } catch { /* utan lagring */ }
+}
+
+function editOverview(on) {
+  const host = document.getElementById("v-overview");
+  if (!host) return;
+  const editing = on === undefined ? !host.classList.contains("editing") : on;
+  host.classList.toggle("editing", editing);
+  for (const el of host.querySelectorAll("[data-unit]")) el.draggable = editing;
+  const chip = document.getElementById("editChip"), note = document.getElementById("editNote");
+  if (chip) chip.textContent = editing ? "✓ klart" : "✎ ändra";
+  if (note) note.hidden = !editing;
 }
 
 function layoutToggle(id) {
@@ -2547,12 +2586,41 @@ function show(v) {
   if (view === "insights") insightLoad();
   if (view === "karta") { mapLoad(); renderCodeMap(); }
 }
+// Dra raderna i ändra-läget. Under draget flyttas noden förbi den rad man är över --
+// över mitten hamnar man efter den, annars före -- så man ser var den landar. På släpp
+// sparas trädets ordning.
+let dragUnit = null;
+document.addEventListener("dragstart", e => {
+  const el = e.target.closest ? e.target.closest("#v-overview.editing [data-unit]") : null;
+  if (!el) return;
+  dragUnit = el;
+  el.classList.add("dragging");
+  if (e.dataTransfer) { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", el.dataset.unit); }
+});
+document.addEventListener("dragover", e => {
+  if (!dragUnit) return;
+  const over = e.target.closest ? e.target.closest("#v-overview > [data-unit]") : null;
+  if (!over || over === dragUnit) return;
+  e.preventDefault();          // utan detta blir det ingen släpp-händelse
+  const midten = over.getBoundingClientRect().top + over.offsetHeight / 2;
+  over.parentNode.insertBefore(dragUnit, e.clientY > midten ? over.nextSibling : over);
+});
+document.addEventListener("drop", e => { if (dragUnit) e.preventDefault(); });
+document.addEventListener("dragend", () => {
+  if (!dragUnit) return;
+  dragUnit.classList.remove("dragging");
+  dragUnit = null;
+  saveOrderFromDom();
+  renderLayoutPrefs();
+});
+
 document.addEventListener("click", e => {
   if (e.target.closest('[data-act="refresh"]')) return load(true);
   const lay = e.target.closest('[data-act="lay"]');
   if (lay) return layoutToggle(lay.dataset.id);
   const mv = e.target.closest("[data-mv]");
   if (mv) return orderMove(mv.dataset.mv, Number(mv.dataset.dir));
+  if (e.target.closest('[data-act="ov-edit"]')) return editOverview();
   if (e.target.closest('[data-act="imp-parse"]')) return impParse();
   if (e.target.closest('[data-act="imp-apply"]')) return impApply();
   if (e.target.closest('[data-act="link-save"]')) return linkSave(false);
