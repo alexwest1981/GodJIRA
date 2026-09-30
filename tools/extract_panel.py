@@ -25,7 +25,9 @@ SV_WORD = re.compile(r"\b(alla|och|inga|inte|öppna|öppnar|stäng|senast|visar|
                      r"annan|innan|efter|kunde|saknas|finns|behöver|går|kommer|kvar|mellan|"
                      r"under|över|utan|med|till|från|hos|mot|vid|per|hur|vad|när|var|vilka|"
                      r"vilken|vilket|ägaren|ägare|nyckeln|nyckel|behörighet|medlemmar|medlem|"
-                     r"oassignerat|assignerat)\b", re.I)
+                     r"oassignerat|assignerat|sammanfattning|utveckling|tidslinje|"
+                     r"prioriteringar|avslutade|skapade|inom|dygnen|dygn|filtrera|titel|"
+                     r"ansvarig|åtgärd|kvarstår|senaste)\b", re.I)
 
 SKIP_VALUE = re.compile(r"^[\s\d\W]*$")
 
@@ -119,10 +121,14 @@ script = panel[panel.find("<script"):]
 for m in re.finditer(r"`((?:[^`\\]|\\.)*)`", script, re.S):
     for piece in pieces(m.group(1)):
         add(piece, "template")
+# Även vanliga strängar delas upp: Projekt-vyn bygger sin HTML av `'<h3>Prioriteringar</h3>'
+# + ...`, inte av mallsträngar, så utan styckena fastnar all text i en enda kodklump.
 for m in re.finditer(r'"((?:[^"\\\n]|\\.){2,200})"', script):
-    add(m.group(1), "string")
+    for piece in pieces(m.group(1)):
+        add(piece, "string")
 for m in re.finditer(r"'((?:[^'\\\n]|\\.){2,200})'", script):
-    add(m.group(1), "string")
+    for piece in pieces(m.group(1)):
+        add(piece, "string")
 
 # Ord som är svenska men saknar å/ä/ö, och som står inuti ett ${...}-uttryck (en
 # reservtext i en mallsträng) -- textstyckena ser dem inte. Läggs till för hand.
@@ -133,7 +139,7 @@ for m in re.finditer(r"'((?:[^'\\\n]|\\.){2,200})'", script):
 # den syns på skärmen och går att byta på samma sätt som resten.
 EXTRA = ("oassignerat", "standarden", "nytt projekt", "privata", "publika",
          "Utseende", "följ skrivbordet", "ljust", "mörkt",
-         "provläge: exempeldata, inget konto kopplat")
+         "provläge: exempeldata, inget konto kopplat", "ur filen", "st")
 for word in EXTRA:
     found.setdefault(word, set()).add("extra")
 

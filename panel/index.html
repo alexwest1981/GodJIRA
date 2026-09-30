@@ -741,7 +741,9 @@ function translateText(raw) {
       if (at < 0) break;
       const before = text[at - 1], after = text[at + key.length];
       const free = !isLetter(before) && !isLetter(after);
-      if (free && (key.length >= 4 || text.trim().toLowerCase() === lowKey)) {
+      // Ordet måste stå fritt enligt kontrollen ovan. Korta nycklar behöver inget mer:
+      // "st" och "sök" står själva i sin nod, med ett tal eller inget framför.
+      if (free) {
         const hit = text.substr(at, key.length);
         let to = STRINGS[key];
         if (hit === hit.toUpperCase() && hit !== hit.toLowerCase()) to = to.toUpperCase();
@@ -1598,7 +1600,7 @@ function insightSummary(d) {
     `${esc(ago(new Date(i.updatedMs).toISOString()))}</span></span></div>`).join("") ||
     '<div class="empty">inget rört än</div>';
   return '<div class="stack">' +
-    `<div class="panel"><h3>Senaste ${s.days} dygnen <span class="meta">${esc(d.project || "")}</span></h3>` +
+    `<div class="panel"><h3>Senaste <span class="n">${s.days}</span> dygnen <span class="meta">${esc(d.project || "")}</span></h3>` +
       '<div class="body">' + kpi([["klara", s.completed, "avslutade"],
                                   ["ändrade", s.updated, "rörda"],
                                   ["skapade", s.created, "nya"],
