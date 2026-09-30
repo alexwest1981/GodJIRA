@@ -53,7 +53,9 @@ for path in translated_files:
     same = sorted(k for k, v in table.items() if k == v and k != "Jira")
     check(not missing, "{}: {} nycklar saknas, t.ex. {}".format(code, len(missing), missing[:3]))
     check(not extra, "{}: {} nycklar finns inte i källistan, t.ex. {}".format(code, len(extra), extra[:3]))
-    check(len(same) <= 2, "{}: {} rader är oöversatta, t.ex. {}".format(code, len(same), same[:4]))
+    # Några rader är egennamn eller redan engelska ("Jira + GitHub") och blir lika i alla
+    # språk. Några få sådana är rätt; många betyder att filen inte är översatt.
+    check(len(same) <= 4, "{}: {} rader är oöversatta, t.ex. {}".format(code, len(same), same[:4]))
 
 # --- 3. Kända rader skall vara översatta -----------------------------------------
 SPOT = {"Inställningar": {"en": "Settings", "de": "Einstellungen"}}

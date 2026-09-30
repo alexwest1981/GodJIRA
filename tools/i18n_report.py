@@ -28,6 +28,8 @@ def main():
     parser = argparse.ArgumentParser(description="Läget för panelens språkfiler")
     parser.add_argument("--missing", metavar="SPRÅK", help="skriv nycklarna som saknas, som json")
     parser.add_argument("--untranslated", action="store_true", help="visa rader som är lika på båda språken")
+    parser.add_argument("--prune", action="store_true",
+                        help="ta bort nycklar som inte längre finns i källistan (skriv först, fråga sedan)")
     args = parser.parse_args()
 
     source = load(I18N / "sv.json")
@@ -39,6 +41,19 @@ def main():
         table = load(I18N / "{}.json".format(args.missing))
         missing = {key: source[key] for key in source if key not in table}
         print(json.dumps(missing, ensure_ascii=False, indent=1))
+        return 0
+
+    if args.prune:
+        for path in sorted(I18N.glob("*.json")):
+            if path.stem == "sv":
+                continue
+            table = load(path)
+            extra = sorted(set(table) - set(source))
+            if extra:
+                for key in extra:
+                    table.pop(key, None)
+                path.write_text(json.dumps(table, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+                print("{}: tog bort {} nycklar som inte finns i källistan".format(path.stem, len(extra)))
         return 0
 
     print("{:<4} {:>5} {:>8} {:>6} {:>12}".format("språk", "rader", "saknas", "extra", "oöversatta"))

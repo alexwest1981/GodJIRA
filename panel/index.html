@@ -707,6 +707,7 @@ async function loadStrings(code) {
     LANG = data.language || "sv";
     STRINGS = data.strings || {};
     LANGS = data.available || [];
+    buildKeys();
   } catch (e) {
     STRINGS = {};   // utan tabell står svenskan kvar: sämre, men inte trasigt
   }
@@ -717,24 +718,63 @@ const t = s => STRINGS[s] || s;
 const SKIP_TAGS = { SCRIPT: 1, STYLE: 1, TEXTAREA: 1, CODE: 1, PRE: 1 };
 let translating = false;
 
+let KEYS = [];
+function buildKeys() {
+  // Längsta nyckeln först: "öppna ärenden ·" skall vinna över "öppna ärenden".
+  KEYS = Object.keys(STRINGS)
+    .filter(k => STRINGS[k] !== k)
+    .sort((a, b) => b.length - a.length);
+}
+
+const isLetter = ch => !!ch && ch.toLowerCase() !== ch.toUpperCase();
+
+/** Byt ut de nycklar som finns i texten. Ordet måste stå fritt: annars byts "Karta" inuti
+ *  ett reponamn. Korta nycklar (under fyra tecken) kräver att hela texten är nyckeln,
+ *  så att "ja" och "nej" inte slår till mitt i något annat. */
+function translateText(raw) {
+  let text = raw, changed = false;
+  for (const key of KEYS) {
+    const lowKey = key.toLowerCase();
+    let from = 0;
+    for (;;) {
+      const at = text.toLowerCase().indexOf(lowKey, from);
+      if (at < 0) break;
+      const before = text[at - 1], after = text[at + key.length];
+      const free = !isLetter(before) && !isLetter(after);
+      if (free && (key.length >= 4 || text.trim().toLowerCase() === lowKey)) {
+        const hit = text.substr(at, key.length);
+        let to = STRINGS[key];
+        if (hit === hit.toUpperCase() && hit !== hit.toLowerCase()) to = to.toUpperCase();
+        text = text.slice(0, at) + to + text.slice(at + key.length);
+        changed = true;
+        from = at + to.length;
+        continue;
+      }
+      from = at + 1;
+    }
+  }
+  return changed ? text : null;
+}
+
 function translateTree(root) {
-  if (translating || LANG === "sv" || !Object.keys(STRINGS).length) return;
+  if (translating || LANG === "sv" || !KEYS.length) return;
   translating = true;
   try {
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
       const parent = node.parentNode;
       if (!parent || SKIP_TAGS[parent.nodeName]) continue;
-      const raw = node.nodeValue, key = raw.trim();
-      if (!key || !STRINGS[key] || STRINGS[key] === key) continue;
-      node.nodeValue = raw.replace(key, STRINGS[key]);
+      const raw = node.nodeValue;
+      if (!raw || !raw.trim()) continue;
+      const replaced = translateText(raw);
+      if (replaced !== null) node.nodeValue = replaced;
     }
     root.querySelectorAll?.("[placeholder],[title]").forEach(el => {
       ["placeholder", "title"].forEach(attr => {
         const now = el.getAttribute(attr);
-        if (now && STRINGS[now.trim()] && STRINGS[now.trim()] !== now.trim()) {
-          el.setAttribute(attr, STRINGS[now.trim()]);
-        }
+        if (!now) return;
+        const replaced = translateText(now);
+        if (replaced !== null) el.setAttribute(attr, replaced);
       });
     });
   } finally {

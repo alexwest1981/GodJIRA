@@ -23,9 +23,9 @@ live on the sample data; the account card says *mock*, and **Kom igång** is whe
 real Jira key and `gh auth login` go when you are ready. Nothing to undo: no key,
 no keyring entry, no file in the repo.
 
-The panel's own interface is **Swedish** today (the screenshots below are what it
-looks like). The bar widget and the CLI do ship nine languages in `i18n/`; the panel
-picking them up is the next thing on the list — say something if you want it sooner.
+The panel speaks the same nine languages as the bar widget. Pick one under
+**Settings → Panelens språk** and both follow — it is one setting, stored in the
+bridge, not a per-browser preference. The screenshots below are the English one.
 
 <p align="center">
   <img src="docs/screenshots/board.png" alt="The board: kanban columns from the sprint" width="440">
@@ -686,24 +686,32 @@ lock — `language` and `startView` change freely.
 ## Languages
 
 The interface speaks English, Swedish, German, French, Spanish, Italian,
-Portuguese, Dutch and Polish. Switch language under **Inställningar → Språk**,
-or leave it on *Follow the system* and the panel takes the language from
-`LANG`.
+Portuguese, Dutch and Polish. Switch under **Inställningar → Språk** in the
+widget, or **Settings → Panelens språk** in the panel. It is one setting, kept in
+the bridge's config, so both change together; leave it unset and the panel takes
+the language from `LANG`.
 
-One source of truth: `i18n/en.json` is the source text, and every other file is
-a translation of it. Both the panel and the Python bridge read the same files —
-the bridge serves them to the QML through the `strings` command, so there is no
-second copy of any sentence in the QML, and the bridge's own error messages
-speak the same language as the window.
+Two sets of files, one setting:
+
+- `i18n/` is the widget's and the CLI's vocabulary, served to the QML through the
+  bridge's `strings` command so no sentence is written twice. `bin/i18n_check.py`
+  keeps the key set and the `{placeholders}` in line with `en.json`.
+- `panel/i18n/` is the panel's own lines. `sv.json` is generated from
+  `panel/index.html` by `tools/extract_panel.py`; the other files are translations
+  of exactly those lines, and **the keys are the Swedish text itself** — which is
+  why the panel needed no rewriting when the languages arrived: after each paint a
+  small pass replaces the text nodes it recognises.
 
 ```bash
-python3 bin/i18n_check.py     # key set and {placeholders} must match en.json
+python3 tools/extract_panel.py --json   # rebuild panel/i18n/sv.json from the panel
+python3 tools/i18n_report.py            # what is missing, per language
+python3 panel/test_i18n.py              # every file must match the source list
 ```
 
-The check exits non-zero on a missing key, an extra key, a mismatched
-placeholder, or an empty value, and it lists the keys a language happens to
-spell exactly like English (allowed, but worth a look). Add a language by
-dropping `i18n/<code>.json` next to the others; the picker finds it by itself.
+`i18n_report.py --missing de` prints exactly the lines a translator has to fill in,
+and `--prune` drops keys that no longer exist in the panel. Add a language by
+dropping `panel/i18n/<code>.json` next to the others; the dropdown in Settings finds
+it by itself and the bar widget picks up the same name from `i18n/<code>.json`.
 
 Two things are deliberately not translated: the issue text itself (titles,
 statuses, descriptions, names are Jira's data and are shown as Jira writes

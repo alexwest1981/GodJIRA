@@ -20,11 +20,12 @@ SV = re.compile(r"[åäöÅÄÖ]")
 SV_WORD = re.compile(r"\b(alla|och|inga|inte|öppna|öppnar|stäng|senast|visar|väntar|klart|klara|"
                      r"sök|spara|avbryt|ta bort|nytt|nya|repon|uppgifter|ärenden|ärende|flödet|"
                      r"projektet|inställningar|översikt|tavlan|karta|importera|välj|ingen|inget|"
-                     r"bara|först|sedan|här|som|din|dina|min|uppdaterad|lägg|hämta|visa|rensa|"
+                     r"bara|först|sedan|här|som|din|dina|uppdaterad|lägg|hämta|visa|rensa|"
                      r"tydligt|egen|eget|nej|ja|vyn|rader|rad|sedan|varje|hela|samma|annat|"
                      r"annan|innan|efter|kunde|saknas|finns|behöver|går|kommer|kvar|mellan|"
                      r"under|över|utan|med|till|från|hos|mot|vid|per|hur|vad|när|var|vilka|"
-                     r"vilken|vilket|ägaren|ägare|nyckeln|nyckel|behörighet|medlemmar|medlem)\b", re.I)
+                     r"vilken|vilket|ägaren|ägare|nyckeln|nyckel|behörighet|medlemmar|medlem|"
+                     r"oassignerat|assignerat)\b", re.I)
 
 SKIP_VALUE = re.compile(r"^[\s\d\W]*$")
 
@@ -82,6 +83,27 @@ def add(text: str, where: str) -> None:
         found.setdefault(text, set()).add(where)
 
 
+# Textblocket: nycklarna är kodnamn (nav.overview), men VÄRDENA är den text som syns på
+# skärmen. De plockas ut för sig, och blocket tas bort ur resten så inget räknas dubbelt.
+block = re.search(r"const TEXT = \{(.*?)\n\};", panel, re.S)
+text_block = block.group(1) if block else ""
+def add_text(text: str, where: str) -> None:
+    """Textblocket: allt som är text är text. Kodnamnen (nav.overview) och ikonerna
+    (⦿) sållas bort på formen i stället för på orden -- annars faller svenska ord utan
+    å/ä/ö bort, som "oassignerat"."""
+    text = " ".join(text.split())
+    if not (2 <= len(text) <= 90):
+        return
+    if re.match(r"^[a-z][a-z0-9]*(\.[a-z0-9]+)+$", text):   # nav.overview, flow.nodes
+        return
+    if not re.search(r"[a-zA-ZåäöÅÄÖ]", text):
+        return
+    found.setdefault(text, set()).add(where)
+
+
+for mm in re.finditer(r'"((?:[^"\\]|\\.)*)"', text_block):
+    add_text(mm.group(1).replace('\\"', '"'), "text")
+
 # HTML-kroppen: textnoder och attribut. Skript och stilmall tas bort ur kopian i
 # stället för att klippa vid första <script> -- den ligger i <head>, så all markup
 # efter den skulle annars hoppas över.
@@ -101,6 +123,15 @@ for m in re.finditer(r'"((?:[^"\\\n]|\\.){2,200})"', script):
     add(m.group(1), "string")
 for m in re.finditer(r"'((?:[^'\\\n]|\\.){2,200})'", script):
     add(m.group(1), "string")
+
+# Ord som är svenska men saknar å/ä/ö, och som står inuti ett ${...}-uttryck (en
+# reservtext i en mallsträng) -- textstyckena ser dem inte. Läggs till för hand.
+# "standarden" är källan panelen visar i spåret, och de tre sista byggs ihop av
+# ${...}-uttryck: "nytt projekt" står som text mitt i en mall, "privata"/"publika" står
+# som egna ord mellan två räknade tal. Ingen av dem syns för textstyckena.
+EXTRA = ("oassignerat", "standarden", "nytt projekt", "privata", "publika")
+for word in EXTRA:
+    found.setdefault(word, set()).add("extra")
 
 strings = sorted(found)
 print("svenska textstycken i panelen:", len(strings))
