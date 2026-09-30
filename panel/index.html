@@ -185,6 +185,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   #codeCanvas svg { width: auto; height: auto; max-width: none; }
   /* Kryssraderna i Inställningar, och den halva raden: är ett av de två blocken
      avstängt får det andra hela bredden i stället för att lämna ett tomrum. */
+  #stats:empty { display: none; }
   .lay { display: flex; align-items: center; gap: 8px; padding: 3px 0; cursor: pointer; }
   .lay input { accent-color: var(--accent); }
   .two:has(> .panel[hidden]) { grid-template-columns: 1fr; }
@@ -465,7 +466,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
 
   <div class="wrap">
     <section class="view on" id="v-overview">
-      <div class="stats" id="stats" data-ov="stats"></div>
+      <div class="stats" id="stats"></div>
       <div class="panel" data-ov="automation">
         <h3>Projektet du är kopplad till <span class="meta" id="automationMeta"></span>
           <span class="grow"></span><a class="chip" id="automationLink" hidden>öppna flödet</a></h3>
@@ -889,17 +890,23 @@ function renderCrumbs() {
     `<button data-v="${v}" class="${v === view ? "on" : ""}" title="${label}">${glyph}</button>`).join("");
 }
 
+// Ett kort per källa, och varje kort går att stänga av för sig: en vill se Jira,
+// en annan vad som hänt på GitHub, en tredje om n8n har något nytt. Ligger de i samma
+// ruta får man alla tre. hiddenNow() läses här så att ett avstängt kort inte ens ritas.
 function renderStats() {
   const g = STATE.github, f = STATE.flow;
-  document.getElementById("stats").innerHTML = `
-    <div class="stat"><div class="n">${openItems().length}</div><div class="l">öppna i Jira</div>
-      <div class="x">${TEXT.settled}: ${issues().length} · ${TEXT.backlog}: ${backlog().length}</div></div>
-    <div class="stat"><div class="n">${g.pullRequests.length + g.issues.length}</div><div class="l">${TEXT.waiting} på GitHub</div>
-      <div class="x">${g.pullRequests.length} PR · ${g.issues.length} ärenden</div></div>
-    <div class="stat"><div class="n">${g.repos.length}</div><div class="l">${TEXT.repos}</div>
-      <div class="x">${g.repos.filter(r => r.isPrivate).length} privata · ${g.repos.filter(r => !r.isPrivate).length} publika</div></div>
-    <div class="stat"><div class="n">${f.pick ? esc(f.pick.key) : "—"}</div><div class="l">flödets nästa</div>
-      <div class="x">${esc(f.pick ? (f.pick.summary || "").slice(0, 40) : (f.error || TEXT.nothing))}</div></div>`;
+  const off = new Set(hiddenNow());
+  const cards = [
+    ["ov:stat:jira", `<div class="stat"><div class="n">${openItems().length}</div><div class="l">öppna i Jira</div>
+      <div class="x">${TEXT.settled}: ${issues().length} · ${TEXT.backlog}: ${backlog().length}</div></div>`],
+    ["ov:stat:gh", `<div class="stat"><div class="n">${g.pullRequests.length + g.issues.length}</div><div class="l">${TEXT.waiting} på GitHub</div>
+      <div class="x">${g.pullRequests.length} PR · ${g.issues.length} ärenden</div></div>`],
+    ["ov:stat:repos", `<div class="stat"><div class="n">${g.repos.length}</div><div class="l">${TEXT.repos}</div>
+      <div class="x">${g.repos.filter(r => r.isPrivate).length} privata · ${g.repos.filter(r => !r.isPrivate).length} publika</div></div>`],
+    ["ov:stat:flow", `<div class="stat"><div class="n">${f.pick ? esc(f.pick.key) : "—"}</div><div class="l">flödets nästa</div>
+      <div class="x">${esc(f.pick ? (f.pick.summary || "").slice(0, 40) : (f.error || TEXT.nothing))}</div></div>`]];
+  document.getElementById("stats").innerHTML =
+    cards.filter(([id]) => !off.has(id)).map(([, html]) => html).join("");
 }
 
 /* ----------------------------------------------------------- vad som syns ---- */
@@ -907,8 +914,12 @@ function renderStats() {
 // block (Översikt) av. Listan är det som är AV -- nya block är alltså på från början,
 // och ett tomt val betyder allt. Valet ligger i webbläsaren, som temat.
 const HIDDEN_KEY = "godjira.hidden";
-const OVERVIEW_BLOCKS = [["stats", "Nyckeltal"], ["automation", "Projektet du är kopplad till"],
+const OVERVIEW_BLOCKS = [["automation", "Projektet du är kopplad till"],
   ["flow", "Flödets nästa"], ["journal", "Flödets egna skrivningar"], ["recent", "Senast rörda repon"]];
+// Statuskorten högst upp: källan står i etiketten, så valet handlar om källor och inte om
+// var i gränssnittet något råkade hamna.
+const STATUS_CARDS = [["ov:stat:jira", "Jira — öppna ärenden"], ["ov:stat:gh", "GitHub — väntar på dig"],
+  ["ov:stat:repos", "GitHub — repon"], ["ov:stat:flow", "n8n — flödets nästa"]];
 // Översikt är vägen tillbaka och Inställningar är där man slår på igen: de två går inte
 // att stänga av.
 const LOCKED_VIEWS = ["overview", "settings"];
@@ -919,7 +930,7 @@ function hiddenPrefs(raw) {
   let list = null;
   try { list = JSON.parse(raw == null ? "[]" : raw); } catch { list = null; }
   if (!Array.isArray(list)) return [];
-  return [...new Set(list.filter(x => typeof x === "string" && /^(ov|view):[a-z]+$/.test(x)))];
+  return [...new Set(list.filter(x => typeof x === "string" && /^(ov|view):[a-z]+(:[a-z]+)?$/.test(x)))];
 }
 
 function hiddenNow() {
@@ -956,6 +967,8 @@ function renderLayoutPrefs() {
     `<div class="meta" style="margin-bottom:5px">Verktyg i rälen</div>` +
     Object.entries(TEXT.views).filter(([v]) => !LOCKED_VIEWS.includes(v))
       .map(([v, pair]) => row("view:" + v, pair[0])).join("") +
+    `<div class="meta" style="margin:11px 0 5px">Statuskort högst upp</div>` +
+    STATUS_CARDS.map(([id, label]) => row(id, label)).join("") +
     `<div class="meta" style="margin:11px 0 5px">Block på Översikt</div>` +
     OVERVIEW_BLOCKS.map(([key, label]) => row("ov:" + key, label)).join("");
 }

@@ -188,7 +188,8 @@ console.log(JSON.stringify(got) === JSON.stringify(want) ? "OK" : "FEL " + JSON.
             fh.write(fn.group(0) + """
 const fall = [[null, 0], ["[]", 0], ['["ov:stats"]', 1], ['["ov:stats","ov:stats"]', 1],
   ['["ov:stats","view:karta"]', 2], ["trasigt", 0], ['{"a":1}', 0], ['[1,"view:karta"]', 1],
-  ['["admin:all","ov:stats;"]', 0], ['["view:"]', 0]];
+  ['["admin:all","ov:stats;"]', 0], ['["view:"]', 0], ['["ov:stat:jira"]', 1],
+  ['["ov:stat:jira","ov:stat:jira"]', 1], ['["ov:stat:JIRA"]', 0], ['["ov:stat:"]', 0]];
 const fel = fall.filter(([raw, n]) => hiddenPrefs(raw).length !== n)
   .map(([raw, n]) => raw + " -> " + JSON.stringify(hiddenPrefs(raw)));
 console.log(fel.length ? "FEL " + fel.join(" | ") : "OK");
