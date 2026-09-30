@@ -129,7 +129,11 @@ for m in re.finditer(r"'((?:[^'\\\n]|\\.){2,200})'", script):
 # "standarden" är källan panelen visar i spåret, och de tre sista byggs ihop av
 # ${...}-uttryck: "nytt projekt" står som text mitt i en mall, "privata"/"publika" står
 # som egna ord mellan två räknade tal. Ingen av dem syns för textstyckena.
-EXTRA = ("oassignerat", "standarden", "nytt projekt", "privata", "publika")
+# "provläge: …" kommer ur panel/server.py (provlägets kvitto), inte ur index.html, men
+# den syns på skärmen och går att byta på samma sätt som resten.
+EXTRA = ("oassignerat", "standarden", "nytt projekt", "privata", "publika",
+         "Utseende", "följ skrivbordet", "ljust", "mörkt",
+         "provläge: exempeldata, inget konto kopplat")
 for word in EXTRA:
     found.setdefault(word, set()).add("extra")
 

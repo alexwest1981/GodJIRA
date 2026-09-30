@@ -25,7 +25,8 @@ no keyring entry, no file in the repo.
 
 The panel speaks the same nine languages as the bar widget. Pick one under
 **Settings → Panelens språk** and both follow — it is one setting, stored in the
-bridge, not a per-browser preference. The screenshots below are the English one.
+bridge, not a per-browser preference. The screenshots below are the panel on its
+own sample data; the interface follows your language setting.
 
 <p align="center">
   <img src="docs/screenshots/board.png" alt="The board: kanban columns from the sprint" width="440">
