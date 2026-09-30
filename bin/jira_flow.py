@@ -493,7 +493,10 @@ def scan_map(bridge, project: str, root: Path, limit: int = 250) -> dict:
             "mapped": len(mapped), "unmapped": len(unmapped),
             "map": mapped, "missing": [{"key": e["key"], "summary": e["summary"], "pool": e["pool"]}
                                        for e in unmapped],
-            "silent": silent[:60], "silentCount": len(silent)}
+            # Hela listan: kapades den tyst såg 60 av 74 filer ut som alla (mätt). Ett
+            # tak behövs bara om filerna är många fler än så -- och då skall det stå.
+            "silent": silent, "silentCount": len(silent),
+            "issuesTotal": len(rows)}
 
 
 def code_context(root: Path, words) -> tuple:
@@ -1695,6 +1698,9 @@ def cmd_scan(args) -> int:
         return 1
     try:
         result = scan_map(client(), project, Path(root), limit=int(getattr(args, "limit", 250)))
+        if result["issuesTotal"] > result["issues"]:
+            print("note: the project has {} issues; the map covers the first {} "
+                  "(--limit raises it).".format(result["issuesTotal"], result["issues"]))
     except Exception as exc:      # noqa: BLE001 -- ett svar, inte en stacktrace
         print("scan failed: {}: {}".format(type(exc).__name__, exc))
         return 2
@@ -2594,6 +2600,35 @@ def selftest() -> int:
             pass
     finally:
         globals()["AGENT"] = saved_agent
+    checks += 1
+
+    # Kartan: hela listan med, inte ett tyst tak. Kapades den (60 av 74) såg de visade
+    # ut som alla -- samma klass av fel som att tiga om vad som klippts. Provet har fler
+    # filer än det gamla taket, så en återinförd kapning syns direkt.
+    tmp = tempfile.mkdtemp(prefix="godjira-scan-")
+    try:
+        root = Path(tmp)
+        (root / "BookingRepository.java").write_text("class BookingRepository {}\n")
+        (root / "gui").mkdir()
+        (root / "gui" / "View.java").write_text("class View {}\n")
+        for extra in range(70):
+            (root / "filler{:02d}.txt".format(extra)).write_text("ingenting\n")
+        subprocess.run(["git", "init", "-q"], cwd=tmp, check=True, capture_output=True)
+        subprocess.run(["git", "add", "-A"], cwd=tmp, check=True, capture_output=True)
+
+        class _ScanBridge:
+            def board(self, project):
+                return {"issues": [{"key": "S-1", "summary": "Booking repository",
+                                    "description": ""}], "backlog": []}
+
+        m = scan_map(_ScanBridge(), "SCRUM", root)
+        assert m["silentCount"] == len(m["silent"]), \
+            "kartan sade {} filer men visade {}".format(m["silentCount"], len(m["silent"]))
+        assert m["silentCount"] > 60, "provet skall ha fler filer än det gamla taket"
+        assert m["issuesTotal"] == m["issues"] == 1, "totalen följer med"
+        assert m["mapped"] == 1, "ärendet pekar på repository-filen"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
     checks += 1
 
     print("jira_flow self-check: {} checks, 0 failed".format(checks))

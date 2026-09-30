@@ -460,6 +460,22 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
       <div id="insightBox" class="meta">räknar …</div>
     </section>
 
+    <section class="view" id="v-karta">
+      <div class="panel">
+        <h3>Kartan över <span class="meta" id="mapWho"></span>
+          <span class="grow"></span>
+          <button class="chip" data-act="scan-run">scanna om</button></h3>
+        <div class="body">
+          <div class="meta">Varje ärende mot filerna det rör — och luckorna: där jobbet är
+            oklart, och där kod inte nämns av någon uppgift.</div>
+          <div class="linkbar" style="margin-top:10px">
+            <span class="meta scanNote">kartan läses ur filen scannen skrev</span>
+          </div>
+          <div id="mapBody" class="meta" style="margin-top:12px">hämtar kartan …</div>
+        </div>
+      </div>
+    </section>
+
     <section class="view" id="v-board">
       <div class="empty" id="sprintNote"></div>
       <div class="cols" id="cols"></div>
@@ -579,7 +595,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
 
 <script>
 const TEXT = {
-  views: { overview: ["Översikt", "◫"], insights: ["Projekt", "◎"], board: ["Tavlan", "▤"], items: ["Uppgifter", "☰"], repos: ["Repon", "⌥"],
+  views: { overview: ["Översikt", "◫"], insights: ["Projekt", "◎"], karta: ["Karta", "◈"], board: ["Tavlan", "▤"], items: ["Uppgifter", "☰"], repos: ["Repon", "⌥"],
            automatik: ["Automatik", "⦿"], import: ["Importera", "⇪"], setup: ["Kom igång", "★"],
            admin: ["Admin", "⚑"], settings: ["Inställningar", "⚙"] },
   next: "nästa", empty: "Inga ärenden", never: "aldrig", nothing: "inget",
@@ -1793,7 +1809,7 @@ function renderRepoLink() {
       <div class="linkbar" style="margin-top:9px">
         <button class="chip" data-act="scan-run"${project ? "" : " disabled"}>scanna hela projektet</button>
         <span class="grow"></span>
-        <span class="meta" id="scanNote"></span>
+        <span class="meta scanNote" id="scanNote"></span>
       </div>
       <div id="scanBody" class="meta" style="margin-top:9px">hämtar kartan …</div>
     </div>`;
@@ -1801,9 +1817,27 @@ function renderRepoLink() {
 
 // Kartan: sammanfattningen, de två luckorna (där jobb saknas och där kod saknas),
 // och ärende för ärende. Luckorna först -- det är dem man tittar efter.
-function scanHtml(m) {
-  const files = (list) => (list || []).map(f => `<li class="mono">${esc(f)}</li>`).join("") ||
-    `<li class="meta">inga</li>`;
+// Den gemensamma roten för en lista: 74 filer ur samma paket läses inte när varje rad
+// börjar likadant. Tom sträng när filerna inte delar någon katalog.
+function commonRoot(list) {
+  const dirs = (list || []).map(f => f.split("/").slice(0, -1));
+  if (dirs.length < 2) return "";
+  let n = 0;
+  while (dirs.every(d => d.length > n && d[n] === dirs[0][n])) n++;
+  return n ? dirs[0].slice(0, n).join("/") + "/" : "";
+}
+
+// Öppna bara luckor man orkar läsa: en lista på 74 rader knuffar allt annat under
+// skärmkanten. Antalet står i rubriken, resten är ett klick bort.
+const opened = (n, open) => !!open && n > 0 && n <= 20;
+
+function scanHtml(m, open) {
+  const silent = m.silent || [];
+  const root = commonRoot(silent);
+  const files = (list) => (list || []).map(f => {
+    const shown = root && f.indexOf(root) === 0 ? f.slice(root.length) : f;
+    return `<li class="mono"${shown === f ? ` title="${esc(f)}"` : ""}>${esc(shown)}</li>`;
+  }).join("") || `<li class="meta">inga</li>`;
   const missing = (m.missing || []).map(e =>
     `<li><b>${esc(e.key)}</b> ${esc(e.summary || "")} <span class="meta">(${esc(e.pool || "")})</span></li>`
   ).join("") || `<li class="meta">inga — alla ärenden pekar på något</li>`;
@@ -1811,24 +1845,52 @@ function scanHtml(m) {
     `<tr><td><b>${esc(e.key)}</b></td><td>${esc(e.summary || "")}</td>` +
     `<td>${(e.files || []).map(f => `<span class="mono">${esc(f)}</span>`).join("<br>") || "—"}</td></tr>`
   ).join("");
-  return `<div>${m.issues} ärenden mot ${m.files} filer — <b>${m.mapped}</b> pekar på kod, ` +
+  // Ett tak som inte syns är samma sak som ingen information: säg att kartan är kapad.
+  const cap = m.issuesTotal > m.issues ? ` (av ${m.issuesTotal} — kartan täcker de första)` : "";
+  return `<div>${m.issues} ärenden${cap} mot ${m.files} filer — <b>${m.mapped}</b> pekar på kod, ` +
     `<b>${m.unmapped}</b> gör det inte. ${m.silentCount} filer nämns av ingen uppgift.</div>
-    <details${(m.missing || []).length ? " open" : ""}><summary>där jobbet är oklart (${(m.missing || []).length})</summary>
+    <details${opened((m.missing || []).length, open) ? " open" : ""}><summary>där jobbet är oklart (${(m.missing || []).length})</summary>
       <ul class="tight">${missing}</ul></details>
-    <details><summary>kod utan uppgift (${m.silentCount})</summary>
-      <ul class="tight">${files(m.silent)}</ul></details>
+    <details${opened(silent.length, open) ? " open" : ""}><summary>kod utan uppgift (${m.silentCount})</summary>
+      ${root ? `<div class="meta mono">${esc(root)}</div>` : ""}<ul class="tight">${files(silent)}</ul></details>
     <details><summary>ärende för ärende (${(m.map || []).length})</summary>
       <table class="mini"><tbody>${rows}</tbody></table></details>`;
 }
 
+// Kartan har en egen vy: i repodetaljen låg den bakom hopfällda detaljer och såg ut
+// som att den saknades. Samma ritare, samma svar -- bara öppet och utan att först
+// behöva välja repo.
+async function mapLoad() {
+  const box = document.getElementById("mapBody");
+  if (!box) return;
+  const who = document.getElementById("mapWho");
+  const note = document.querySelector("#v-karta .scanNote");
+  try {
+    const a = await (await fetch("/api/scan?repo=" + encodeURIComponent(scanRepo()))).json();
+    if (who) who.textContent = a.repo && a.project ? a.repo + " · " + a.project : "";
+    if (a.running) { box.textContent = "scannar …"; return; }
+    if (!a.map) { box.textContent = a.note || "ingen karta än — kör en scanning"; return; }
+    box.classList.remove("meta");
+    box.innerHTML = scanHtml(a.map, true);
+    if (note) note.textContent = "körd " + (a.map.at || "").replace("T", " ");
+  } catch (e) {
+    box.textContent = "kunde inte läsa kartan: " + e.message;
+  }
+}
+
 // Kartan läses ur panelens eget svar (servern läser filen scannen skrev), så vyn
 // väntar aldrig på Jira. Scannar n8n på klocka syns det när filen är nyare.
+// Repot kartan gäller: det som är valt i listan, annars det som är kopplat. Karta-vyn
+// och Översikt har inget valt repo, och där blev REPO.name tom -- frågan gick ut utan
+// repo och svaret såg ut som en saknad karta. Ett ställe löser det, inte fyra.
+const scanRepo = () => REPO.name || (STATE.project || {}).repo || "";
+
 async function scanLoad() {
   const box = document.getElementById("scanBody");
   if (!box) return;
   const note = document.getElementById("scanNote");
   try {
-    const r = await fetch("/api/scan?repo=" + encodeURIComponent(REPO.name || ""));
+    const r = await fetch("/api/scan?repo=" + encodeURIComponent(scanRepo()));
     const a = await r.json();
     if (a.running) { box.textContent = "scannar …"; if (note) note.textContent = ""; return; }
     if (!a.map) { box.textContent = a.note || "ingen karta än"; if (note) note.textContent = ""; return; }
@@ -1847,9 +1909,8 @@ document.addEventListener("toggle", async e => {
   if (!isScan || !e.target.open) return;
   const box = document.getElementById("scanInCard");
   if (!box || box.dataset.loaded) return;
-  const repo = REPO.name || (STATE.project || {}).repo || "";
   try {
-    const a = await (await fetch("/api/scan?repo=" + encodeURIComponent(repo))).json();
+    const a = await (await fetch("/api/scan?repo=" + encodeURIComponent(scanRepo()))).json();
     if (!a.map) { box.textContent = a.note || "ingen karta sparad"; return; }
     box.classList.remove("meta");
     box.innerHTML = scanHtml(a.map);
@@ -1863,7 +1924,7 @@ document.addEventListener("toggle", async e => {
 // kvittot -- inte en gissning om hur lång tid en scanning tar.
 async function mapStamp() {
   try {
-    const a = await (await fetch("/api/scan?repo=" + encodeURIComponent(REPO.name || ""))).json();
+    const a = await (await fetch("/api/scan?repo=" + encodeURIComponent(scanRepo()))).json();
     return (a.map || {}).at || "";
   } catch (e) {
     return "";
@@ -1871,13 +1932,15 @@ async function mapStamp() {
 }
 
 async function scanRun(button) {
-  const note = document.getElementById("scanNote");
+  // Två rutor har samma knapp nu: kvittot hör till raden knappen står i.
+  const bar = button.closest(".linkbar");
+  const note = bar && bar.querySelector(".scanNote");
   button.disabled = true;
   if (note) note.textContent = "startar …";
   try {
     const before = await mapStamp();
     const r = await fetch("/api/scan", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ repo: REPO.name }) });
+      body: JSON.stringify({ repo: scanRepo() }) });
     const a = await r.json();
     if (!a.ok) throw new Error(a.error || "svaret gick inte att läsa");
     if (note) note.textContent = a.running ? "en scanning pågår redan" : "scannar hela projektet …";
@@ -1890,6 +1953,7 @@ async function scanRun(button) {
   } finally {
     button.disabled = false;
     await scanLoad();
+    await mapLoad();
   }
 }
 
@@ -2225,6 +2289,7 @@ function show(v) {
   if (view === "settings") renderRights();
   if (view === "admin") adminLoad();
   if (view === "insights") insightLoad();
+  if (view === "karta") mapLoad();
 }
 document.addEventListener("click", e => {
   if (e.target.closest('[data-act="refresh"]')) return load(true);

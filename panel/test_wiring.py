@@ -189,6 +189,11 @@ def main() -> int:
     check(bool(parents) and not without, "varje vy ligger i luft-rutan, inte direkt i main",
           "utanfor: %s" % without)
 
+    # Kartan fragade efter repot pa fyra stallen och glomde det i vyer utan valt repo
+    # -- svaret sag ut som en saknad karta. Ett uppslag, alla vagar.
+    check(html.count("scanRepo()") >= 4 and "repo: REPO.name }" not in html,
+          "scanningen frågar efter samma repo överallt", "scanRepo() x%d" % html.count("scanRepo()"))
+
     check("AbortSignal.timeout" in html, "the state fetch has a time limit")
     check("retryLater" in html, "a failed refresh is retried and said out loud")
 
