@@ -187,6 +187,7 @@ CLI's own self-check inside each distribution's own Python, in containers.
 | Python | 3.13 | 3.10 | 3.12 | 3.14 | 3.14 | 3.9 |
 | the suites | 46 + 15 + 13 green | same | same | same | same | same |
 | `--selftest` | 25/25 | 25/25 | 25/25 | 25/25 | 25/25 | 25/25 |
+| the panel answers | yes | yes | yes | yes | yes | yes |
 
 Green from Python 3.9 to 3.14, and nothing but Python itself is needed — the panel
 is stdlib only, with no package to install. 3.9 is the oldest interpreter the code

@@ -6,7 +6,8 @@ name: distros
 #   the code supports (3.9, measured on Rocky 9) and a current one. Runs with an
 #   empty HOME, which is the state a person who just cloned this repo is in --
 #   that is the case the self-check kept getting wrong.
-# distros: the containers in tools/distro_matrix.sh. Slower, so not on every push.
+# distros: the containers in tools/distro_matrix.sh -- six distributions, three
+#   minutes on a public runner, so it rides along on every push as well.
 #
 # Local runner: the same matrix runs by hand with `sh tools/distro_matrix.sh`.
 
@@ -43,7 +44,6 @@ jobs:
 
   distros:
     runs-on: ubuntu-latest
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
       - name: The suites on other distributions
