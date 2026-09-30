@@ -126,7 +126,19 @@ def main() -> int:
     # utan post dar ar en dod lank -- kugghjulet gick till "board" i stallet for
     # Installningar (matt i webblasaren). Bada hallen kontrolleras.
     table = re.search(r"views:\s*\{(.*?)\}\s*,\s*\n", html, re.S)
-    check(bool(table), "vy-tabellen gar att lasa")
+    check(bool(table), "vy-tabellen går att läsa")
+    # Panelen är en enda fil: en syntaxmiss i skriptet släcker hela sidan tyst
+    # (mätt: tom rail och "adminVisible is not defined"). node --check fångar den.
+    import os as _os, subprocess as _sp, tempfile as _tf
+    blocks = re.findall(r"<script>(.*?)</script>", html, re.S)
+    check(bool(blocks), "skriptblocket går att läsa")
+    with _tf.NamedTemporaryFile("w", suffix=".js", delete=False, encoding="utf-8") as fh:
+        fh.write("\n".join(blocks))
+        js_path = fh.name
+    probe = _sp.run(["node", "--check", js_path], capture_output=True, text=True)
+    check(probe.returncode == 0, "panelens skript har ren syntax",
+          (probe.stderr or "").strip().splitlines()[:4])
+    _os.unlink(js_path)
     if table:
         named = set(re.findall(r"(\w+):\s*\[", table.group(1)))
         sections = set(re.findall(r'<section class="view[^"]*" id="v-(\w+)"', html))

@@ -161,7 +161,9 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   /* ------------------------------------------------------------ icon rail */
   .rail {
     /* 78 = 58 + 20: ikonerna är kvar på 46 px, så luften runt dem växer. */
-    width: 78px; flex: 0 0 78px; background: var(--rail); border-right: 1px solid var(--line);
+    /* 78 px rymde inte sina egna etiketter (mätt: innehållet svämmade över med 6 px).
+       108 ger "Inställningar" plats på en rad. */
+    width: 108px; flex: 0 0 108px; background: var(--rail); border-right: 1px solid var(--line);
     align-items: center; gap: 12px; padding: 12px 0; height: 100%;
   }
   .rail .mark {
@@ -488,6 +490,12 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
       </div>
     </section>
   </div>
+    <section class="view" id="v-admin">
+      <div class="meta">Det som annars kräver en tur in i Jiras webbgränssnitt: rollerna och vilka
+        som sitter i dem, och sajtens fält. Bara läsning — och bara det din roll får se.</div>
+      <div id="adminBox" class="meta" style="margin-top:12px">läser …</div>
+    </section>
+
     <section class="view" id="v-setup">
       <div class="meta">Första gången: koppla på Jira och GitHub här, så behöver du inte leta
         dig fram till nycklarna. Allt sparas i maskinens nyckelring — samma butik som
@@ -519,7 +527,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
 const TEXT = {
   views: { overview: ["Översikt", "◫"], board: ["Tavlan", "▤"], items: ["Uppgifter", "☰"], repos: ["Repon", "⌥"],
            automatik: ["Automatik", "⦿"], import: ["Importera", "⇪"], setup: ["Kom igång", "★"],
-           settings: ["Inställningar", "⚙"] },
+           admin: ["Admin", "⚑"], settings: ["Inställningar", "⚙"] },
   next: "nästa", empty: "Inga ärenden", never: "aldrig", nothing: "inget",
   someoneElses: "är någon annans — tas från panelens andra tryck",
   runnersUp: "därefter", noSprint: "ingen aktiv sprint — det som är kvar står i backloggen och ligger i To Do här",
@@ -685,8 +693,12 @@ function renderFilters() {
 const link = (url, inner) => url ? `<a href="${esc(url)}" target="_blank" rel="noreferrer">${inner}</a>` : inner;
 
 /* ------------------------------------------------------------- render ---- */
+// Vyerna i navigeringen. Admin-fliken finns bara när behörigheten finns -- den som
+// inte får något ändå skall inte se en flik som ger nej.
+const navViews = () => Object.entries(TEXT.views).filter(([v]) => v !== "admin" || adminVisible());
+
 function renderRail() {
-  document.getElementById("rail").innerHTML = `<div class="mark" title="GodJIRA"></div>` + Object.entries(TEXT.views).map(([v, [label, glyph]]) =>
+  document.getElementById("rail").innerHTML = `<div class="mark" title="GodJIRA"></div>` + navViews().map(([v, [label, glyph]]) =>
     `<div class="railitem ${v === view ? "on" : ""}" data-v="${v}"><span class="g">${glyph}</span>${label}</div>`).join("");
 }
 
@@ -754,7 +766,7 @@ function renderCrumbs() {
     (c[2] ? `<span class="sep">·</span><span class="muted">${esc(c[2])}</span>` : "") +
     (j.ok ? "" : ` <span class="err">jira: ${esc(j.error || "inget svar")}</span>`) +
     (g.ok ? "" : ` <span class="err">github: ${esc(g.error || "inget svar")}</span>`);
-  document.getElementById("seg").innerHTML = Object.entries(TEXT.views).map(([v, [label, glyph]]) =>
+  document.getElementById("seg").innerHTML = navViews().map(([v, [label, glyph]]) =>
     `<button data-v="${v}" class="${v === view ? "on" : ""}" title="${label}">${glyph}</button>`).join("");
 }
 
@@ -1079,6 +1091,101 @@ function renderTokenAlert() {
   badge.hidden = !text;
   badge.textContent = text ? "⚠ " + text : "";
   badge.title = (t.note || "") + " — klicka för inställningarna";
+}
+
+// ---- Admin: roller, folk och fält ----------------------------------------------
+// Nav-valet syns bara när länkens behörigheter bär projektadmin -- Jira svarar, och
+// den som saknar rätten ser varken fliken eller verktygen. Det är hela poängen.
+function adminVisible() {
+  const project = (STATE.project || {}).key || "";
+  const link = ((STATE.links || {}).links || []).find(l => (l || {}).project === project) || {};
+  return ["ADMINISTER", "ADMINISTER_PROJECTS"].some(name => (link.can || []).includes(name));
+}
+
+const ADMIN = { data: null, people: null, error: "" };
+
+function peopleRows(people) {
+  return (people || []).map(p =>
+    `<div class="r"><span class="key">${esc(p.name)}</span>` +
+    `<span class="t">${esc(p.email || "")}</span>` +
+    `<span class="tside meta">${p.active ? "" : "inaktiv"}</span></div>`).join("") ||
+    `<div class="empty">ingen träff</div>`;
+}
+
+function renderAdmin() {
+  const box = document.getElementById("adminBox");
+  if (!box) return;
+  const d = ADMIN.data;
+  if (!d) { box.textContent = ADMIN.error || "läser …"; return; }
+  if (!adminVisible()) {
+    box.classList.add("meta");
+    box.textContent = "Din roll i projektet bär varken ADMINISTER_PROJECTS eller ADMINISTER, " +
+      "så Jira visar inget här. Det är avsiktligt: verktyg man ändå får nej på skall inte " +
+      "locka fram ett klick.";
+    return;
+  }
+  const can = d.can || {};
+  const allowed = (name, label) => can[name]
+    ? `<div class="f"><div class="l">${esc(label)}</div><div class="v"><span style="color:var(--accent)">ja</span></div></div>`
+    : `<div class="f"><div class="l">${esc(label)}</div><div class="v"><span class="meta">nej — verktyget göms</span></div></div>`;
+  const roles = (d.roles || []).map(r =>
+    `<div style="margin-top:8px"><div class="meta">${esc(r.role)} · ${(r.actors || []).length}</div>` +
+    `<div>${(r.actors || []).map(a => `<span class="badge${a.kind === "grupp" ? "" : " on"}">${esc(a.name)}</span>`).join(" ") ||
+      '<span class="meta">tom</span>'}</div></div>`).join("");
+  const own = (d.fields || []).filter(f => f.custom);
+  const fields = own.map(f =>
+    `<div class="r"><span class="key">${esc(f.name)}</span><span class="t mono">${esc(f.id)}</span>` +
+    `<span class="tside meta">${esc(f.type)}</span></div>`).join("") || `<div class="empty">inga egna fält</div>`;
+  box.classList.remove("meta");
+  box.innerHTML =
+    `<div class="meta" style="margin-bottom:8px">projekt <b>${esc(d.project || "")}</b> · ${esc(d.projectSource || "")}
+      · ${(d.fields || []).length} fält, varav ${own.length} egna</div>
+     <div class="facts">
+       ${allowed("ADMINISTER", "sajtadmin")}
+       ${allowed("ADMINISTER_PROJECTS", "projektadmin")}
+       ${allowed("ASSIGN_ISSUES", "tilldela ärenden")}
+       ${allowed("MANAGE_SPRINTS_PERMISSION", "sprintar")}
+     </div>
+     <div style="margin-top:16px"><div class="meta">roller i ${esc(d.project || "")}</div>${roles ||
+       '<div class="empty">inga roller att visa</div>'}</div>
+     <div style="margin-top:16px"><div class="meta">egna fält · ${own.length}</div><div class="wl">${fields}</div></div>
+     <div style="margin-top:16px"><div class="meta">folk på sajten</div>
+       <div class="linkbar" style="margin-top:8px">
+         <input class="inp" id="adminQuery" placeholder="sök namn eller e-post (minst två tecken)">
+         <button class="chip" data-act="admin-people">sök</button>
+         <span class="grow"></span><span class="meta" id="adminNote"></span>
+       </div>
+       <div id="adminPeople" class="wl"></div>
+     </div>`;
+}
+
+async function adminLoad() {
+  const box = document.getElementById("adminBox");
+  if (!box) return;
+  try {
+    ADMIN.data = await (await fetch("/api/admin")).json();
+    if (!ADMIN.data.ok) ADMIN.error = ADMIN.data.error || "admin-svaret gick inte att läsa";
+  } catch (e) {
+    ADMIN.error = "kunde inte läsa: " + e.message;
+  }
+  renderAdmin();
+}
+
+async function adminPeople() {
+  const value = id => ((document.getElementById(id) || {}).value || "").trim();
+  const note = document.getElementById("adminNote");
+  const host = document.getElementById("adminPeople");
+  if (note) note.textContent = "söker …";
+  try {
+    const r = await fetch("/api/admin/people", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: value("adminQuery") }) });
+    const a = await r.json();
+    if (!a.ok) throw new Error(a.error || "sökningen nekades");
+    if (note) note.textContent = (a.people || []).length + " träffar";
+    if (host) host.innerHTML = peopleRows(a.people);
+  } catch (e) {
+    if (note) note.textContent = "kunde inte söka: " + e.message;
+  }
 }
 
 // ---- Setupen och rättigheterna -------------------------------------------------
@@ -1913,6 +2020,7 @@ function show(v) {
   // kugghjulet, setupen och första starten.
   if (view === "setup") setupLoad();
   if (view === "settings") renderRights();
+  if (view === "admin") adminLoad();
 }
 document.addEventListener("click", e => {
   if (e.target.closest('[data-act="refresh"]')) return load(true);
@@ -1923,6 +2031,7 @@ document.addEventListener("click", e => {
   if (e.target.closest('[data-act="scan-run"]')) return scanRun(e.target.closest('[data-act="scan-run"]'));
   if (e.target.closest("#settings") || e.target.closest("#tokenWarn")) { show("settings"); renderSettings(); return; }
   if (e.target.closest("#setupOpen")) { show("setup"); return; }
+  if (e.target.closest('[data-act="admin-people"]')) return adminPeople();
   if (e.target.closest('[data-act="setup-jira"]')) {
     const v = id => ((document.getElementById(id) || {}).value || "").trim();
     if (!v("setupTok")) { const n = document.getElementById("setupNote"); if (n) n.textContent = "klistra in nyckeln först"; return; }

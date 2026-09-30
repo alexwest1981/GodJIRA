@@ -68,6 +68,7 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.error
 import urllib.parse
 import tempfile
@@ -710,6 +711,76 @@ def project_caps(bridge, project: str) -> dict:
             "role": role, "roleNote": note,
             "can": sorted(name for name, yes in have.items() if yes),
             "cannot": sorted(name for name, yes in have.items() if not yes)}
+
+
+def admin_roles(bridge, project: str) -> list:
+    """Rollerna i projektet och vilka som sitter i dem.
+
+    Rollistan är projektets egen (Administrators, Developers …), inte sajtens. Det är
+    den man behöver se för att veta vem man kan fråga om vad.
+    """
+    rows = []
+    for label, url in (bridge.get("/rest/api/3/project/{}/role".format(project)) or {}).items():
+        body = bridge.get(path_of(url)) if path_of(url) else {}
+        actors = []
+        for actor in (body or {}).get("actors") or []:
+            # Namnet står på aktören själv, inte inuti actorUser (mätt: alla namn blev
+            # tomma med den läsningen). `type` säger om det är en person eller en grupp.
+            kind = str((actor or {}).get("type") or "").lower()
+            actors.append({"name": str((actor or {}).get("displayName") or (actor or {}).get("name") or ""),
+                           "kind": "grupp" if "group" in kind else "person",
+                           "accountId": str((((actor or {}).get("actorUser") or {}).get("accountId"))
+                                            or (((actor or {}).get("actorGroup") or {}).get("groupId")) or "")})
+        rows.append({"role": label, "actors": actors})
+    return sorted(rows, key=lambda row: row["role"])
+
+
+def admin_fields(bridge) -> list:
+    """Fälten på sajten. Egna fält är de man annars letar efter i webbgränssnittet."""
+    rows = bridge.get("/rest/api/3/field") or []
+    return sorted(({"id": str(f.get("id") or ""), "name": str(f.get("name") or ""),
+                    "custom": bool(f.get("custom")),
+                    "type": str(((f.get("schema") or {}).get("type")) or "")}
+                   for f in rows if isinstance(f, dict)),
+                  key=lambda f: (not f["custom"], f["name"].lower()))
+
+
+def admin_people(bridge, query: str) -> list:
+    """Personer sajten känner igen -- det man behöver för att kunna tilldela något."""
+    rows = bridge.get("/rest/api/3/user/search?maxResults=20&query={}".format(
+        urllib.parse.quote(query))) or []
+    return [{"name": str(p.get("displayName") or ""), "email": str(p.get("emailAddress") or ""),
+             "accountId": str(p.get("accountId") or ""), "active": bool(p.get("active"))}
+            for p in rows if isinstance(p, dict)]
+
+
+def cmd_admin(args) -> int:
+    """Admin-ytan: roller, fält och folk. Läsning -- och det panelen får visa beror
+    på vad Jira svarar om kontots behörigheter, inte på vad sidan gissar."""
+    what = (getattr(args, "what", "") or "all").lower()
+    bridge = client()
+    project, source = link_project(args)
+    data = {"project": project, "projectSource": source}
+    try:
+        # Utan `permissions` i frågan svarar Jira 400: den vill veta vad den skall svara om.
+        ask = ",".join(sorted(set(PROJECT_PERMISSIONS) | {"ADMINISTER"}))
+        perms = (bridge.get("/rest/api/3/mypermissions?permissions=" + ask) or {}).get("permissions") or {}
+        data["can"] = {name: bool((row or {}).get("havePermission")) for name, row in perms.items()}
+    except Exception as exc:      # noqa: BLE001 -- behörigheten är en upplysning
+        data["can"] = {}
+        data["permissionError"] = "{}: {}".format(type(exc).__name__, exc)
+    if what in ("all", "roles"):
+        data["roles"] = admin_roles(bridge, project)
+    if what in ("all", "fields"):
+        data["fields"] = admin_fields(bridge)
+    if what == "people":
+        data["people"] = admin_people(bridge, " ".join(getattr(args, "words", []) or []))
+    say(args, data, [
+        "{} ({}): {} roller, {} fält.".format(project, source, len(data.get("roles") or []),
+                                              len(data.get("fields") or [])),
+    ] + ["  {}: {}".format(row["role"], ", ".join(a["name"] for a in row["actors"]) or "tom")
+         for row in (data.get("roles") or [])] if what in ("all", "roles") else [])
+    return 0
 
 
 def link_project(args, repo_dir: str = "") -> tuple:
@@ -1968,6 +2039,31 @@ def selftest() -> int:
     assert "assignee IS EMPTY" in pick_jql("SCRUM", "mine")
     assert "assignee IS EMPTY" not in pick_jql("SCRUM", "any"), "the take-over pool is wider"
     checks += 1
+    class _FakeBridge:
+        """Svarar som Jira gör: aktörens namn står på aktören, inte inuti actorUser
+        (den läsningen gav tomma namn i den skarpa körningen)."""
+
+        def get(self, path: str):
+            if path.endswith("/role"):
+                return {"Administrators": "https://x/rest/api/3/project/SCRUM/role/10002"}
+            if "/role/" in path:
+                return {"actors": [{"displayName": "Anna Test", "type": "atlassian-user-role-actor",
+                                    "actorUser": {"accountId": "acc-1"}},
+                                   {"name": "Developers", "type": "atlassian-group-role-actor",
+                                    "actorGroup": {"groupId": "grp-7"}}]}
+            if path.startswith("/rest/api/3/field"):
+                return [{"id": "summary", "name": "Summary"},
+                        {"id": "customfield_10016", "name": "Story Points", "custom": True,
+                         "schema": {"type": "number"}}]
+            return {}
+
+    roles = admin_roles(_FakeBridge(), "SCRUM")
+    assert roles[0]["role"] == "Administrators", roles
+    assert roles[0]["actors"][0]["name"] == "Anna Test", roles      # inte tomt
+    assert [a["kind"] for a in roles[0]["actors"]] == ["person", "grupp"], roles
+    fields = admin_fields(_FakeBridge())
+    assert fields[0]["custom"] and fields[0]["name"] == "Story Points", fields  # egna först
+    checks += 1
     shared = {"key": "S-1", "fields": {"summary": "GEMENSAMT: testa flödet"}}
     mine_high = {"key": "S-2", "fields": {"summary": "A1 bokningen"}}
     mine_low = {"key": "S-3", "fields": {"summary": "A2 tabellen"}}
@@ -2536,6 +2632,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_link.add_argument("--issue", default="", help="the issue you are working against (SCRUM-133)")
     p_link.add_argument("--note", default="", help="a line for the humans")
     p_link.add_argument("--json", action="store_true")
+    p_admin = sub.add_parser("admin", help="the admin surface: roles, fields, and people")
+    p_admin.add_argument("what", nargs="?", default="all", choices=["all", "roles", "fields", "people"])
+    p_admin.add_argument("words", nargs="*", help="the search words when asking for people")
+    p_admin.add_argument("--project", default="", help="override the linked project key")
+    p_admin.add_argument("--repo-name", default="", help="the linked repo (default: the only link)")
+    p_admin.add_argument("--json", action="store_true")
     p_scan = sub.add_parser("scan", help="map the whole Jira project to the repo's code")
     p_scan.add_argument("--repo-name", default="", help="the linked repo (default: the only link)")
     p_scan.add_argument("--repo", default="", help="a directory instead of the local copy")
@@ -2591,6 +2693,8 @@ def main(argv) -> int:
         return cmd_repo(args)
     if args.cmd == "scan":
         return cmd_scan(args)
+    if args.cmd == "admin":
+        return cmd_admin(args)
     # En plats för projektnyckeln: flaggan, annars länken, annars standarden. Nästa,
     # aktuellt och plan går alla genom den -- ingen av dem har en egen uppfattning.
     if args.cmd in ("next", "current") and not (args.project or "").strip():

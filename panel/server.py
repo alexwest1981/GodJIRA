@@ -150,6 +150,32 @@ def github_save(payload: dict) -> tuple[int, dict]:
                                     "error": None if good else (first_line(env) or "GitHub nekade nyckeln")}
 
 
+def admin_read() -> dict:
+    """Admin-ytan: roller med folk, fälten, och vad kontot får. Ren läsning.
+
+    Vad som får synas avgörs av Jiras eget svar (`can`), inte av vad sidan tror:
+    gränssnittet är artighet, Jira säger nej på riktigt.
+    """
+    env = seam("flow", "admin", "all", "--json", timeout=180)
+    data = env.get("payload") or {}
+    if env.get("exitCode") != 0 or not data:
+        return {"ok": False, "error": first_line(env) or "admin-svaret gick inte att läsa"}
+    data["ok"] = True
+    return data
+
+
+def admin_people(payload: dict) -> tuple[int, dict]:
+    """Personer på sajten -- det man behöver för att kunna tilldela något."""
+    query = " ".join(str(payload.get("query") or "").split())[:60]
+    if len(query) < 2:
+        return 400, {"ok": False, "error": "skriv minst två tecken att söka på"}
+    env = seam("flow", "admin", "people", query, "--json", timeout=120)
+    data = env.get("payload") or {}
+    if env.get("exitCode") != 0:
+        return 400, {"ok": False, "error": first_line(env) or "sökningen gick inte att läsa"}
+    return 200, {"ok": True, "people": data.get("people") or []}
+
+
 def setup_read() -> dict:
     """Det en ny maskin behöver veta: är Jira och GitHub påkopplade, och vems."""
     jira, hub = token_read(), github_read()
@@ -827,6 +853,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/state":
             self._send(200, json.dumps(state(), ensure_ascii=False).encode(), "application/json; charset=utf-8")
             return
+        if path == "/api/admin":
+            self._json(200, cached("admin", admin_read, ttl=180))
+            return
         if path == "/api/setup":
             self._json(200, setup_read())
             return
@@ -860,7 +889,8 @@ class Handler(BaseHTTPRequestHandler):
         handler = {"/api/import": import_parse, "/api/import/apply": import_apply,
                    "/api/link": link_set, "/api/automation": automation_report,
                    "/api/scan": scan_start, "/api/token": token_save,
-                   "/api/github": github_save}.get(self.path.split("?")[0])
+                   "/api/github": github_save,
+                   "/api/admin/people": admin_people}.get(self.path.split("?")[0])
         if not handler:
             self._send(404, b"not found", "text/plain")
             return
