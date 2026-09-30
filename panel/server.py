@@ -708,6 +708,216 @@ def link_set(payload: dict) -> tuple[int, dict]:
                  "removed": data.get("removed") or []}
 
 
+"""Insikterna: sammanfattningen, utvecklingen och tidslinjen -- räknade ur ärendena.
+
+Jira har tre flikar GodJIRA saknade: Summary (KPI:er, statusdonut, aktivitet),
+Development (DORA-siffror och kodverktyg) och Timeline (epics på en tidsaxel).
+Siffrorna räknas här och inte i ritningen, av två skäl: de går att prova med kända
+datum, och n8n kan läsa dem.
+
+Det som faktiskt kan gå fel utan att någon märker det:
+  * "klara senaste 7 dygn" räknas på updated -> varje rörelse i ett stängt ärende
+                                räknas som att det blev klart (därför resolutionMs)
+  * fönstret är öppet i fel ände  -> ärenden från framtiden räknas in
+  * andelar summerar inte till 100 -> donuten och staplarna ljuger
+  * epicens framdrift räknar fel barn -> framdriftsraden visar fel
+  * stapel utanför 0-100 %        -> ritningen hamnar utanför rutan
+"""
+import time
+
+DAY_MS = 86400000.0
+
+
+def _now(now: float) -> float:
+    return now or time.time() * 1000.0
+
+
+def _share(count: int, total: int) -> float:
+    return round(100.0 * count / total, 1) if total else 0.0
+
+
+# Prioriteter har en ordning i sig: en fördelning skall läsas i samma ordning varje
+# gång, så att staplarna går att jämföra. Typer har ingen, de sorteras på antal.
+PRIORITY_ORDER = ("highest", "high", "medium", "low", "lowest")
+
+
+def _bars(rows: list, total: int, order: tuple = ()) -> list:
+    """Namn + antal + andel. Prioriteringar i sin egen ordning, resten störst först."""
+    counts: dict = {}
+    for row in rows:
+        name = str(row or "").strip() or "utan"
+        counts[name] = counts.get(name, 0) + 1
+    if order:
+        rank = {name: i for i, name in enumerate(order)}
+        ordered = sorted(counts.items(),
+                         key=lambda kv: (rank.get(kv[0].lower(), len(order)), kv[0].lower()))
+    else:
+        ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0].lower()))
+    return [{"name": name, "count": count, "share": _share(count, total)} for name, count in ordered]
+
+
+def summary(issues: list, now: float = 0.0, days: int = 7) -> dict:
+    """Siffrorna på Jiras Summary-flik, räknade ur ärendena själva."""
+    now = _now(now)
+    start = now - days * DAY_MS
+    end = now + days * DAY_MS
+    done = [i for i in issues if str(i.get("statusCategory") or "") == "done"]
+    in_progress = [i for i in issues if str(i.get("statusCategory") or "") == "indeterminate"]
+    todo = [i for i in issues if str(i.get("statusCategory") or "") not in ("done", "indeterminate")]
+    recent = sorted((i for i in issues if i.get("updatedMs")),
+                    key=lambda i: i.get("updatedMs") or 0, reverse=True)[:8]
+    return {
+        "days": days,
+        "completed": sum(1 for i in issues if start <= (i.get("resolutionMs") or 0) <= now),
+        "updated": sum(1 for i in issues if start <= (i.get("updatedMs") or 0) <= now),
+        "created": sum(1 for i in issues if start <= (i.get("createdMs") or 0) <= now),
+        "dueSoon": sum(1 for i in issues
+                       if str(i.get("statusCategory") or "") != "done"
+                       and now <= (i.get("dueMs") or 0) <= end),
+        "status": {"total": len(issues), "done": len(done),
+                   "inProgress": len(in_progress), "todo": len(todo),
+                   "doneShare": _share(len(done), len(issues)),
+                   "inProgressShare": _share(len(in_progress), len(issues)),
+                   "todoShare": _share(len(todo), len(issues))},
+        "priorities": _bars([i.get("priorityName") for i in issues], len(issues),
+                            order=PRIORITY_ORDER),
+        "types": _bars([i.get("typeName") for i in issues], len(issues)),
+        "recent": [{"key": i.get("key") or "", "summary": i.get("summary") or "",
+                    "who": i.get("assigneeName") or "", "updatedMs": i.get("updatedMs") or 0,
+                    "statusName": i.get("statusName") or "",
+                    "statusCategory": i.get("statusCategory") or "",
+                    "url": i.get("url") or ""} for i in recent],
+    }
+
+
+def timeline(issues: list, sprints: list, now: float = 0.0) -> dict:
+    """Gantt-läget: raderna, deras staplar i procent av spannet, och månaderna.
+
+    En epic utan egna datum får sin stapel av barnens ytterkanter -- det är vad Jira
+    gör, och annars står raden tom trots att arbetet har datum.
+    """
+    now = _now(now)
+    children: dict = {}
+    for issue in issues:
+        parent = str(issue.get("parentKey") or "")
+        if parent:
+            children.setdefault(parent, []).append(issue)
+    rows = []
+    for issue in issues:
+        key = str(issue.get("key") or "")
+        kids = children.get(key) or []
+        is_epic = str(issue.get("typeName") or "").strip().lower() == "epic"
+        if issue.get("parentKey") and not is_epic:
+            continue                      # ett barn ritas under sin epic, inte själv
+        if not kids and not is_epic:
+            continue                      # löst ärende utan barn hör inte på tidslinjen
+        kid_done = sum(1 for k in kids if str(k.get("statusCategory") or "") == "done")
+        starts = [issue.get("startMs") or 0] + [k.get("startMs") or 0 for k in kids]
+        ends = [issue.get("dueMs") or 0] + [k.get("dueMs") or 0 for k in kids]
+        start = min((s for s in starts if s), default=0)
+        end = max((e for e in ends if e), default=0)
+        rows.append({"key": key, "summary": issue.get("summary") or "",
+                     "type": issue.get("typeName") or "", "statusName": issue.get("statusName") or "",
+                     "done": str(issue.get("statusCategory") or "") == "done",
+                     "children": len(kids), "childrenDone": kid_done,
+                     "startMs": start, "endMs": end, "url": issue.get("url") or ""})
+    sprints_out = [{"id": str(s.get("id") or ""), "name": s.get("name") or "",
+                    "state": s.get("state") or "", "startMs": s.get("startMs") or 0,
+                    "endMs": s.get("endMs") or 0}
+                   for s in sorted(sprints, key=lambda s: s.get("startMs") or 0)
+                   if s.get("startMs") and s.get("endMs")]
+    edges = ([r["startMs"] for r in rows if r["startMs"]] + [r["endMs"] for r in rows if r["endMs"]]
+             + [s["startMs"] for s in sprints_out] + [s["endMs"] for s in sprints_out] + [now])
+    lo, hi = min(edges), max(edges)
+    span = (hi - lo) or DAY_MS
+
+    def place(value: float) -> float:
+        return round(max(0.0, min(100.0, 100.0 * (value - lo) / span)), 2)
+
+    for row in rows:
+        if not (row["startMs"] or row["endMs"]):
+            # Utan datum ritas ingen stapel: en punkt vid kanten ser ut som ett datum.
+            row["left"], row["width"] = None, None
+            continue
+        row["left"] = place(row["startMs"] or row["endMs"] or lo)
+        row["width"] = round(max(0.8, place(row["endMs"] or row["startMs"] or lo) - row["left"]), 2)
+    for sprint in sprints_out:
+        sprint["left"] = place(sprint["startMs"])
+        sprint["width"] = round(max(0.8, place(sprint["endMs"]) - sprint["left"]), 2)
+    months = []
+    cursor = time.gmtime(lo / 1000.0)
+    year, month = cursor.tm_year, cursor.tm_mon
+    while True:
+        first = time.mktime((year, month, 1, 0, 0, 0, 0, 0, -1)) * 1000.0
+        month += 1
+        if month > 12:
+            year, month = year + 1, 1
+        last = time.mktime((year, month, 1, 0, 0, 0, 0, 0, -1)) * 1000.0
+        if first > hi:
+            break
+        months.append({"label": time.strftime("%b", time.gmtime(first / 1000.0)),
+                       "left": place(first),
+                       "width": round(max(0.5, place(min(last, hi)) - place(first)), 2)})
+        if len(months) > 36:
+            break
+    dated = sum(1 for r in rows if r["startMs"] or r["endMs"])
+    return {"rows": rows, "sprints": sprints_out, "months": months,
+            "todayLeft": place(now), "spanDays": round(span / DAY_MS),
+            "dated": dated,
+            # Utan datum på ärendena finns bara sprintarna att rita. Det skall stå,
+            # inte se ut som en tom ruta.
+            "note": "" if dated else "Inga ärenden har start- eller slutdatum än — "
+                                     "här syns därför bara sprintarna. Fyll i datumen i Jira "
+                                     "(ärendet → fler fält) så hamnar de på tidslinjen."}
+
+
+def development(jira: dict, github: dict, now: float = 0.0) -> dict:
+    """Jiras Development-flik: vad koden och ärendena gör, och vad som inte går att se.
+
+    Jira visar "Connect your code tools" tills GitHub kopplas dit. Här är kopplingen
+    redan gjord, så repo-listan är verklig och PR:erna kommer ur GitHub -- men ledtid,
+    cykeltid och driftsättningar kräver att Jira känner till kopplingen, och det gör
+    den inte. Det står i notes i stället för att visas som en nolla.
+    """
+    now = _now(now)
+    boards = (jira.get("boards") or [{}])
+    issues = boards[0].get("issues") or []
+    active_sprint = (boards[0].get("sprint") or {}).get("id") or ""
+    bugs = [i for i in issues if str(i.get("typeName") or "").strip().lower() == "bug"]
+    return {
+        "workItems": sum(1 for i in issues if now - 7 * DAY_MS <= (i.get("resolutionMs") or 0) <= now),
+        "openBugs": sum(1 for i in bugs if str(i.get("statusCategory") or "") != "done"),
+        "overdue": sum(1 for i in issues if str(i.get("statusCategory") or "") != "done"
+                       and (i.get("dueMs") or 0) and (i.get("dueMs") or 0) < now),
+        "inSprint": sum(1 for i in issues if active_sprint and str(i.get("sprintId") or "") == active_sprint),
+        "repos": [{"name": r.get("name") or "", "language": r.get("primaryLanguage") or "",
+                   "stars": r.get("stargazerCount") or 0, "visibility": r.get("visibility") or "",
+                   "updatedAt": r.get("updatedAt") or "", "url": r.get("url") or "",
+                   "description": r.get("description") or ""}
+                  for r in (github.get("repos") or [])],
+        "pullRequests": [{"title": p.get("title") or "", "url": p.get("url") or "",
+                          "repo": p.get("repo") or "", "author": p.get("author") or ""}
+                         for p in (github.get("pullRequests") or [])],
+        "notes": ["ledtid, cykeltid och driftsättningar kräver att GitHub kopplas till Jira "
+                  "i Jiras eget gränssnitt",
+                  "sårbarheter kräver en GitHub-nyckel med läsrätt på säkerhetsaviseringar"],
+    }
+
+
+def insights_read() -> dict:
+    """De tre flikarna i ett svar. Räknat, inte ritat."""
+    jira = jira_state()
+    github = github_state()
+    boards = jira.get("boards") or [{}]
+    issues = boards[0].get("issues") or []
+    sprints = boards[0].get("sprints") or []
+    out = {"ok": True, "project": (boards[0].get("projectKey") or ""),
+           "summary": summary(issues),
+           "timeline": timeline(issues, sprints),
+           "development": development(jira, github)}
+    return out
+
+
 def state() -> dict:
     """En läsning: flödet räknar ut projektet, projektet läser ur registret, resten är Jira, GitHub och journalen."""
     def build() -> dict:
@@ -852,6 +1062,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/state":
             self._send(200, json.dumps(state(), ensure_ascii=False).encode(), "application/json; charset=utf-8")
+            return
+        if path == "/api/insights":
+            self._json(200, cached("insights", insights_read, ttl=180))
             return
         if path == "/api/admin":
             self._json(200, cached("admin", admin_read, ttl=180))

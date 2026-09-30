@@ -91,8 +91,13 @@ def main() -> int:
     check(html.count("<script") == html.count("</script>"),
           "every script block is closed",
           "%s öppnade, %s stängda" % (html.count("<script"), html.count("</script>")))
-    check("link(r.url," not in html,
-          "the repo name is not a jump to github", "the detail owns that link")
+    # Reporaden skall inte hoppa till github -- detaljen äger den länken. Provet tittar
+    # i repoRows() själv: som textsökning i hela filen föll det på varje ny länk
+    # någon annanstans (tidslinjen länkar sina ärenden).
+    repo_fn = html[html.index("function repoRows()"):]
+    repo_fn = repo_fn[:repo_fn.index("\n}") + 2]
+    check("link(" not in repo_fn,
+          "the repo name is not a jump to github", repo_fn[:160])
     check("link(d.about.url," in html, "the repo detail carries the github link")
     check("/commit/" in html and "a.url" in html, "commits are rendered as links")
 

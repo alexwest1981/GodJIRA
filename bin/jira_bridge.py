@@ -500,8 +500,8 @@ SPRINT_FIELD = "customfield_10020"         # Sprint (array, empty on the backlog
 START_DATE_FIELD = "customfield_10015"     # Start date
 
 FIELD_SUBSET = (
-    "summary,status,assignee,issuetype,priority,updated,description,parent,"
-    "subtasks,creator,duedate,{},{},{}".format(
+    "summary,status,assignee,issuetype,priority,updated,created,resolutiondate,"
+    "description,parent,subtasks,creator,duedate,{},{},{}".format(
         STORY_POINTS_FIELD, SPRINT_FIELD, START_DATE_FIELD)
 )
 
@@ -544,6 +544,11 @@ def issue_fields(raw):
         "priorityName": priority.get("name") or "",
         "storyPoints": fields.get(STORY_POINTS_FIELD),
         "updatedMs": updated_ms,
+        # Skapat och avslutat: panelens sammanfattning räknar "senaste 7 dygnen" på
+        # dessa. Utan dem blev "klara" varje ärende som rörts, inte varje ärende som
+        # blivit klart.
+        "createdMs": parse_iso(fields.get("created")),
+        "resolutionMs": parse_iso(fields.get("resolutiondate")),
         "description": (adf_to_text(fields.get("description")) or "")[:20000],
         "url": "",
         "projectKey": (raw.get("fields") or {}).get("project", {}).get("key", ""),

@@ -115,6 +115,39 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   .roleblock { margin-top: 12px; }
   .roleblock:first-child { margin-top: 2px; }
   .roleblock .badge { margin: 5px 5px 0 0; }
+  /* Projekt-vyn: en donut, andelsrader och en tidslinje i procent. Inga nya färger --
+     statusarna blandas ur accenten och linjerna, så båda temana följer med. */
+  .note + .note { margin-top: 6px; }
+  .brow { display: flex; align-items: center; gap: 10px; padding: 5px 0; }
+  .bname { flex: 0 0 118px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .btrack { flex: 1; height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
+  .btrack i { display: block; height: 100%; background: var(--accent); }
+  .bnum { flex: 0 0 auto; color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+  .donutwrap { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; }
+  .donut { position: relative; flex: 0 0 auto; width: 132px; height: 132px; border-radius: 50%; }
+  .donut .dnum { position: absolute; inset: 15px; border-radius: 50%; background: var(--card);
+                 display: flex; align-items: center; justify-content: center; font-size: 26px; font-weight: 600; }
+  .dleg { display: flex; flex-direction: column; gap: 9px; font-size: 13px; }
+  .dleg div { display: flex; align-items: center; gap: 8px; }
+  .dleg i { width: 10px; height: 10px; border-radius: 3px; }
+  .dleg b { margin-left: 3px; }
+  .grow { display: flex; align-items: center; gap: 14px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .grow:last-child { border-bottom: 0; }
+  .ghead { border-bottom: 1px solid var(--line-2); }
+  .gname { flex: 0 0 44%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+  .gname.done { color: var(--muted); text-decoration: line-through; }
+  .gtrack { position: relative; flex: 1; height: 22px; }
+  .gmon { position: absolute; top: 0; bottom: 0; padding-left: 5px; border-left: 1px solid var(--line-2);
+          color: var(--muted); font-size: 10px; font-style: normal; letter-spacing: .06em; text-transform: uppercase; }
+  .gtoday { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px dashed var(--accent); }
+  .gtoday b { position: absolute; bottom: 0; left: 3px; color: var(--accent); font-size: 9.5px;
+              font-weight: 500; letter-spacing: .05em; }
+  .gnone { position: absolute; top: 4px; left: 6px; font-size: 11px; }
+  .gbar { position: absolute; top: 6px; height: 11px; padding: 0 6px; border-radius: 6px; background: var(--accent);
+          color: var(--bg); font-size: 9.5px; font-style: normal; line-height: 11px; white-space: nowrap; overflow: hidden; }
+  .gbar.sprint { background: color-mix(in oklab, var(--accent) 32%, var(--line-3)); color: var(--text); }
+  .gbar.sprint.on { background: var(--accent); color: var(--bg); }
+
   .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 10px; }
   .facts .f { border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; background: var(--card); }
   /* Långa commit-budskap skall bryta, inte trycka ihop sig med datumet intill. */
@@ -418,6 +451,11 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
       </div>
     </section>
 
+    <section class="view" id="v-insights">
+      <div class="seg" id="insightTabs"></div>
+      <div id="insightBox" class="meta">räknar …</div>
+    </section>
+
     <section class="view" id="v-board">
       <div class="empty" id="sprintNote"></div>
       <div class="cols" id="cols"></div>
@@ -537,7 +575,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
 
 <script>
 const TEXT = {
-  views: { overview: ["Översikt", "◫"], board: ["Tavlan", "▤"], items: ["Uppgifter", "☰"], repos: ["Repon", "⌥"],
+  views: { overview: ["Översikt", "◫"], insights: ["Projekt", "◎"], board: ["Tavlan", "▤"], items: ["Uppgifter", "☰"], repos: ["Repon", "⌥"],
            automatik: ["Automatik", "⦿"], import: ["Importera", "⇪"], setup: ["Kom igång", "★"],
            admin: ["Admin", "⚑"], settings: ["Inställningar", "⚙"] },
   next: "nästa", empty: "Inga ärenden", never: "aldrig", nothing: "inget",
@@ -1103,6 +1141,143 @@ function renderTokenAlert() {
   badge.hidden = !text;
   badge.textContent = text ? "⚠ " + text : "";
   badge.title = (t.note || "") + " — klicka för inställningarna";
+}
+
+// ---- Projekt: sammanfattning, utveckling och tidslinje --------------------------
+// Jiras tre flikar. Siffrorna räknas i panel/server.py, där de går att prova med
+// kända datum -- här ritas de bara. Ingenting hämtas förrän fliken öppnas.
+const INSIGHT = { tab: "summary", data: null, error: "" };
+const INSIGHT_TABS = [["summary", "Sammanfattning"], ["development", "Utveckling"], ["timeline", "Tidslinje"]];
+
+async function insightLoad() {
+  if (INSIGHT.data) return;
+  try {
+    const a = await (await fetch("/api/insights")).json();
+    if (!a.ok) throw new Error(a.error || "inget svar");
+    INSIGHT.data = a;
+    INSIGHT.error = "";
+  } catch (e) {
+    INSIGHT.error = "kunde inte läsa projektets siffror: " + e.message;
+  }
+  renderInsights();
+}
+
+const kpi = rows => '<div class="facts">' + rows.map(([label, value, note]) =>
+  `<div class="f"><div class="l">${esc(label)}</div><div class="v">${value}` +
+  ` <span class="meta">${esc(note)}</span></div></div>`).join("") + '</div>';
+
+const barRows = rows => rows.map(r =>
+  `<div class="brow"><span class="bname">${esc(r.name)}</span>` +
+  `<span class="btrack"><i style="width:${r.share}%"></i></span>` +
+  `<span class="bnum">${r.count} · ${r.share} %</span></div>`).join("") ||
+  '<div class="empty">inget att visa</div>';
+
+function donut(status) {
+  const a = status.doneShare, b = a + status.inProgressShare;
+  const doing = "color-mix(in oklab, var(--accent) 40%, var(--line-2))";
+  const leg = (color, label, count, share) =>
+    `<div><i style="background:${color}"></i>${esc(label)}<b>${count}</b><span class="meta">${share} %</span></div>`;
+  return '<div class="donutwrap"><div class="donut" style="background:conic-gradient(' +
+    `var(--accent) 0 ${a}%, ${doing} ${a}% ${b}%, var(--line-2) ${b}% 100%)">` +
+    `<span class="dnum">${status.total}</span></div><div class="dleg">` +
+    leg("var(--accent)", "klara", status.done, a) +
+    leg(doing, "pågår", status.inProgress, status.inProgressShare) +
+    leg("var(--line-2)", "att göra", status.todo, status.todoShare) + '</div></div>';
+}
+
+function insightSummary(d) {
+  const s = d.summary;
+  const recent = s.recent.map(i =>
+    `<div class="r"><span class="key">${esc(i.key)}</span><span class="t">${esc(i.summary)}</span>` +
+    `<span class="tside">${esc(i.who || "—")}<span class="meta">` +
+    `${esc(ago(new Date(i.updatedMs).toISOString()))}</span></span></div>`).join("") ||
+    '<div class="empty">inget rört än</div>';
+  return '<div class="stack">' +
+    `<div class="panel"><h3>Senaste ${s.days} dygnen <span class="meta">${esc(d.project || "")}</span></h3>` +
+      '<div class="body">' + kpi([["klara", s.completed, "avslutade"],
+                                  ["ändrade", s.updated, "rörda"],
+                                  ["skapade", s.created, "nya"],
+                                  ["förfaller", s.dueSoon, "inom sju dygn"]]) + '</div></div>' +
+    `<div class="panel"><h3>Status <span class="meta">${s.status.total} ärenden</span></h3>` +
+      '<div class="body">' + donut(s.status) + '</div></div>' +
+    '<div class="panel"><h3>Prioriteringar</h3><div class="body">' + barRows(s.priorities) + '</div></div>' +
+    '<div class="panel"><h3>Ärendetyper</h3><div class="body">' + barRows(s.types) + '</div></div>' +
+    '<div class="panel"><h3>Senast rörda</h3><div class="body wl">' + recent + '</div></div></div>';
+}
+
+function insightDevelopment(d) {
+  const v = d.development;
+  const repos = v.repos.map(r =>
+    `<div class="r"><span class="key">${esc(r.name)}</span>` +
+    `<span class="t">${esc(r.language || "—")}${r.stars ? " · ★ " + r.stars : ""}</span>` +
+    `<span class="tside meta">${r.visibility === "PRIVATE" ? "privat" : "publik"}</span></div>`).join("") ||
+    '<div class="empty">inget svar från GitHub</div>';
+  const prs = v.pullRequests.map(p =>
+    `<div class="r"><span class="t">${link(p.url, esc(p.title))}</span>` +
+    `<span class="tside meta">${esc(p.repo)}</span></div>`).join("") ||
+    '<div class="empty">inga öppna pull requests just nu</div>';
+  return '<div class="stack">' +
+    '<div class="panel"><h3>Koden och ärendena</h3><div class="body">' +
+      kpi([["klara denna vecka", v.workItems, "avslutade"],
+           ["öppna buggar", v.openBugs, "typ Bug"],
+           ["försenade", v.overdue, "förbi förfallodatum"],
+           ["i aktiv sprint", v.inSprint, "ärenden"]]) + '</div></div>' +
+    `<div class="panel"><h3>Pull requests <span class="meta">${v.pullRequests.length} öppna</span></h3>` +
+      `<div class="body wl">${prs}</div></div>` +
+    `<div class="panel"><h3>Repon <span class="meta">${v.repos.length} stycken</span></h3>` +
+      `<div class="body wl">${repos}</div></div>` +
+    '<div class="panel"><h3>Det här syns inte här <span class="meta">och varför</span></h3><div class="body">' +
+      v.notes.map(n => `<div class="note meta">${esc(n)}</div>`).join("") + '</div></div></div>';
+}
+
+function insightTimeline(d) {
+  const t = d.timeline;
+  // Månadslinjerna hör i varje spår: sitter de bara i huvudet går staplarna inte att
+  // läsa av mot skalan. Idag-linjen får en etikett, annars är den bara ett streck.
+  const months = (labeled) => t.months.map(m =>
+    `<i class="gmon" style="left:${m.left}%;width:${m.width}%">${labeled ? esc(m.label) : ""}</i>`).join("");
+  const today = (labeled) => `<i class="gtoday" style="left:${t.todayLeft}%" title="idag">` +
+    (labeled ? '<b>idag</b>' : "") + '</i>';
+  const head = '<div class="grow ghead"><span class="gname meta">Arbete</span><span class="gtrack">' +
+    months(true) + today(true) + '</span></div>';
+  const short = name => (String(name).match(/sprint\s*\d+/i) || [name])[0].replace(/sprint/i, "Sprint ").trim();
+  // En rad per sprint: två sprintar i samma spår krockar så snart deras datum gör det,
+  // och texten läses ihop (mätt: "SCRUM S SCRUM Sprint 1").
+  const sprints = t.sprints.map(s =>
+    '<div class="grow"><span class="gname meta">' + esc(short(s.name)) +
+    (s.state === "active" ? ' <span class="meta">pågår</span>' : "") + '</span>' +
+    `<span class="gtrack">${months(false)}<i class="gbar sprint ${s.state === "active" ? "on" : ""}" ` +
+    `style="left:${s.left}%;width:${s.width}%" title="${esc(s.name)} · ${esc(s.state)}"></i>` +
+    today(false) + '</span></div>').join("");
+  const rows = t.rows.map(r =>
+    `<div class="grow" title="${esc(r.type)} · ${esc(r.statusName)}">` +
+    `<span class="gname${r.done ? " done" : ""}">${link(r.url, esc(r.key))} ${esc(r.summary)}` +
+    (r.children ? ` <span class="meta">${r.childrenDone}/${r.children}</span>` : "") + '</span>' +
+    '<span class="gtrack">' + months(false) +
+    (r.left === null ? '<span class="meta gnone">inget datum</span>'
+                     : `<i class="gbar" style="left:${r.left}%;width:${r.width}%"></i>`) +
+    today(false) + '</span></div>').join("") ||
+    '<div class="empty">inga ärenden med datum än</div>';
+  return '<div class="stack"><div class="panel">' +
+    `<h3>Tidslinjen <span class="meta">${t.spanDays} dygn · ${t.rows.length} ärenden` +
+    `${t.sprints.length ? " · " + t.sprints.length + " sprintar" : ""}` +
+    `${t.dated ? "" : " · ärendena saknar datum"}</span></h3>` +
+    `<div class="body">${head}${sprints}${rows}` +
+    (t.note ? `<div class="note meta">${esc(t.note)}</div>` : "") + `</div></div></div>`;
+}
+
+function renderInsights() {
+  const box = document.getElementById("insightBox");
+  if (!box) return;
+  const tabs = document.getElementById("insightTabs");
+  if (tabs) tabs.innerHTML = INSIGHT_TABS.map(([v, label]) =>
+    `<button data-itab="${v}" class="${v === INSIGHT.tab ? "on" : ""}">${esc(label)}</button>`).join("");
+  if (INSIGHT.error) { box.classList.add("meta"); box.textContent = INSIGHT.error; return; }
+  if (!INSIGHT.data) { box.classList.add("meta"); box.textContent = "räknar …"; return; }
+  box.classList.remove("meta");
+  const d = INSIGHT.data;
+  box.innerHTML = INSIGHT.tab === "development" ? insightDevelopment(d)
+    : INSIGHT.tab === "timeline" ? insightTimeline(d) : insightSummary(d);
 }
 
 // ---- Admin: roller, folk och fält ----------------------------------------------
@@ -1922,6 +2097,7 @@ function render() {
   if (!STATE) return;
   renderRail(); renderSide(); renderCrumbs(); renderFilters(); renderItemProject();
   renderTokenAlert(); renderSettings(); renderTheme();
+  if (view === "insights") renderInsights();
   // Tillåtlista, inte blocklista: en ny vy skall aldrig ärva filterrader den inte
   // använder. Repon har sin egen sökning i sidofältet.
   document.getElementById("filtersRow").hidden = !["board", "items"].includes(view);
@@ -2044,6 +2220,7 @@ function show(v) {
   if (view === "setup") setupLoad();
   if (view === "settings") renderRights();
   if (view === "admin") adminLoad();
+  if (view === "insights") insightLoad();
 }
 document.addEventListener("click", e => {
   if (e.target.closest('[data-act="refresh"]')) return load(true);
@@ -2056,6 +2233,8 @@ document.addEventListener("click", e => {
   if (e.target.closest("#setupOpen")) { show("setup"); return; }
   if (e.target.closest('[data-act="admin-people"]')) return adminPeople();
   if (e.target.closest("[data-mode]")) return setTheme(e.target.closest("[data-mode]").dataset.mode);
+  const itab = e.target.closest("[data-itab]");
+  if (itab) { INSIGHT.tab = itab.dataset.itab; renderInsights(); return; }
   if (e.target.closest('[data-act="setup-jira"]')) {
     const v = id => ((document.getElementById(id) || {}).value || "").trim();
     if (!v("setupTok")) { const n = document.getElementById("setupNote"); if (n) n.textContent = "klistra in nyckeln först"; return; }
