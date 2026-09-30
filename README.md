@@ -19,12 +19,12 @@ cd ~/Projects/godjira && python3 panel/server.py     # open http://127.0.0.1:878
 ```
 
 The overview, the board, the issue list, the reports and the flow drawing are all
-live on the sample data; the account card says *mock*, and **Kom igång** is where a
+live on the sample data; the account card says *mock*, and **Get started** is where a
 real Jira key and `gh auth login` go when you are ready. Nothing to undo: no key,
 no keyring entry, no file in the repo.
 
 The panel speaks the same nine languages as the bar widget. Pick one under
-**Settings → Panelens språk** and both follow — it is one setting, stored in the
+**Settings → The panel's language** and both follow — it is one setting, stored in the
 bridge, not a per-browser preference. The screenshots below are the panel on its
 own sample data; the interface follows your language setting.
 
@@ -176,6 +176,28 @@ Coming from a version where the plugin id was `custom.jira`: the installer renam
 the plugin folder, keeps the widget's place in the bar layout, and moves the Jira
 token from the old keyring name to `godjira` the first time the bridge looks for it
 — nothing to do by hand.
+
+## Distributions
+
+Measured, not assumed: `tools/distro_matrix.sh` runs the three test files and the
+CLI's own self-check inside each distribution's own Python, in containers.
+
+| Distribution | Debian stable | Ubuntu 22.04 | Ubuntu 24.04 | Fedora | Alpine | Rocky 9 |
+|---|---|---|---|---|---|---|
+| Python | 3.13 | 3.10 | 3.12 | 3.14 | 3.14 | 3.9 |
+| the suites | 46 + 15 + 13 green | same | same | same | same | same |
+| `--selftest` | 25/25 | 25/25 | 25/25 | 25/25 | 25/25 | 25/25 |
+
+Green from Python 3.9 to 3.14, and nothing but Python itself is needed — the panel
+is stdlib only, with no package to install. 3.9 is the oldest interpreter the code
+runs on. The self-check runs with an empty `HOME`, which is the state a fresh clone
+is in; that is deliberately the case it is tested against, because it is the one it
+used to get wrong.
+
+**The bar widget is the exception.** It is a Quickshell plugin, and Quickshell is a
+Wayland shell shipped by Arch and Omarchy. Everywhere else the panel is the program:
+a window from any browser, nothing to install. The widget's packaging outside Arch
+is not measured here — treat it as an Omarchy extra rather than a supported target.
 
 ## What it exposes, and to whom
 

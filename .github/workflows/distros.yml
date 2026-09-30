@@ -1,0 +1,50 @@
+name: distros
+
+# Two legs, on purpose.
+#
+# suite: the three test files plus the CLI's own self-check, on the oldest Python
+#   the code supports (3.9, measured on Rocky 9) and a current one. Runs with an
+#   empty HOME, which is the state a person who just cloned this repo is in --
+#   that is the case the self-check kept getting wrong.
+# distros: the containers in tools/distro_matrix.sh. Slower, so not on every push.
+#
+# Local runner: the same matrix runs by hand with `sh tools/distro_matrix.sh`.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+jobs:
+  suite:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.13"]
+    env:
+      HOME: /tmp/ci-home
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Run the suites with nothing configured
+        run: |
+          mkdir -p "$HOME"
+          python3 --version
+          python3 panel/test_i18n.py
+          python3 panel/test_guard.py
+          python3 panel/test_coldstart.py
+          python3 bin/jira_flow.py --selftest
+
+  distros:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - name: The suites on other distributions
+        run: sh tools/distro_matrix.sh

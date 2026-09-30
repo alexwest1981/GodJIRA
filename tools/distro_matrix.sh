@@ -49,9 +49,13 @@ for img in $images; do
 		PANEL_PORT=8791 python3 panel/server.py >/tmp/p.log 2>&1 &
 		sleep 8
 		printf "  %-24s " "panelen svarar"
-		if python3 -c "
+		# Proben som fil: citattecken inuti citattecken gick sonder i skalet och
+		# SyntaxError lades ut som "panelen svarar inget", vilket ar tva helt olika fel.
+		cat >/tmp/probe.py <<'PY'
 import urllib.request
-print(urllib.request.urlopen('http://127.0.0.1:8791/api/strings?lang=en', timeout=15).read()[:90].decode())" >/tmp/l.log 2>/tmp/l.err; then
+print(urllib.request.urlopen("http://127.0.0.1:8791/api/strings?lang=en", timeout=15).read()[:90].decode())
+PY
+		if python3 /tmp/probe.py >/tmp/l.log 2>/tmp/l.err; then
 			head -c 90 /tmp/l.log; echo
 		else
 			echo "INGET SVAR"; sed "s/^/    fel: /" /tmp/l.err | tail -3
