@@ -168,6 +168,10 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
     padding: 11px 12px; background: var(--panel); }
   .scanbox summary { cursor: pointer; margin-top: 7px; color: var(--muted); }
   ul.tight { margin: 5px 0 0; padding-left: 18px; }
+  /* Katalogerna i kartan: rubriken bär sökvägen, raderna under bara filnamnen. */
+  .dir { margin-top: 7px; }
+  .dir > .mono { color: var(--muted); }
+  .dir ul.tight { margin: 2px 0 0 14px; }
   ul.tight li { margin: 2px 0; }
   table.mini { margin-top: 5px; border-collapse: collapse; width: 100%; font-size: 12px; }
   table.mini td { padding: 3px 8px 3px 0; vertical-align: top; border-top: 1px solid var(--line); }
@@ -1817,14 +1821,19 @@ function renderRepoLink() {
 
 // Kartan: sammanfattningen, de två luckorna (där jobb saknas och där kod saknas),
 // och ärende för ärende. Luckorna först -- det är dem man tittar efter.
-// Den gemensamma roten för en lista: 74 filer ur samma paket läses inte när varje rad
-// börjar likadant. Tom sträng när filerna inte delar någon katalog.
-function commonRoot(list) {
-  const dirs = (list || []).map(f => f.split("/").slice(0, -1));
-  if (dirs.length < 2) return "";
-  let n = 0;
-  while (dirs.every(d => d.length > n && d[n] === dirs[0][n])) n++;
-  return n ? dirs[0].slice(0, n).join("/") + "/" : "";
+// Katalogen bär sökvägen, raden bär bara namnet. 74 filer ur samma paket gick inte att
+// läsa när varje rad började likadant (mätt: 60 rader med samma rot). Filer utan
+// katalog hamnar först -- de ligger i roten, och det är där de hör hemma.
+function dirGroups(list) {
+  const groups = new Map();
+  for (const f of (list || [])) {
+    const full = String(f);
+    const cut = full.lastIndexOf("/");
+    const dir = cut < 0 ? "" : full.slice(0, cut + 1);
+    if (!groups.has(dir)) groups.set(dir, []);
+    groups.get(dir).push(cut < 0 ? full : full.slice(cut + 1));
+  }
+  return [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
 }
 
 // Öppna bara luckor man orkar läsa: en lista på 74 rader knuffar allt annat under
@@ -1833,17 +1842,21 @@ const opened = (n, open) => !!open && n > 0 && n <= 20;
 
 function scanHtml(m, open) {
   const silent = m.silent || [];
-  const root = commonRoot(silent);
-  const files = (list) => (list || []).map(f => {
-    const shown = root && f.indexOf(root) === 0 ? f.slice(root.length) : f;
-    return `<li class="mono"${shown === f ? ` title="${esc(f)}"` : ""}>${esc(shown)}</li>`;
-  }).join("") || `<li class="meta">inga</li>`;
+  const shortPath = f => String(f).split("/").slice(-2).join("/");
+  const files = (list) => {
+    const groups = dirGroups(list);
+    if (!groups.length) return `<li class="meta">inga</li>`;
+    return groups.map(([dir, names]) =>
+      `<li class="dir"><span class="mono">${esc(dir || "roten")} (${names.length})</span>` +
+      `<ul class="tight">${names.map(n => `<li class="mono">${esc(n)}</li>`).join("")}</ul></li>`).join("");
+  };
   const missing = (m.missing || []).map(e =>
     `<li><b>${esc(e.key)}</b> ${esc(e.summary || "")} <span class="meta">(${esc(e.pool || "")})</span></li>`
   ).join("") || `<li class="meta">inga — alla ärenden pekar på något</li>`;
   const rows = (m.map || []).map(e =>
     `<tr><td><b>${esc(e.key)}</b></td><td>${esc(e.summary || "")}</td>` +
-    `<td>${(e.files || []).map(f => `<span class="mono">${esc(f)}</span>`).join("<br>") || "—"}</td></tr>`
+    `<td>${(e.files || []).map(f => `<span class="mono" title="${esc(f)}">${esc(shortPath(f))}</span>`)
+      .join("<br>") || "—"}</td></tr>`
   ).join("");
   // Ett tak som inte syns är samma sak som ingen information: säg att kartan är kapad.
   const cap = m.issuesTotal > m.issues ? ` (av ${m.issuesTotal} — kartan täcker de första)` : "";
@@ -1852,7 +1865,7 @@ function scanHtml(m, open) {
     <details${opened((m.missing || []).length, open) ? " open" : ""}><summary>där jobbet är oklart (${(m.missing || []).length})</summary>
       <ul class="tight">${missing}</ul></details>
     <details${opened(silent.length, open) ? " open" : ""}><summary>kod utan uppgift (${m.silentCount})</summary>
-      ${root ? `<div class="meta mono">${esc(root)}</div>` : ""}<ul class="tight">${files(silent)}</ul></details>
+      <ul class="tight">${files(silent)}</ul></details>
     <details><summary>ärende för ärende (${(m.map || []).length})</summary>
       <table class="mini"><tbody>${rows}</tbody></table></details>`;
 }

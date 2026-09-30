@@ -159,6 +159,26 @@ def main() -> int:
     check(probe.returncode == 0, "panelens skript har ren syntax",
           (probe.stderr or "").strip().splitlines()[:4])
     _os.unlink(js_path)
+    # Kataloggrupperingen: katalogen bär sökvägen, raden bara namnet. Panelen har ingen
+    # egen provkörare, men funktionen är ren -- den extraheras och körs i node med ett
+    # litet träd, så en trasig gruppering (rot-filer, djup, sortering) syns direkt.
+    fn = re.search(r"function dirGroups\(list\) \{.*?\n\}", html, re.S)
+    check(bool(fn), "kataloggrupperingen går att läsa")
+    if fn:
+        with _tf.NamedTemporaryFile("w", suffix=".js", delete=False, encoding="utf-8") as fh:
+            fh.write(fn.group(0) + """
+const got = dirGroups(["a/b/C.java", "a/b/D.java", ".gitattributes", "x/y/z/F.xml", "a/b/E.java"])
+  .map(([d, n]) => d + "|" + n.join(","));
+const want = ["|.gitattributes", "a/b/|C.java,D.java,E.java", "x/y/z/|F.xml"];
+console.log(JSON.stringify(got) === JSON.stringify(want) ? "OK" : "FEL " + JSON.stringify(got));
+""")
+            group_js = fh.name
+        group_run = _sp.run(["node", group_js], capture_output=True, text=True)
+        _os.unlink(group_js)
+        check(group_run.stdout.strip() == "OK",
+              "katalogen bär sökvägen, raden bara filnamnet",
+              (group_run.stdout + group_run.stderr).strip()[:140])
+
     if table:
         named = set(re.findall(r"(\w+):\s*\[", table.group(1)))
         sections = set(re.findall(r'<section class="view[^"]*" id="v-(\w+)"', html))
