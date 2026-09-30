@@ -74,8 +74,23 @@ def main() -> int:
     # [hidden] räckte inte mot display:flex: regeln sattes men raden visades ändå.
     check("[hidden] { display: none !important; }" in html,
           "the hidden attribute actually hides the filter row")
-    check('["overview", "import", "automatik", "repos"].includes(view)' in html,
-          "the filter row is hidden in the views that have nothing to filter")
+    # Tillåtlista, inte blocklista: settings/setup/admin visade filtren när listan
+    # byggdes som "allt utom dessa". En ny vy får aldrig ärva en rad den inte använder.
+    check('!["board", "items"].includes(view)' in html,
+          "the filter row shows on the board and the item list, nowhere else")
+    check('id="filtersRow" hidden' not in html and "filtersRow" in html,
+          "the filter row is one block that can be hidden whole")
+    # Ett oavslutat skriptblock tystar hela panelen (mätt: "show is not defined").
+    # Starten bor sist i filen. En patch som "äter till slutet" tar med sig
+    # load(), pollningen och hashändringen -- då står panelen tom utan ett ord
+    # (mätt: STATE förblev null i webbläsaren, inga fel i konsolen).
+    check("load(false);" in html and "setInterval(() => load(false), 60000);" in html,
+          "the panel starts itself and keeps reading every minute")
+    check("show(readHash());" in html and 'addEventListener("hashchange"' in html,
+          "the hash opens a view and follows along")
+    check(html.count("<script") == html.count("</script>"),
+          "every script block is closed",
+          "%s öppnade, %s stängda" % (html.count("<script"), html.count("</script>")))
     check("link(r.url," not in html,
           "the repo name is not a jump to github", "the detail owns that link")
     check("link(d.about.url," in html, "the repo detail carries the github link")

@@ -220,7 +220,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   /* ----------------------------------------------------------------- main */
   main { flex: 1; min-width: 0; display: flex; flex-direction: column; height: 100%; overflow-y: auto; }
   header.top {
-    display: flex; align-items: center; gap: 10px; padding: 10px 18px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 10px; padding: 12px 28px; border-bottom: 1px solid var(--line);
     background: var(--bg); position: sticky; top: 0; z-index: 5;
     /* Filtreringen växer med antalet chip. Utan wrap klipptes sista chipen ("Low")
        i stället för att flytta ned till nästa rad. */
@@ -229,6 +229,8 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   .crumbs { display: flex; align-items: center; gap: 7px; font-size: 13px; }
   .crumbs .sep { color: var(--muted); }
   .crumbs b { font-weight: 600; }
+  /* Filtreringen hör bara hemma där den filtrerar: tavlan och uppgiftslistan. */
+  .onlyissues { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .seg { display: flex; border: 1px solid var(--line-2); border-radius: var(--r); overflow: hidden; }
   .seg button { background: transparent; border: 0; color: var(--muted); padding: 4px 9px; cursor: pointer; font-size: 13px; }
   .seg button:hover { color: var(--text); background: var(--panel); }
@@ -264,7 +266,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
     background: var(--panel); border: 1px solid var(--line-2); border-radius: var(--r); color: var(--text);
     padding: 5px 10px; font: inherit; font-size: 12.5px; min-width: 200px;
   }
-  .wrap { padding: 16px 18px 40px; display: flex; flex-direction: column; gap: 16px; }
+  .wrap { padding: 24px 28px 56px; display: flex; flex-direction: column; gap: 16px; }
   .view { display: none; flex-direction: column; gap: 16px; }
   .view.on { display: flex; }
 
@@ -383,14 +385,13 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   <header class="top">
     <div class="crumbs" id="crumbs"></div>
     <span class="grow"></span>
-    <div class="seg" id="seg"></div>
-    <select class="inp" id="itemProject" title="vilket Jira-projekt uppgifterna kommer från"></select>
-    <div class="filters" id="filters"></div>
-    <input type="search" id="filter" placeholder="filtrera">
     <button class="ghost warn" id="tokenWarn" hidden title="Jira-nyckeln"></button>
-    <button class="ghost" id="settings" title="Inställningar" aria-label="Inställningar">⚙</button>
-    <button class="ghost" id="theme" title="Ljust eller mörkt tema" aria-label="Ljust eller mörkt tema">☀</button>
-    <button class="ghost" id="refresh">Uppdatera</button>
+    <div class="seg" id="seg"></div>
+    <div class="onlyissues" id="filtersRow">
+      <select class="inp" id="itemProject" title="vilket Jira-projekt uppgifterna kommer från"></select>
+      <div class="filters" id="filters"></div>
+      <input type="search" id="filter" placeholder="filtrera">
+    </div>
   </header>
 
   <div class="wrap">
@@ -519,6 +520,10 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
               <button class="chip" id="setupOpen">kom igång — koppla på Jira och GitHub</button>
             </div>
           </div>
+        </div>
+        <div class="panel">
+          <h3>Utseende <span class="meta">följer skrivbordet tills du väljer</span></h3>
+          <div class="body"><div id="themeBox" class="meta">…</div></div>
         </div>
         <div class="panel">
           <h3>Vad dina rättigheter visar
@@ -1916,12 +1921,10 @@ async function impApply() {
 function render() {
   if (!STATE) return;
   renderRail(); renderSide(); renderCrumbs(); renderFilters(); renderItemProject();
-  renderTokenAlert(); renderSettings();
-  const filters = document.getElementById("filters");
-  // Repon har sin egen sökning i sidofältet; en filterrad som inte filtrerar något
-  // där är bara i vägen.
-  filters.hidden = ["overview", "import", "automatik", "repos"].includes(view);
-  document.getElementById("filter").hidden = view !== "items";
+  renderTokenAlert(); renderSettings(); renderTheme();
+  // Tillåtlista, inte blocklista: en ny vy skall aldrig ärva filterrader den inte
+  // använder. Repon har sin egen sökning i sidofältet.
+  document.getElementById("filtersRow").hidden = !["board", "items"].includes(view);
   // Projektväljaren hör till Uppgifter; i andra vyer vore den en död ratt.
   document.getElementById("itemProject").hidden = view !== "items";
   if (view === "overview") { renderStats(); renderAutomation(); renderFlowPick(); renderJournal(); renderRecent(); }
@@ -2049,9 +2052,10 @@ document.addEventListener("click", e => {
   if (e.target.closest('[data-act="link-save"]')) return linkSave(false);
   if (e.target.closest('[data-act="link-rm"]')) return linkSave(true);
   if (e.target.closest('[data-act="scan-run"]')) return scanRun(e.target.closest('[data-act="scan-run"]'));
-  if (e.target.closest("#settings") || e.target.closest("#tokenWarn")) { show("settings"); renderSettings(); return; }
+  if (e.target.closest("#tokenWarn")) { show("settings"); renderSettings(); return; }
   if (e.target.closest("#setupOpen")) { show("setup"); return; }
   if (e.target.closest('[data-act="admin-people"]')) return adminPeople();
+  if (e.target.closest("[data-mode]")) return setTheme(e.target.closest("[data-mode]").dataset.mode);
   if (e.target.closest('[data-act="setup-jira"]')) {
     const v = id => ((document.getElementById(id) || {}).value || "").trim();
     if (!v("setupTok")) { const n = document.getElementById("setupNote"); if (n) n.textContent = "klistra in nyckeln först"; return; }
@@ -2103,7 +2107,6 @@ document.addEventListener("click", e => {
   const t = e.target.closest("[data-v]"); if (!t) return;
   e.preventDefault(); F.pool = t.dataset.pool || ""; show(t.dataset.v);
 });
-document.getElementById("refresh").addEventListener("click", () => load(true));
 // Projektvalet i Uppgifter: vilket Jira-projekt tabellen visar (man kan ha flera
 // kopplingar samtidigt). Valet följer med i adressen, som de andra filtren.
 document.getElementById("itemProject").addEventListener("change", e => {
@@ -2116,21 +2119,25 @@ document.addEventListener("change", e => {
   if (e.target && e.target.id === "flowPickSel") { flowSel = e.target.value; renderFlow(); }
 });
 
-// Tema: växlaren sätter data-theme; utan val följer panelen skrivbordet
-// (color-scheme: light dark i :root). Valet sparas och läses igen i <head>,
-// innan första målningen -- annars blinkar fel tema förbi vid start.
-const themeBtn = document.getElementById("theme");
-const isDark = () => (document.documentElement.dataset.theme
-  || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")) === "dark";
-const visaIkon = () => { themeBtn.textContent = isDark() ? "☀" : "☾"; };
-themeBtn.addEventListener("click", () => {
-  const next = isDark() ? "light" : "dark";
-  document.documentElement.dataset.theme = next;
-  try { localStorage.setItem("godjira-theme", next); } catch (e) { /* privat läge: temat håller i alla fall denna session */ }
-  visaIkon();
-});
-visaIkon();
-document.getElementById("impRepo").addEventListener("change", () => {
+// Tema: följer skrivbordet tills man väljer något. Valet bor i Inställningar.
+const THEMES = [["", "följ skrivbordet"], ["light", "ljust"], ["dark", "mörkt"]];
+function setTheme(mode) {
+  if (mode) document.documentElement.dataset.theme = mode;
+  else delete document.documentElement.dataset.theme;
+  try {
+    if (mode) localStorage.setItem("godjira-theme", mode);
+    else localStorage.removeItem("godjira-theme");
+  } catch (e) { /* privat läge: temat håller i alla fall denna session */ }
+  renderTheme();
+}
+function renderTheme() {
+  const host = document.getElementById("themeBox");
+  if (!host) return;
+  const now = document.documentElement.dataset.theme || "";
+  host.classList.remove("meta");
+  host.innerHTML = `<div class="linkbar">` + THEMES.map(([mode, label]) =>
+    `<button class="chip ${now === mode ? "on" : ""}" data-mode="${mode}">${esc(label)}</button>`).join("") + `</div>`;
+}document.getElementById("impRepo").addEventListener("change", () => {
   document.getElementById("impTarget").textContent = impTargetText();
 });
 document.getElementById("impFiles").addEventListener("change", e => {
