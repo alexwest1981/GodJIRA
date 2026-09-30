@@ -13,8 +13,8 @@ import { workflow, node, links } from '@n8n-as-code/transformer';
 // Config                             set
 // Step1Current                       executeCommand
 // Step2ThePickDryRun                 executeCommand
-// Step3TheJournal                   executeCommand
-// Step4TheScan                      executeCommand
+// Step3TheJournal                    executeCommand
+// Step4TheScan                       executeCommand
 // Summary                            code
 // ReportToThePanel                   httpRequest                [onError→regular]
 //
@@ -155,9 +155,6 @@ The commands carry no project key: the CLI takes it from the repo link, so this 
         command: "={{ $('Config').first().json.repo }}/n8n/bin/flow-call.sh bridge journal 20",
     };
 
-    // Kartan över projektet: samma kommando som knappen i panelen kör, och samma
-    // karta. Den skriver bara filen scannen äger (inget på tavlan), så den hör hemma
-    // i läse-flödet -- och den är färsk varje timme utan att någon trycker.
     @node({
         id: '5e3a71c8-2b64-4d19-8f77-9a0c1e5b7d32',
         name: 'Step 4 - the scan',
