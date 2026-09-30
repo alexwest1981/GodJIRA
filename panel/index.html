@@ -183,6 +183,11 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
      till rutan, och tavlan är tio kolumner bred: krympt blev texten 4 px (mätt). */
   #codeCanvas { overflow: auto; max-height: 62vh; }
   #codeCanvas svg { width: auto; height: auto; max-width: none; }
+  /* Kryssraderna i Inställningar, och den halva raden: är ett av de två blocken
+     avstängt får det andra hela bredden i stället för att lämna ett tomrum. */
+  .lay { display: flex; align-items: center; gap: 8px; padding: 3px 0; cursor: pointer; }
+  .lay input { accent-color: var(--accent); }
+  .two:has(> .panel[hidden]) { grid-template-columns: 1fr; }
   .dir { margin-top: 7px; }
   .dir > .mono { color: var(--muted); }
   .dir ul.tight { margin: 2px 0 0 14px; }
@@ -460,23 +465,23 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
 
   <div class="wrap">
     <section class="view on" id="v-overview">
-      <div class="stats" id="stats"></div>
-      <div class="panel">
+      <div class="stats" id="stats" data-ov="stats"></div>
+      <div class="panel" data-ov="automation">
         <h3>Projektet du är kopplad till <span class="meta" id="automationMeta"></span>
           <span class="grow"></span><a class="chip" id="automationLink" hidden>öppna flödet</a></h3>
         <div class="body" id="automation"></div>
       </div>
       <div class="two">
-        <div class="panel">
+        <div class="panel" data-ov="flow">
           <h3>Flödets nästa <span class="meta">jira_flow.py next --dry-run</span></h3>
           <div class="body" id="flowPick"></div>
         </div>
-        <div class="panel">
+        <div class="panel" data-ov="journal">
           <h3>Flödets egna skrivningar <span class="meta">journal</span></h3>
           <div class="body" id="journal"></div>
         </div>
       </div>
-      <div class="panel">
+      <div class="panel" data-ov="recent">
         <h3>Senast rörda repon <span class="meta" id="recentMeta"></span></h3>
         <div class="body" id="recent"></div>
       </div>
@@ -491,7 +496,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
       <div class="panel">
         <h3>Kodkartan över <span class="meta" id="codeWho"></span>
           <span class="grow"></span>
-          <button class="chip" data-act="code-reset">läs om</button></h3>
+          <button class="chip" data-act="code-reset">nollställ vyn</button></h3>
         <div class="body">
           <div class="meta">Paketen och vad de använder — samma tavla som n8n:s flöde, så
             vägarna går åt höger: den som anropar till vänster, det anropade till höger.
@@ -621,6 +626,10 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
         <div class="panel">
           <h3>Utseende <span class="meta">följer skrivbordet tills du väljer</span></h3>
           <div class="body"><div id="themeBox" class="meta">…</div></div>
+        </div>
+        <div class="panel">
+          <h3>Vad som syns <span class="meta">verktyg i rälen och blocken på Översikt</span></h3>
+          <div class="body"><div id="layoutBox" class="meta">läser …</div></div>
         </div>
         <div class="panel">
           <h3>Vad dina rättigheter visar
@@ -809,6 +818,7 @@ const navViews = () => Object.entries(TEXT.views).filter(([v]) => v !== "admin" 
 function renderRail() {
   document.getElementById("rail").innerHTML = `<div class="mark" title="GodJIRA"></div>` + navViews().map(([v, [label, glyph]]) =>
     `<div class="railitem ${v === view ? "on" : ""}" data-v="${v}"><span class="g">${glyph}</span>${label}</div>`).join("");
+  applyLayout();   // rälen ritas om vid varje hämtning: valet måste på igen
 }
 
 // Repolistan bor i sidofältet, för 59 rader i huvudrutan blev 50 m skroll innan
@@ -890,6 +900,64 @@ function renderStats() {
       <div class="x">${g.repos.filter(r => r.isPrivate).length} privata · ${g.repos.filter(r => !r.isPrivate).length} publika</div></div>
     <div class="stat"><div class="n">${f.pick ? esc(f.pick.key) : "—"}</div><div class="l">flödets nästa</div>
       <div class="x">${esc(f.pick ? (f.pick.summary || "").slice(0, 40) : (f.error || TEXT.nothing))}</div></div>`;
+}
+
+/* ----------------------------------------------------------- vad som syns ---- */
+// Testarens önskemål: alla vill inte se samma sak. Här stängs verktyg (rälen) och
+// block (Översikt) av. Listan är det som är AV -- nya block är alltså på från början,
+// och ett tomt val betyder allt. Valet ligger i webbläsaren, som temat.
+const HIDDEN_KEY = "godjira.hidden";
+const OVERVIEW_BLOCKS = [["stats", "Nyckeltal"], ["automation", "Projektet du är kopplad till"],
+  ["flow", "Flödets nästa"], ["journal", "Flödets egna skrivningar"], ["recent", "Senast rörda repon"]];
+// Översikt är vägen tillbaka och Inställningar är där man slår på igen: de två går inte
+// att stänga av.
+const LOCKED_VIEWS = ["overview", "settings"];
+
+// Ren funktion: den läser bara strängen. Skräp i lagringen ger inga val alls, inte ett
+// halvt trasigt gränssnitt (och provas i test_wiring.py).
+function hiddenPrefs(raw) {
+  let list = null;
+  try { list = JSON.parse(raw == null ? "[]" : raw); } catch { list = null; }
+  if (!Array.isArray(list)) return [];
+  return [...new Set(list.filter(x => typeof x === "string" && /^(ov|view):[a-z]+$/.test(x)))];
+}
+
+function hiddenNow() {
+  try { return hiddenPrefs(localStorage.getItem(HIDDEN_KEY)); } catch { return []; }
+}
+
+function applyLayout() {
+  const off = new Set(hiddenNow());
+  for (const el of document.querySelectorAll("[data-ov]")) el.hidden = off.has("ov:" + el.dataset.ov);
+  for (const el of document.querySelectorAll(".railitem[data-v]")) {
+    if (!LOCKED_VIEWS.includes(el.dataset.v)) el.hidden = off.has("view:" + el.dataset.v);
+  }
+}
+
+function layoutToggle(id) {
+  const off = new Set(hiddenNow());
+  if (off.has(id)) off.delete(id); else off.add(id);
+  try { localStorage.setItem(HIDDEN_KEY, JSON.stringify([...off])); } catch { /* utan lagring */ }
+  applyLayout();
+  renderLayoutPrefs();
+  // Stängde man av vyn man står i får man inte en tom skärm.
+  if (id.startsWith("view:") && off.has(id) && view === id.slice(5)) show("overview");
+}
+
+function renderLayoutPrefs() {
+  const host = document.getElementById("layoutBox");
+  if (!host) return;
+  const off = new Set(hiddenNow());
+  const row = (id, label) =>
+    `<label class="lay"><input type="checkbox" data-act="lay" data-id="${id}"${off.has(id) ? "" : " checked"}>` +
+    `<span>${esc(label)}</span></label>`;
+  host.classList.remove("meta");
+  host.innerHTML =
+    `<div class="meta" style="margin-bottom:5px">Verktyg i rälen</div>` +
+    Object.entries(TEXT.views).filter(([v]) => !LOCKED_VIEWS.includes(v))
+      .map(([v, pair]) => row("view:" + v, pair[0])).join("") +
+    `<div class="meta" style="margin:11px 0 5px">Block på Översikt</div>` +
+    OVERVIEW_BLOCKS.map(([key, label]) => row("ov:" + key, label)).join("");
 }
 
 /* ----------------------------------------------------------- automaten ---- */
@@ -1230,6 +1298,7 @@ function tokenRows(t) {
 }
 
 function renderSettings() {
+  renderLayoutPrefs();
   const box = document.getElementById("tokenBox");
   if (!box) return;
   const t = STATE.token || {};
@@ -2421,6 +2490,8 @@ function show(v) {
 }
 document.addEventListener("click", e => {
   if (e.target.closest('[data-act="refresh"]')) return load(true);
+  const lay = e.target.closest('[data-act="lay"]');
+  if (lay) return layoutToggle(lay.dataset.id);
   if (e.target.closest('[data-act="imp-parse"]')) return impParse();
   if (e.target.closest('[data-act="imp-apply"]')) return impApply();
   if (e.target.closest('[data-act="link-save"]')) return linkSave(false);

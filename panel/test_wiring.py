@@ -179,6 +179,27 @@ console.log(JSON.stringify(got) === JSON.stringify(want) ? "OK" : "FEL " + JSON.
               "katalogen bär sökvägen, raden bara filnamnet",
               (group_run.stdout + group_run.stderr).strip()[:140])
 
+    # Vad som syns: valet ligger i webbläsaren som en lista av det som är AV. Skräp i
+    # lagringen skall ge inga val (allt syns), inte ett halvt trasigt gränssnitt.
+    fn = re.search(r"function hiddenPrefs\(raw\) \{.*?\n\}", html, re.S)
+    check(bool(fn), "listan över avstängt går att läsa")
+    if fn:
+        with _tf.NamedTemporaryFile("w", suffix=".js", delete=False, encoding="utf-8") as fh:
+            fh.write(fn.group(0) + """
+const fall = [[null, 0], ["[]", 0], ['["ov:stats"]', 1], ['["ov:stats","ov:stats"]', 1],
+  ['["ov:stats","view:karta"]', 2], ["trasigt", 0], ['{"a":1}', 0], ['[1,"view:karta"]', 1],
+  ['["admin:all","ov:stats;"]', 0], ['["view:"]', 0]];
+const fel = fall.filter(([raw, n]) => hiddenPrefs(raw).length !== n)
+  .map(([raw, n]) => raw + " -> " + JSON.stringify(hiddenPrefs(raw)));
+console.log(fel.length ? "FEL " + fel.join(" | ") : "OK");
+""")
+            prefs_js = fh.name
+        prefs_run = _sp.run(["node", prefs_js], capture_output=True, text=True)
+        _os.unlink(prefs_js)
+        check(prefs_run.stdout.strip() == "OK",
+              "trasig lagring ger inga avstängningar, dubbletter räknas en gång",
+              (prefs_run.stdout + prefs_run.stderr).strip()[:140])
+
     if table:
         named = set(re.findall(r"(\w+):\s*\[", table.group(1)))
         sections = set(re.findall(r'<section class="view[^"]*" id="v-(\w+)"', html))
