@@ -16,6 +16,7 @@ Jira's snapshot is ~100 KB and a browser refresh should not cost an API call.
 from __future__ import annotations
 
 import base64
+import datetime
 import json
 import os
 import re
@@ -319,6 +320,21 @@ def automation_report(payload: dict) -> tuple[int, dict]:
                 "priority": str(pick.get("priority") or "")[:16]}
     else:
         pick = None
+    # Kartan: n8n:s egen läsning av hela projektet. Den valideras som allt annat som
+    # kommer utifrån -- den hamnar i kortet, så den får inte vara text eller negativ.
+    raw_map = payload.get("theMap")
+    if isinstance(raw_map, dict):
+        def count(name: str) -> int:
+            try:
+                return max(0, int(raw_map.get(name) or 0))
+            except (TypeError, ValueError):
+                return 0
+        raw_map = {"issues": count("issues"), "files": count("files"), "mapped": count("mapped"),
+                   "missing": count("missing"), "silentFiles": count("silentFiles"),
+                   "at": str(raw_map.get("at") or "")[:24]}
+        raw_map = raw_map if raw_map["issues"] else None
+    else:
+        raw_map = None
     report = {
         "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "checkedAt": text("checkedAt", 40),
@@ -332,6 +348,7 @@ def automation_report(payload: dict) -> tuple[int, dict]:
         "runnersUp": [str(x)[:160] for x in (payload.get("runnersUp") or [])][:5]
         if isinstance(payload.get("runnersUp"), list) else [],
         "workflowId": text("workflowId", 40),
+        "theMap": raw_map,
     }
     AUTOMATION_FILE.parent.mkdir(parents=True, exist_ok=True)
     AUTOMATION_FILE.parent.chmod(0o700)
@@ -373,6 +390,109 @@ def journal(limit: int = 20) -> dict:
 
 
 SCAN_DIR = Path.home() / ".config/jira-flow"
+TOKEN_META = SCAN_DIR / "token.json"        # nyckelns utgångsdatum, aldrig nyckeln
+TOKEN_PAGE = "https://id.atlassian.com/manage-profile/security/api-tokens"
+WARN_DAYS = 14                              # så nära utgången larmar panelen
+
+
+def days_left(expires: str, today: str = "") -> int | None:
+    """Dagar kvar till utgångsdatumet, eller None när inget datum är satt.
+
+    Datumet är användarens eget (Atlassian visar det när nyckeln skapas, men har
+    inget API för det) -- panelen frågar en gång och minns. Ett datum i det förflutna
+    ger ett negativt tal: nyckeln är redan ute, och det sägs rakt ut.
+    """
+    text = (expires or "").strip()[:10]
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        return None
+    try:
+        end = datetime.date.fromisoformat(text)
+    except ValueError:
+        return None
+    now = datetime.date.fromisoformat(today) if today else datetime.date.today()
+    return (end - now).days
+
+
+def token_read() -> dict:
+    """Vad panelen vet om nyckeln: vems den är, om den svarar, och när den går ut.
+
+    Statusen kommer ur bryggan (samma svar som CLI:t visar), utgångsdatumet ur
+    panelens egen metadatafil. Nyckeln själv lämnar aldrig den här funktionen.
+    """
+    env = seam("bridge", "status", timeout=90)
+    data = env.get("payload") or {}
+    conn = data.get("connection") or {}
+    account = data.get("account") or {}
+    meta = {}
+    try:
+        meta = json.loads(TOKEN_META.read_text())
+    except (OSError, ValueError):
+        meta = {}
+    left = days_left(meta.get("expires") or "")
+    answer = {"ok": True, "present": bool(conn.get("hasToken")),
+              "connected": bool(data.get("connected")),
+              "email": conn.get("email") or account.get("email") or "",
+              "siteUrl": conn.get("siteUrl") or account.get("siteUrl") or "",
+              "displayName": account.get("displayName") or "",
+              "expires": meta.get("expires") or "", "setAt": meta.get("at") or "",
+              "daysLeft": left, "warnDays": WARN_DAYS, "tokenPage": TOKEN_PAGE,
+              "error": data.get("error") or ""}
+    if not answer["present"]:
+        answer["alert"], answer["note"] = "missing", "ingen nyckel sparad på den här maskinen"
+    elif data.get("error") and not answer["connected"]:
+        answer["alert"], answer["note"] = "rejected", "Jira avvisade nyckeln — gör en ny"
+    elif left is not None and left <= WARN_DAYS:
+        answer["alert"] = "expiring"
+        answer["note"] = ("nyckeln går ut om {} dagar".format(left) if left >= 0
+                          else "nyckeln gick ut för {} dagar sedan".format(-left))
+    else:
+        answer["alert"], answer["note"] = "", ""
+    return answer
+
+
+def token_save(payload: dict) -> tuple[int, dict]:
+    """En ny nyckel, genom bryggans egen login.
+
+    Nyckeln skrivs till en 0600-fil som bryggan läser och raderar: den får aldrig
+    stå i argv (den syns i processlistan) och aldrig i en logg. Bryggan prövar den
+    mot Jira innan något skrivs, så en felaktig nyckel lämnar anslutningen orörd.
+    """
+    if payload.get("rm"):
+        env = seam("bridge", "logout", "--yes", timeout=120)
+        good = env.get("exitCode") == 0
+        return (200 if good else 400), {"ok": good,
+                                        "error": None if good else (first_line(env) or "kunde inte ta bort nyckeln")}
+    token = str(payload.get("token") or "").strip()
+    if not token:
+        return 400, {"ok": False, "error": "ingen nyckel i förfrågan"}
+    if not re.fullmatch(r"[A-Za-z0-9_\-]{20,}", token):
+        return 400, {"ok": False, "error": "det såg inte ut som en Atlassian-nyckel"}
+    handle, name = tempfile.mkstemp(prefix="godjira-token-")
+    path = Path(name)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as fh:
+            fh.write(token)
+        args = ["bridge", "login", "--token-file", str(path)]
+        if payload.get("replace"):
+            args.append("--replace")
+        env = seam(*args, timeout=240)
+    finally:
+        path.unlink(missing_ok=True)      # bryggan tar den själv; här om den nekades
+    data = env.get("payload") or {}
+    good = env.get("exitCode") == 0 and bool(data.get("ok"))
+    if not good:
+        return 400, {"ok": False, "error": data.get("error") or first_line(env) or "inloggningen nekades"}
+    # Utgångsdatumet är användarens eget ord; det sparas bara när nyckeln accepterats.
+    expires = str(payload.get("expires") or "").strip()[:10]
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", expires):
+        try:
+            TOKEN_META.parent.mkdir(parents=True, exist_ok=True)
+            TOKEN_META.write_text(json.dumps({"expires": expires, "at": time.strftime("%Y-%m-%dT%H:%M:%S")},
+                                             ensure_ascii=False))
+            os.chmod(TOKEN_META, 0o600)
+        except OSError:
+            pass
+    return 200, {"ok": True, "daysLeft": days_left(expires), "status": data}
 _scan_running: dict = {}
 _scan_lock = threading.Lock()
 
@@ -521,6 +641,7 @@ def state() -> dict:
                     "project": pool.submit(project_of_the_link, flow),
                     "automation": pool.submit(automation_state),
                     "links": pool.submit(links_state),
+                    "token": pool.submit(token_read),
                     "journal": pool.submit(journal, 10),
                     "flows": pool.submit(lambda: cached("flows", flow_graphs)),
                     # Bara frågan om behörigheten (ett anrop): projektlistan finns
@@ -652,6 +773,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/state":
             self._send(200, json.dumps(state(), ensure_ascii=False).encode(), "application/json; charset=utf-8")
             return
+        if path == "/api/token":
+            self._json(200, token_read())
+            return
         if path == "/api/scan":
             query = parse_qs(urlparse(self.path).query)
             self._json(200, scan_read((query.get("repo") or [""])[0]))
@@ -678,7 +802,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 -- http.server's own naming
         handler = {"/api/import": import_parse, "/api/import/apply": import_apply,
                    "/api/link": link_set, "/api/automation": automation_report,
-                   "/api/scan": scan_start}.get(self.path.split("?")[0])
+                   "/api/scan": scan_start, "/api/token": token_save}.get(self.path.split("?")[0])
         if not handler:
             self._send(404, b"not found", "text/plain")
             return

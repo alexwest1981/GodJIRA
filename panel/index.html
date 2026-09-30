@@ -379,6 +379,8 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
     <select class="inp" id="itemProject" title="vilket Jira-projekt uppgifterna kommer från"></select>
     <div class="filters" id="filters"></div>
     <input type="search" id="filter" placeholder="filtrera">
+    <button class="ghost warn" id="tokenWarn" hidden title="Jira-nyckeln"></button>
+    <button class="ghost" id="settings" title="Inställningar" aria-label="Inställningar">⚙</button>
     <button class="ghost" id="theme" title="Ljust eller mörkt tema" aria-label="Ljust eller mörkt tema">☀</button>
     <button class="ghost" id="refresh">Uppdatera</button>
   </header>
@@ -486,6 +488,14 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
       </div>
     </section>
   </div>
+    <section class="view" id="v-settings">
+      <div class="card">
+        <h2 style="margin:0 0 4px">Inställningar</h2>
+        <div class="meta">Jira-nyckeln: vems den är, om den svarar, och när den går ut.</div>
+        <div id="tokenBox" class="meta" style="margin-top:10px">läser …</div>
+      </div>
+    </section>
+
 </main>
 
 <script>
@@ -983,6 +993,74 @@ function renderFlow() {
       `rullhjulet zoomar</span><span class="grow"></span>` +
       `<button class="chip" data-act="flow-reset">nollställ vyn</button></div>`;
   flowBind(flow.file, { x0, y0, w: x1 - x0, h: y1 - y0 });
+}
+
+// ---- Jira-nyckeln: status, larm och ett ställe att byta den -------------------
+// Panelen visar bara vad bryggan säger -- nyckeln själv går aldrig tillbaka till
+// sidan. Utgångsdatumet är användarens eget: Atlassian visar det när nyckeln skapas
+// men har inget API för det, så det frågas en gång och minns.
+function tokenRows(t) {
+  const row = (k, v) => `<div class="f"><div class="l">${esc(k)}</div><div class="v">${v}</div></div>`;
+  const site = (t.siteUrl || "").replace(/^https?:\/\//, "").replace(/\/$/, "");
+  return `<div class="facts">
+    ${row("konto", esc(t.displayName || "—") + (t.email ? ` <span class="meta">${esc(t.email)}</span>` : ""))}
+    ${row("sajt", site ? `<span class="mono">${esc(site)}</span>` : "—")}
+    ${row("nyckeln", t.present ? (t.connected ? "sparad och svarar" : "<span class=\"err\">avvisas av Jira</span>")
+      : "<span class=\"err\">saknas på den här maskinen</span>")}
+    ${row("går ut", t.expires
+      ? `${esc(t.expires)}${t.daysLeft === null ? "" : ` <span class="meta">(${t.daysLeft} dagar)</span>`}`
+      : "inget datum satt")}
+  </div>`;
+}
+
+function renderSettings() {
+  const box = document.getElementById("tokenBox");
+  if (!box) return;
+  const t = STATE.token || {};
+  box.classList.remove("meta");
+  box.innerHTML = tokenRows(t) +
+    (t.note ? `<div class="meta err" style="margin-top:9px">${esc(t.note)}</div>` : "") +
+    `<div class="linkbar" style="margin-top:12px">
+      <input class="inp" type="password" id="tokNew" placeholder="klistra in en ny nyckel"
+             autocomplete="off" spellcheck="false">
+      <input class="inp" type="date" id="tokExp" title="nyckelns utgångsdatum (valfritt)">
+      <button class="chip on" data-act="token-save">spara nyckeln</button>
+      ${t.present ? `<button class="chip" data-act="token-rm">ta bort nyckeln</button>` : ""}
+      <span class="grow"></span>
+      <span class="meta" id="tokNote"></span>
+    </div>
+    <div class="meta" style="margin-top:10px">Nyckeln går till bryggan, prövas mot Jira
+      <b>innan</b> något sparas, och hamnar i maskinens nyckelring — aldrig i en fil här,
+      och aldrig tillbaka till den här sidan. Har du ingen giltig:
+      <a href="${esc(t.tokenPage || "")}" target="_blank" rel="noreferrer">skapa en ny hos Atlassian</a>.</div>`;
+}
+
+async function tokenSave(body) {
+  const note = document.getElementById("tokNote");
+  if (note) note.textContent = "sparar …";
+  try {
+    const r = await fetch("/api/token", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body) });
+    const a = await r.json();
+    if (!a.ok) throw new Error(a.error || "svaret gick inte att läsa");
+    await load(true);
+    renderSettings();
+    const done = document.getElementById("tokNote");
+    if (done) done.textContent = "klart";
+  } catch (e) {
+    const host = document.getElementById("tokenBox");
+    if (host) host.insertAdjacentHTML("afterbegin", `<div class="meta err">${esc(e.message)}</div>`);
+  }
+}
+
+function renderTokenAlert() {
+  const badge = document.getElementById("tokenWarn");
+  if (!badge) return;
+  const t = STATE.token || {};
+  const text = { missing: "ingen Jira-nyckel", rejected: "nyckeln avvisas", expiring: "nyckeln går ut" }[t.alert] || "";
+  badge.hidden = !text;
+  badge.textContent = text ? "⚠ " + text : "";
+  badge.title = (t.note || "") + " — klicka för inställningarna";
 }
 
 function renderAutomation() {
@@ -1580,6 +1658,7 @@ async function impApply() {
 function render() {
   if (!STATE) return;
   renderRail(); renderSide(); renderCrumbs(); renderFilters(); renderItemProject();
+  renderTokenAlert(); renderSettings();
   const filters = document.getElementById("filters");
   // Repon har sin egen sökning i sidofältet; en filterrad som inte filtrerar något
   // där är bara i vägen.
@@ -1700,6 +1779,14 @@ document.addEventListener("click", e => {
   if (e.target.closest('[data-act="link-save"]')) return linkSave(false);
   if (e.target.closest('[data-act="link-rm"]')) return linkSave(true);
   if (e.target.closest('[data-act="scan-run"]')) return scanRun(e.target.closest('[data-act="scan-run"]'));
+  if (e.target.closest("#settings") || e.target.closest("#tokenWarn")) { show("settings"); renderSettings(); return; }
+  if (e.target.closest('[data-act="token-rm"]')) return tokenSave({ rm: true });
+  if (e.target.closest('[data-act="token-save"]')) {
+    const value = id => ((document.getElementById(id) || {}).value || "");
+    const token = value("tokNew").trim();
+    if (!token) { const n = document.getElementById("tokNote"); if (n) n.textContent = "klistra in nyckeln först"; return; }
+    return tokenSave({ token: token, expires: value("tokExp").trim() });
+  }
   if (e.target.closest("[data-flow]")) { flowSel = e.target.closest("[data-flow]").dataset.flow; return renderFlow(); }
   // Nollställningen kastar bara det man själv flyttat och panorerat: flödet i filen rörs inte.
   if (e.target.closest('[data-act="flow-reset"]')) {
