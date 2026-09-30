@@ -56,10 +56,15 @@ _imports: dict[str, dict] = {}
 IMPORT_TTL = 3600
 
 
-def seam(*args: str, timeout: int = 180) -> dict:
-    """One CLI call through the envelope n8n reads: {exitCode, payload, raw}."""
+def seam(*args: str, timeout: int = 180, stdin_text: str = "") -> dict:
+    """One CLI call through the envelope n8n reads: {exitCode, payload, raw}.
+
+    `stdin_text` finns för nycklarna: en token får inte stå i argv, där syns den i
+    processlistan för varje användare på maskinen.
+    """
     try:
-        done = subprocess.run([str(SEAM), *args], capture_output=True, text=True, timeout=timeout)
+        done = subprocess.run([str(SEAM), *args], capture_output=True, text=True, timeout=timeout,
+                              input=stdin_text or None)
         return json.loads(done.stdout)
     except Exception as exc:  # a step that could not answer at all
         return {"exitCode": None, "payload": None, "raw": "{}: {}".format(type(exc).__name__, exc)}
@@ -111,6 +116,45 @@ def jira_state() -> dict:
 def login() -> str:
     env = seam("gh", "api", "user", "--jq", ".login", timeout=60)
     return (env.get("raw") or "").strip() or ""
+
+
+def github_read() -> dict:
+    """Vem gh ar inloggad som, och var man skaffar en ny nyckel."""
+    env = seam("gh", "api", "user", "--jq", ".login", timeout=60)
+    name = (env.get("raw") or "").strip()
+    return {"ok": bool(name) and env.get("exitCode") == 0, "login": name,
+            "tokenPage": "https://github.com/settings/tokens",
+            "error": "" if name else first_line(env)}
+
+
+def github_save(payload: dict) -> tuple[int, dict]:
+    """En GitHub-nyckel, genom gh:s egen inloggning.
+
+    Nyckeln går på stdin (`--with-token`) -- aldrig i argv. gh prövar den mot
+    GitHub innan den sparas, och svarar med sitt eget fel om den inte duger.
+    """
+    if payload.get("rm"):
+        env = seam("gh", "auth", "logout", "--hostname", "github.com", timeout=60)
+        return (200 if env.get("exitCode") == 0 else 400), {"ok": env.get("exitCode") == 0,
+                                                           "error": None if env.get("exitCode") == 0
+                                                           else first_line(env)}
+    token = str(payload.get("token") or "").strip()
+    if not token:
+        return 400, {"ok": False, "error": "ingen nyckel i förfrågan"}
+    if len(token) < 20 or any(ch.isspace() for ch in token):
+        return 400, {"ok": False, "error": "det såg inte ut som en GitHub-nyckel"}
+    env = seam("gh", "auth", "login", "--with-token", timeout=120, stdin_text=token + "\n")
+    who = github_read() if env.get("exitCode") == 0 else {}
+    good = bool(who.get("ok"))
+    return (200 if good else 400), {"ok": good, "login": who.get("login", ""),
+                                    "error": None if good else (first_line(env) or "GitHub nekade nyckeln")}
+
+
+def setup_read() -> dict:
+    """Det en ny maskin behöver veta: är Jira och GitHub påkopplade, och vems."""
+    jira, hub = token_read(), github_read()
+    return {"ok": True, "jira": jira, "github": hub,
+            "ready": bool(jira.get("present") and jira.get("connected") and hub.get("ok"))}
 
 
 def github_state() -> dict:
@@ -473,6 +517,16 @@ def token_save(payload: dict) -> tuple[int, dict]:
         with os.fdopen(handle, "w", encoding="utf-8") as fh:
             fh.write(token)
         args = ["bridge", "login", "--token-file", str(path)]
+        site = str(payload.get("site") or "").strip()
+        email = str(payload.get("email") or "").strip()
+        if site:
+            if not re.fullmatch(r"https?://[A-Za-z0-9._-]+\.atlassian\.net/?", site):
+                return 400, {"ok": False, "error": "adressen såg inte ut som en Atlassian-sajt"}
+            args += ["--site", site]
+        if email:
+            if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+                return 400, {"ok": False, "error": "e-postadressen såg inte ut som en adress"}
+            args += ["--email", email]
         if payload.get("replace"):
             args.append("--replace")
         env = seam(*args, timeout=240)
@@ -773,6 +827,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/state":
             self._send(200, json.dumps(state(), ensure_ascii=False).encode(), "application/json; charset=utf-8")
             return
+        if path == "/api/setup":
+            self._json(200, setup_read())
+            return
         if path == "/api/token":
             self._json(200, token_read())
             return
@@ -802,7 +859,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 -- http.server's own naming
         handler = {"/api/import": import_parse, "/api/import/apply": import_apply,
                    "/api/link": link_set, "/api/automation": automation_report,
-                   "/api/scan": scan_start, "/api/token": token_save}.get(self.path.split("?")[0])
+                   "/api/scan": scan_start, "/api/token": token_save,
+                   "/api/github": github_save}.get(self.path.split("?")[0])
         if not handler:
             self._send(404, b"not found", "text/plain")
             return

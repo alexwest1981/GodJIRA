@@ -122,6 +122,16 @@ def main() -> int:
     check("n8n:s egen tavla" in html, "the view says whether the drawing is n8n's own")
     # Nytt projekt kräver "Administer Jira", som är en annan behörighet än
     # "Administer Projects". Utan den skall raden säga varför -- inte vara en knapp.
+    # Vyerna: show() slaepper bara igenom det som star i TEXT.views, sa en vy-sektion
+    # utan post dar ar en dod lank -- kugghjulet gick till "board" i stallet for
+    # Installningar (matt i webblasaren). Bada hallen kontrolleras.
+    table = re.search(r"views:\s*\{(.*?)\}\s*,\s*\n", html, re.S)
+    check(bool(table), "vy-tabellen gar att lasa")
+    if table:
+        named = set(re.findall(r"(\w+):\s*\[", table.group(1)))
+        sections = set(re.findall(r'<section class="view[^"]*" id="v-(\w+)"', html))
+        check(named == sections, "varje vy finns i bade tabellen och sidan",
+              "bara i tabellen: %s - bara som sektion: %s" % (sorted(named - sections), sorted(sections - named)))
     check('STATE.projectCan' in html and 'data-v="board"' in html,
           "the sidebar says whether a project may be created")
     check("def project_can" in (HERE / "server.py").read_text(),

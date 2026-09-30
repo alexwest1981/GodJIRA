@@ -488,11 +488,28 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
       </div>
     </section>
   </div>
+    <section class="view" id="v-setup">
+      <div class="meta">Första gången: koppla på Jira och GitHub här, så behöver du inte leta
+        dig fram till nycklarna. Allt sparas i maskinens nyckelring — samma butik som
+        kommandoraden använder, aldrig i en fil i klartext.</div>
+      <div id="setupBox" class="meta" style="margin-top:12px">läser …</div>
+    </section>
+
     <section class="view" id="v-settings">
       <div class="card">
         <h2 style="margin:0 0 4px">Inställningar</h2>
         <div class="meta">Jira-nyckeln: vems den är, om den svarar, och när den går ut.</div>
         <div id="tokenBox" class="meta" style="margin-top:10px">läser …</div>
+        <div class="linkbar" style="margin-top:12px">
+          <button class="chip" id="setupOpen">kom igång — koppla på Jira och GitHub</button>
+        </div>
+      </div>
+      <div class="card" style="margin-top:14px">
+        <h2 style="margin:0 0 4px">Vad dina rättigheter visar</h2>
+        <div class="meta">Ett verktyg syns bara om din roll i projektet bär behörigheten för det.
+          Jira är den som svarar nej — här står bara vad det svaret blev. Saknas behörigheten
+          finns verktyget inte i gränssnittet alls.</div>
+        <div id="rightsBox" class="meta" style="margin-top:10px">läser …</div>
       </div>
     </section>
 
@@ -501,7 +518,8 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
 <script>
 const TEXT = {
   views: { overview: ["Översikt", "◫"], board: ["Tavlan", "▤"], items: ["Uppgifter", "☰"], repos: ["Repon", "⌥"],
-           automatik: ["Automatik", "⤳"], import: ["Importera", "⇪"] },
+           automatik: ["Automatik", "⦿"], import: ["Importera", "⇪"], setup: ["Kom igång", "★"],
+           settings: ["Inställningar", "⚙"] },
   next: "nästa", empty: "Inga ärenden", never: "aldrig", nothing: "inget",
   someoneElses: "är någon annans — tas från panelens andra tryck",
   runnersUp: "därefter", noSprint: "ingen aktiv sprint — det som är kvar står i backloggen och ligger i To Do här",
@@ -1061,6 +1079,119 @@ function renderTokenAlert() {
   badge.hidden = !text;
   badge.textContent = text ? "⚠ " + text : "";
   badge.title = (t.note || "") + " — klicka för inställningarna";
+}
+
+// ---- Setupen och rättigheterna -------------------------------------------------
+// En ny maskin skall mötas av det här i stället för en tom översikt. Nycklarna
+// prövas mot Jira respektive GitHub innan de sparas, och hamnar i nyckelringen.
+const SETUP = { data: null, met: false };
+
+function statusLine(ok, text, bad) {
+  return ok ? `<span style="color:var(--accent)">${esc(text)}</span>`
+            : `<span class="err">${esc(bad || text)}</span>`;
+}
+
+function renderSetup() {
+  const box = document.getElementById("setupBox");
+  if (!box) return;
+  const s = SETUP.data || {};
+  const j = s.jira || {}, g = s.github || {};
+  box.classList.remove("meta");
+  box.innerHTML =
+    `<div class="card" style="margin-bottom:14px">
+      <h3 style="margin:0 0 5px">1 · Jira</h3>
+      <div class="meta">${j.present
+        ? "ansluten som " + statusLine(true, j.displayName || j.email || "kontot") +
+          (j.siteUrl ? " på <span class=\"mono\">" + esc(j.siteUrl.replace(/^https?:\/\//, "").replace(/\/$/, "")) + "</span>" : "") +
+          (j.expires ? " · nyckeln går ut " + esc(j.expires) : " · inget utgångsdatum satt")
+        : statusLine(false, "", "ingen nyckel sparad på den här maskinen")}</div>
+      <div class="linkbar" style="margin-top:10px">
+        <input class="inp" type="password" id="setupTok" placeholder="nyckeln (ATATT…)" autocomplete="off" spellcheck="false">
+        <input class="inp" type="date" id="setupExp" title="utgångsdatum (valfritt)">
+        <button class="chip on" data-act="setup-jira">spara och testa</button>
+        <span class="grow"></span>
+        <span class="meta" id="setupNote"></span>
+      </div>
+      <div class="linkbar" style="margin-top:8px">
+        <input class="inp" id="setupSite" placeholder="https://dinsajt.atlassian.net" value="${esc(j.siteUrl || "")}">
+        <input class="inp" id="setupMail" placeholder="din e-post" value="${esc(j.email || "")}">
+      </div>
+      <div class="meta" style="margin-top:8px">Ingen giltig nyckel? <a href="${esc(j.tokenPage || "")}"
+        target="_blank" rel="noreferrer">gör en hos Atlassian</a> — klistra in den här.</div>
+    </div>
+    <div class="card">
+      <h3 style="margin:0 0 5px">2 · GitHub</h3>
+      <div class="meta">${g.ok ? "ansluten som " + statusLine(true, g.login)
+        : statusLine(false, "", g.error || "gh är inte inloggad")}</div>
+      <div class="linkbar" style="margin-top:10px">
+        <input class="inp" type="password" id="setupGh" placeholder="GitHub-nyckeln (ghp_… eller github_pat_…)"
+               autocomplete="off" spellcheck="false">
+        <button class="chip on" data-act="setup-github">spara och testa</button>
+        <span class="grow"></span>
+      </div>
+      <div class="meta" style="margin-top:8px">Behöver du en ny? <a href="${esc(g.tokenPage || "")}"
+        target="_blank" rel="noreferrer">skapa ett token hos GitHub</a> (rättigheterna <span class="mono">repo</span>
+        och <span class="mono">read:org</span> räcker för det hubben gör).</div>
+    </div>`;
+}
+
+// Rättigheterna: behörigheterna kommer ur länken (lästa ur Jira för det projektet).
+// Verktyget syns bara när Jira säger ja -- här står bara vad Jira svarade.
+function renderRights() {
+  const host = document.getElementById("rightsBox");
+  if (!host) return;
+  const project = (STATE.project || {}).key || "";
+  const link = ((STATE.links || {}).links || []).find(l => (l || {}).project === project) || {};
+  if (!project || !Object.keys(link).length) {
+    host.textContent = "inget projekt är kopplat till ett repo än — koppla ett i Repon, " +
+      "så läses rollen och behörigheterna ur Jira.";
+    return;
+  }
+  const can = link.can || [], cannot = link.cannot || [];
+  const pc = STATE.projectCan || {};
+  const may = name => (can.includes(name) ? true : (cannot.includes(name) ? false : null));
+  const row = (label, allowed, why) =>
+    `<div class="f"><div class="l">${esc(label)}</div><div class="v">` +
+    (allowed === false ? `<span class="meta">syns inte</span> <span class="meta">${esc(why || "")}</span>`
+                       : `<span style="color:var(--accent)">syns</span>`) +
+    `</div></div>`;
+  host.classList.remove("meta");
+  host.innerHTML = `<div class="meta" style="margin-bottom:8px">roll i ${esc(project)}: ` +
+    `<b>${esc(link.role || "okänd")}</b>${link.account ? " · " + esc(link.account) : ""}` +
+    `${link.roleNote ? " · " + esc(link.roleNote) : ""}</div>
+    <div class="facts">
+      ${row("skapa ärenden", may("CREATE_ISSUES"), "saknar CREATE_ISSUES")}
+      ${row("flytta ärenden", may("TRANSITION_ISSUES"), "saknar TRANSITION_ISSUES")}
+      ${row("tilldela", may("ASSIGN_ISSUES"), "saknar ASSIGN_ISSUES")}
+      ${row("sprintar", may("MANAGE_SPRINTS_PERMISSION"), "saknar MANAGE_SPRINTS_PERMISSION")}
+      ${row("skapa projekt", pc.may === false ? false : null, pc.reason || "")}
+    </div>`;
+}
+
+async function githubSave(token) {
+  const box = document.getElementById("setupBox");
+  try {
+    const r = await fetch("/api/github", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: token }) });
+    const a = await r.json();
+    if (!a.ok) throw new Error(a.error || "GitHub nekade nyckeln");
+    await load(true);
+    await setupLoad();
+  } catch (e) {
+    if (box) box.insertAdjacentHTML("afterbegin", `<div class="meta err">${esc(e.message)}</div>`);
+  }
+}
+
+async function setupLoad() {
+  const box = document.getElementById("setupBox");
+  if (!box) return;
+  try {
+    SETUP.data = await (await fetch("/api/setup")).json();
+  } catch (e) {
+    box.textContent = "kunde inte läsa statusen: " + e.message;
+    return;
+  }
+  renderSetup();
 }
 
 function renderAutomation() {
@@ -1704,6 +1835,13 @@ async function load(refresh) {
   }
   if (!refresh && STATE && next.generatedAt === STATE.generatedAt) return;   // same answer, leave the page alone
   STATE = next;
+  // Första gången på en maskin: utan nyckel kan ingenting läsas, så en tom översikt
+  // vore en återvändsgränd. Setupen visas i stället -- en gång, inte som en spärr.
+  if (!SETUP.met && STATE.token && STATE.token.present === false) {
+    SETUP.met = true;
+    show("setup");
+    return;
+  }
   try {
     render();
   } catch (e) {
@@ -1771,6 +1909,10 @@ function show(v) {
   document.querySelectorAll(".view").forEach(el => el.classList.toggle("on", el.id === "v-" + view));
   writeHash();
   render();
+  // Vyerna som frågar efter något eget laddar det när de öppnas -- samma väg för
+  // kugghjulet, setupen och första starten.
+  if (view === "setup") setupLoad();
+  if (view === "settings") renderRights();
 }
 document.addEventListener("click", e => {
   if (e.target.closest('[data-act="refresh"]')) return load(true);
@@ -1780,6 +1922,21 @@ document.addEventListener("click", e => {
   if (e.target.closest('[data-act="link-rm"]')) return linkSave(true);
   if (e.target.closest('[data-act="scan-run"]')) return scanRun(e.target.closest('[data-act="scan-run"]'));
   if (e.target.closest("#settings") || e.target.closest("#tokenWarn")) { show("settings"); renderSettings(); return; }
+  if (e.target.closest("#setupOpen")) { show("setup"); return; }
+  if (e.target.closest('[data-act="setup-jira"]')) {
+    const v = id => ((document.getElementById(id) || {}).value || "").trim();
+    if (!v("setupTok")) { const n = document.getElementById("setupNote"); if (n) n.textContent = "klistra in nyckeln först"; return; }
+    tokenSave({ token: v("setupTok"), expires: v("setupExp"), site: v("setupSite"), email: v("setupMail") })
+      .then(() => setupLoad());
+    return;
+  }
+  if (e.target.closest('[data-act="setup-github"]')) {
+    const v = id => ((document.getElementById(id) || {}).value || "").trim();
+    const box = document.getElementById("setupBox");
+    if (!v("setupGh")) return;
+    githubSave(v("setupGh"));
+    return;
+  }
   if (e.target.closest('[data-act="token-rm"]')) return tokenSave({ rm: true });
   if (e.target.closest('[data-act="token-save"]')) {
     const value = id => ((document.getElementById(id) || {}).value || "");
