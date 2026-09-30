@@ -1014,6 +1014,19 @@ function renderAutomation() {
   (a.runnersUp || []).slice(0, 3).forEach(r => rows.push(
     `<div class="r"><span class="muted" style="width:74px">därefter</span><span class="t">${esc(r)}</span></div>`));
 
+  // Kartan i samma kort. Siffrorna är n8n:s egen läsning -- det är vad "n8n såg
+  // detta" betyder -- och listorna hämtas ur filen först när man fäller ut dem, så
+  // kortet inte bär hela kartan varje gång panelen frågar.
+  const m = a.theMap;
+  if (m && m.issues) {
+    rows.push(`<div class="r"><span class="muted" style="width:74px">kartan</span>` +
+      `<span class="t">${m.issues} ärenden mot ${m.files} filer — <b>${m.mapped}</b> pekar på kod, ` +
+      `<b>${m.missing}</b> gör det inte, ${m.silentFiles} filer utan uppgift</span>` +
+      `<span class="tside">${esc((m.at || "").replace("T", " ").slice(0, 16))}</span></div>`);
+    rows.push(`<details class="scanInCard"><summary>kartan i detalj</summary>` +
+      `<div id="scanInCard" class="meta">fäll ut för att hämta listorna …</div></details>`);
+  }
+
   const state = a.at
     ? `<div class="r"><span class="muted" style="width:74px">automaten</span>` +
       `<span class="t">${esc(a.note || (a.ok ? "körde utan anmärkning" : "fel"))}</span>` +
@@ -1306,6 +1319,25 @@ async function scanLoad() {
     box.textContent = "kunde inte läsa kartan: " + e.message;
   }
 }
+
+// Detaljerna i kortet hämtas när man fäller ut dem, en gång per sida. Repot är det
+// som är kopplat -- i Översikt finns inget valt repo, och då är länken svaret.
+document.addEventListener("toggle", async e => {
+  const isScan = e.target instanceof HTMLDetailsElement && e.target.classList.contains("scanInCard");
+  if (!isScan || !e.target.open) return;
+  const box = document.getElementById("scanInCard");
+  if (!box || box.dataset.loaded) return;
+  const repo = REPO.name || (STATE.project || {}).repo || "";
+  try {
+    const a = await (await fetch("/api/scan?repo=" + encodeURIComponent(repo))).json();
+    if (!a.map) { box.textContent = a.note || "ingen karta sparad"; return; }
+    box.classList.remove("meta");
+    box.innerHTML = scanHtml(a.map);
+    box.dataset.loaded = "1";
+  } catch (err) {
+    box.textContent = "kunde inte läsa kartan: " + err.message;
+  }
+}, true);
 
 // Tidsstämpeln på kartan: den ändras när en scanning skrivit klart, och det är
 // kvittot -- inte en gissning om hur lång tid en scanning tar.
