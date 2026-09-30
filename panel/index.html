@@ -123,6 +123,15 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   h3 .meta { white-space: normal; }
   .facts .f .l { font-size: 10px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
   .facts .f .v { font-size: 13px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; }
+  /* Kartan i repodetaljen: rutan under kopplingen. Luckorna ligger överst -- det är
+     dem man tittar efter -- och listorna är täta, för de är långa. */
+  .scanbox { margin-top: 16px; border: 1px solid var(--line); border-radius: 10px;
+    padding: 11px 12px; background: var(--panel); }
+  .scanbox summary { cursor: pointer; margin-top: 7px; color: var(--muted); }
+  ul.tight { margin: 5px 0 0; padding-left: 18px; }
+  ul.tight li { margin: 2px 0; }
+  table.mini { margin-top: 5px; border-collapse: collapse; width: 100%; font-size: 12px; }
+  table.mini td { padding: 3px 8px 3px 0; vertical-align: top; border-top: 1px solid var(--line); }
   .linkform { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 7px 10px; align-items: center; }
   .linkform label { font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
   .linkform input { background: var(--panel); color: var(--text); border: 1px solid var(--line-2);
@@ -367,6 +376,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
     <div class="crumbs" id="crumbs"></div>
     <span class="grow"></span>
     <div class="seg" id="seg"></div>
+    <select class="inp" id="itemProject" title="vilket Jira-projekt uppgifterna kommer från"></select>
     <div class="filters" id="filters"></div>
     <input type="search" id="filter" placeholder="filtrera">
     <button class="ghost" id="theme" title="Ljust eller mörkt tema" aria-label="Ljust eller mörkt tema">☀</button>
@@ -502,7 +512,7 @@ const RANK = { highest: 0, high: 1, medium: 2, low: 3 };
 // pool = vilken hög tabellen visar. "backlog" är ärendena utan aktiv sprint -- de
 // ligger inte på tavlan, och Backlog-raden i sidofältet ledde förut till tavlan
 // eftersom den hade samma data-v som den. Samma tabell, bara en annan hög.
-const F = { scope: "all", prio: new Set(), pool: "" };
+const F = { scope: "all", prio: new Set(), pool: "", project: "" };   // project "" = alla
 
 /* ---------------------------------------------------------------- bitar --- */
 const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -559,9 +569,16 @@ const backlog = () => (board() || {}).backlog || [];
 // The board endpoint keeps the settled work and the backlog keeps the live work
 // (no active sprint). Same keys never appear in both -- measured 0 of 93+38 -- so
 // the board is shown the way the flow sees it.
+// Högen Uppgifter arbetar med. Projektet kommer ur väljaren -- man kan ha flera
+// Jira-kopplingar samtidigt -- och utan val är det standardtavlan, som förut.
+function pickedBoard() {
+  if (!F.project) return board();
+  return (((STATE || {}).jira || {}).boards || []).find(b => b && b.projectKey === F.project) || board();
+}
 function boardItems() {
+  const b = pickedBoard() || {};
   const seen = new Set();
-  return issues().concat(backlog()).filter(i => !seen.has(i.key) && seen.add(i.key));
+  return (b.issues || []).concat(b.backlog || []).filter(i => !seen.has(i.key) && seen.add(i.key));
 }
 const openItems = () => boardItems().filter(i => i.statusCategory !== "done");
 // GitHub's open work shaped as work items, so one table can hold both sources.
@@ -608,6 +625,20 @@ function priorities() {
     if (name && !seen.has(name)) seen.set(name, RANK[name.toLowerCase()] ?? 9);
   });
   return [...seen.keys()].sort((a, c) => seen.get(a) - seen.get(c));
+}
+
+// Projektväljaren: de projekt som faktiskt har en Jira-koppling, plus "alla". Ett
+// projekt utan koppling kan inte väljas -- då vore listan en påminnelse, inte ett val.
+function renderItemProject() {
+  const sel = document.getElementById("itemProject");
+  const linked = [...new Set(links().map(l => l.project).filter(Boolean))];
+  const selected = linked.includes(F.project) ? F.project : "";
+  sel.innerHTML = linked.length > 1
+    ? `<option value="">alla projekt</option>` +
+      linked.map(k => `<option value="${esc(k)}" ${k === selected ? "selected" : ""}>${esc(k)}</option>`).join("")
+    : linked.map(k => `<option value="${esc(k)}" selected>${esc(k)}</option>`).join("") ||
+      `<option value="">inget projekt kopplat</option>`;
+  sel.disabled = linked.length < 2;
 }
 
 function renderFilters() {
@@ -880,12 +911,12 @@ function renderFlow() {
     flowSel = (usable.find(f => f.active) || usable[0] || flows[0]).file;
   }
   const flow = flows.find(f => f.file === flowSel) || flows[0];
-  // Ett flöde per chip: läse-flödet går på klocka, skriv-flödet trycks på -- active
-  // kommer ur filen, så det som går av sig självt syns utan att någon skriver det.
-  chips.innerHTML = flows.map(f =>
-    `<button data-flow="${esc(f.file)}" class="${f.file === flow.file ? "on" : ""}" ` +
-    `title="${esc(f.file)}">${f.active ? "◷ " : ""}${esc(f.name || f.file)} ` +
-    `<span class="meta">${(f.nodes || []).length} ${TEXT.flowNodes}</span></button>`).join("");
+  // En lista i stället för en rad knappar: automationerna blir fler än tre, och en
+  // rad knappar går inte att läsa då. ◷ = den går av sig själv (ur n8n:s svar).
+  chips.innerHTML = `<select class="inp" id="flowPickSel" title="${esc(flow.file)}">` +
+    flows.map(f => `<option value="${esc(f.file)}" ${f.file === flow.file ? "selected" : ""}>` +
+      `${f.active ? "◷ " : ""}${esc(f.name || f.file)} — ${(f.nodes || []).length} ${TEXT.flowNodes}` +
+      `${f.source === "n8n" ? "" : " (ur filen)"}</option>`).join("") + `</select>`;
   link.href = `${location.protocol}//${location.hostname}:5678` +
     (flow.id ? `/workflow/${flow.id}` : "/home/workflows");
   link.hidden = false;
@@ -1050,7 +1081,9 @@ function renderBoard() {
   if (!b) { document.getElementById("cols").innerHTML = `<div class="empty err">${esc(STATE.jira.error || "ingen tavla")}</div>`; return; }
   document.getElementById("sprintNote").textContent = b.sprint ? "aktiv sprint: " + b.sprint.name : TEXT.noSprint;
   const byStatus = {};
-  boardItems().forEach(i => (byStatus[i.statusId] = byStatus[i.statusId] || []).push(i));
+  // Tavlan ritar sina egna ärenden: kolumnerna kommer ur tavlan, så ärendena får
+  // inte komma ur projektväljaren (då kunde ett annat projekts rader hamna här).
+  (b.issues || []).concat(b.backlog || []).forEach(i => (byStatus[i.statusId] = byStatus[i.statusId] || []).push(i));
   // Keep what Alex has folded open or shut: read it off the DOM before it is replaced.
   const wasOpen = new Set([...document.querySelectorAll(".bcol[open]")].map(d => d.dataset.id));
   const first = !document.querySelector(".bcol");
@@ -1178,6 +1211,7 @@ function renderRepoDetail() {
       (d.notes && d.notes.length ? `<div class="meta" style="margin-top:10px">! ${esc(d.notes.join(" · "))}</div>` : "");
   }
   renderRepoLink();
+  scanLoad();                      // kartan hör till repot, och repot är just bytt
 }
 
 function renderRepoLink() {
@@ -1217,7 +1251,94 @@ function renderRepoLink() {
       <span class="meta ${REPO.bad ? "err" : ""}">${esc(REPO.note || "")}</span>
     </div>
     <div class="meta" style="margin-top:9px">Underlag du laddar upp i Importera utgår från kopplingen:
-      projektet, ärendet du jobbar mot, och den lokala kopian om den finns.</div>`;
+      projektet, ärendet du jobbar mot, och den lokala kopian om den finns.</div>
+    <div class="scanbox">
+      <div class="meta">kartan över projektet</div>
+      <div class="meta" style="margin-top:5px">En scanning läser hela Jira-projektet mot repots kod
+        och visar vilka filer varje ärende rör — och var ingen uppgift finns. Det är där
+        ändringar kan behövas.</div>
+      <div class="linkbar" style="margin-top:9px">
+        <button class="chip" data-act="scan-run"${project ? "" : " disabled"}>scanna hela projektet</button>
+        <span class="grow"></span>
+        <span class="meta" id="scanNote"></span>
+      </div>
+      <div id="scanBody" class="meta" style="margin-top:9px">hämtar kartan …</div>
+    </div>`;
+}
+
+// Kartan: sammanfattningen, de två luckorna (där jobb saknas och där kod saknas),
+// och ärende för ärende. Luckorna först -- det är dem man tittar efter.
+function scanHtml(m) {
+  const files = (list) => (list || []).map(f => `<li class="mono">${esc(f)}</li>`).join("") ||
+    `<li class="meta">inga</li>`;
+  const missing = (m.missing || []).map(e =>
+    `<li><b>${esc(e.key)}</b> ${esc(e.summary || "")} <span class="meta">(${esc(e.pool || "")})</span></li>`
+  ).join("") || `<li class="meta">inga — alla ärenden pekar på något</li>`;
+  const rows = (m.map || []).map(e =>
+    `<tr><td><b>${esc(e.key)}</b></td><td>${esc(e.summary || "")}</td>` +
+    `<td>${(e.files || []).map(f => `<span class="mono">${esc(f)}</span>`).join("<br>") || "—"}</td></tr>`
+  ).join("");
+  return `<div>${m.issues} ärenden mot ${m.files} filer — <b>${m.mapped}</b> pekar på kod, ` +
+    `<b>${m.unmapped}</b> gör det inte. ${m.silentCount} filer nämns av ingen uppgift.</div>
+    <details${(m.missing || []).length ? " open" : ""}><summary>där jobbet är oklart (${(m.missing || []).length})</summary>
+      <ul class="tight">${missing}</ul></details>
+    <details><summary>kod utan uppgift (${m.silentCount})</summary>
+      <ul class="tight">${files(m.silent)}</ul></details>
+    <details><summary>ärende för ärende (${(m.map || []).length})</summary>
+      <table class="mini"><tbody>${rows}</tbody></table></details>`;
+}
+
+// Kartan läses ur panelens eget svar (servern läser filen scannen skrev), så vyn
+// väntar aldrig på Jira. Scannar n8n på klocka syns det när filen är nyare.
+async function scanLoad() {
+  const box = document.getElementById("scanBody");
+  if (!box) return;
+  const note = document.getElementById("scanNote");
+  try {
+    const r = await fetch("/api/scan?repo=" + encodeURIComponent(REPO.name || ""));
+    const a = await r.json();
+    if (a.running) { box.textContent = "scannar …"; if (note) note.textContent = ""; return; }
+    if (!a.map) { box.textContent = a.note || "ingen karta än"; if (note) note.textContent = ""; return; }
+    box.classList.remove("meta");
+    box.innerHTML = scanHtml(a.map);
+    if (note) note.textContent = "körd " + (a.map.at || "").replace("T", " ");
+  } catch (e) {
+    box.textContent = "kunde inte läsa kartan: " + e.message;
+  }
+}
+
+// Tidsstämpeln på kartan: den ändras när en scanning skrivit klart, och det är
+// kvittot -- inte en gissning om hur lång tid en scanning tar.
+async function mapStamp() {
+  try {
+    const a = await (await fetch("/api/scan?repo=" + encodeURIComponent(REPO.name || ""))).json();
+    return (a.map || {}).at || "";
+  } catch (e) {
+    return "";
+  }
+}
+
+async function scanRun(button) {
+  const note = document.getElementById("scanNote");
+  button.disabled = true;
+  if (note) note.textContent = "startar …";
+  try {
+    const before = await mapStamp();
+    const r = await fetch("/api/scan", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repo: REPO.name }) });
+    const a = await r.json();
+    if (!a.ok) throw new Error(a.error || "svaret gick inte att läsa");
+    if (note) note.textContent = a.running ? "en scanning pågår redan" : "scannar hela projektet …";
+    const until = Date.now() + 180000;
+    while (Date.now() < until && (await mapStamp()) === before) {
+      await new Promise(done => setTimeout(done, 4000));
+    }
+  } catch (e) {
+    if (note) note.textContent = "kunde inte starta: " + e.message;
+  } finally {
+    button.disabled = false;
+    await scanLoad();
+  }
 }
 
 async function linkSave(rm) {
@@ -1426,12 +1547,14 @@ async function impApply() {
 
 function render() {
   if (!STATE) return;
-  renderRail(); renderSide(); renderCrumbs(); renderFilters();
+  renderRail(); renderSide(); renderCrumbs(); renderFilters(); renderItemProject();
   const filters = document.getElementById("filters");
   // Repon har sin egen sökning i sidofältet; en filterrad som inte filtrerar något
   // där är bara i vägen.
   filters.hidden = ["overview", "import", "automatik", "repos"].includes(view);
   document.getElementById("filter").hidden = view !== "items";
+  // Projektväljaren hör till Uppgifter; i andra vyer vore den en död ratt.
+  document.getElementById("itemProject").hidden = view !== "items";
   if (view === "overview") { renderStats(); renderAutomation(); renderFlowPick(); renderJournal(); renderRecent(); }
   if (view === "board") renderBoard();
   if (view === "items") renderItems();
@@ -1521,6 +1644,7 @@ function readHash() {
   F.scope = TEXT.scope[p.get("scope")] ? p.get("scope") : "all";
   F.prio = new Set((p.get("prio") || "").split(",").filter(Boolean));
   F.pool = p.get("pool") === "backlog" ? "backlog" : "";
+  F.project = (p.get("project") || "").toUpperCase();
   return TEXT.views[v] ? v : "board";
 }
 function writeHash() {
@@ -1528,6 +1652,7 @@ function writeHash() {
   if (F.scope !== "all") q.set("scope", F.scope);
   if (F.prio.size) q.set("prio", [...F.prio].join(","));
   if (F.pool) q.set("pool", F.pool);
+  if (F.project) q.set("project", F.project);
   location.hash = view + (q.toString() ? "?" + q : "");
 }
 function show(v) {
@@ -1542,6 +1667,7 @@ document.addEventListener("click", e => {
   if (e.target.closest('[data-act="imp-apply"]')) return impApply();
   if (e.target.closest('[data-act="link-save"]')) return linkSave(false);
   if (e.target.closest('[data-act="link-rm"]')) return linkSave(true);
+  if (e.target.closest('[data-act="scan-run"]')) return scanRun(e.target.closest('[data-act="scan-run"]'));
   if (e.target.closest("[data-flow]")) { flowSel = e.target.closest("[data-flow]").dataset.flow; return renderFlow(); }
   // Nollställningen kastar bara det man själv flyttat och panorerat: flödet i filen rörs inte.
   if (e.target.closest('[data-act="flow-reset"]')) {
@@ -1573,6 +1699,17 @@ document.addEventListener("click", e => {
   e.preventDefault(); F.pool = t.dataset.pool || ""; show(t.dataset.v);
 });
 document.getElementById("refresh").addEventListener("click", () => load(true));
+// Projektvalet i Uppgifter: vilket Jira-projekt tabellen visar (man kan ha flera
+// kopplingar samtidigt). Valet följer med i adressen, som de andra filtren.
+document.getElementById("itemProject").addEventListener("change", e => {
+  F.project = (e.target.value || "").toUpperCase();
+  writeHash();
+  render();
+});
+// Automatik: väljaren i stället för en rad knappar.
+document.addEventListener("change", e => {
+  if (e.target && e.target.id === "flowPickSel") { flowSel = e.target.value; renderFlow(); }
+});
 
 // Tema: växlaren sätter data-theme; utan val följer panelen skrivbordet
 // (color-scheme: light dark i :root). Valet sparas och läses igen i <head>,

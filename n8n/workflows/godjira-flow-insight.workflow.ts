@@ -2,7 +2,7 @@ import { workflow, node, links } from '@n8n-as-code/transformer';
 
 // <workflow-map>
 // Workflow : GodJIRA — the flow: insight
-// Nodes   : 9  |  Connections: 7
+// Nodes   : 10  |  Connections: 8
 //
 // NODE INDEX
 // ──────────────────────────────────────────────────────────────────
@@ -13,7 +13,8 @@ import { workflow, node, links } from '@n8n-as-code/transformer';
 // Config                             set
 // Step1Current                       executeCommand
 // Step2ThePickDryRun                 executeCommand
-// Step3TheJournal                    executeCommand
+// Step3TheJournal                   executeCommand
+// Step4TheScan                      executeCommand
 // Summary                            code
 // ReportToThePanel                   httpRequest                [onError→regular]
 //
@@ -24,8 +25,9 @@ import { workflow, node, links } from '@n8n-as-code/transformer';
 //      → Step1Current
 //        → Step2ThePickDryRun
 //          → Step3TheJournal
-//            → Summary
-//              → ReportToThePanel
+//            → Step4TheScan
+//              → Summary
+//                → ReportToThePanel
 // ManualTrigger
 //    → Config (↩ loop)
 // </workflow-map>
@@ -153,6 +155,20 @@ The commands carry no project key: the CLI takes it from the repo link, so this 
         command: "={{ $('Config').first().json.repo }}/n8n/bin/flow-call.sh bridge journal 20",
     };
 
+    // Kartan över projektet: samma kommando som knappen i panelen kör, och samma
+    // karta. Den skriver bara filen scannen äger (inget på tavlan), så den hör hemma
+    // i läse-flödet -- och den är färsk varje timme utan att någon trycker.
+    @node({
+        id: '5e3a71c8-2b64-4d19-8f77-9a0c1e5b7d32',
+        name: 'Step 4 - the scan',
+        type: 'n8n-nodes-base.executeCommand',
+        version: 1,
+        position: [496, 464],
+    })
+    Step4TheScan = {
+        command: "={{ $('Config').first().json.repo }}/n8n/bin/flow-call.sh flow scan --json",
+    };
+
     @node({
         id: '10bbc75d-3141-4e69-bf95-f2b0a5534aa1',
         name: 'Summary',
@@ -168,6 +184,8 @@ const cfg = $('Config').first().json;
 const cur = read($('Step 1 - current').first().json);
 const pick = read($('Step 2 - the pick (dry run)').first().json);
 const journal = read($('Step 3 - the journal').first().json);
+const scan = read($('Step 4 - the scan').first().json);
+const theMap = scan.payload || null;
 
 const p = pick.payload || {};
 const candidate = p.wouldTake || p.proposal || null;
@@ -190,7 +208,9 @@ const log = ((journal.payload || {}).log || []).slice(0, 10)
 return [{ json: { checkedAt: new Date().toISOString(), project: p.project || '',
   projectSource: p.projectSource || '', runner: 'n8n', workflowId: $workflow.id,
   ok: !failed, note: note, amIOn: firstLine(cur.raw) || null, theFlowsPick: candidate,
-  runnersUp: runnersUp, theFlowsOwnJournal: log } }];`,
+  runnersUp: runnersUp, theFlowsOwnJournal: log,
+  theMap: theMap ? { issues: theMap.issues, files: theMap.files, mapped: theMap.mapped,
+    missing: theMap.unmapped, silentFiles: theMap.silentCount, at: theMap.at } : null } }];`,
     };
 
     @node({
@@ -228,7 +248,8 @@ return [{ json: { checkedAt: new Date().toISOString(), project: p.project || '',
         this.Config.out(0).to(this.Step1Current.in(0));
         this.Step1Current.out(0).to(this.Step2ThePickDryRun.in(0));
         this.Step2ThePickDryRun.out(0).to(this.Step3TheJournal.in(0));
-        this.Step3TheJournal.out(0).to(this.Summary.in(0));
+        this.Step3TheJournal.out(0).to(this.Step4TheScan.in(0));
+        this.Step4TheScan.out(0).to(this.Summary.in(0));
         this.Summary.out(0).to(this.ReportToThePanel.in(0));
     }
 }

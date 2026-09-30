@@ -418,6 +418,83 @@ def code_words(text: str) -> set:
             if w not in CODE_STOP}
 
 
+SCAN_FILE = Path.home() / ".config/jira-flow"
+
+
+def scan_map(bridge, project: str, root: Path, limit: int = 250) -> dict:
+    """Kartan: vilka filer varje ärende i projektet pekar på.
+
+    Frågan den svarar på är Alex egen: var behöver man göra ändringar? Två listor är
+    svaret -- de ärenden som inte pekar på någon fil (oklart var jobbet skall göras)
+    och de filer som ingen ärendetext nämner (kod utan spår i tavlan). Resten är
+    kopplingarna, ärende för ärende.
+
+    ponytail: ett git grep per ärende, inget typsnitt läses -- O(ärenden) anrop. Ett
+    par hundra ärenden tar några sekunder; en delad index lönar sig först i den
+    storleken projektet sällan har.
+    """
+    board = bridge.board(project)
+    rows = [(r, "aktiv") for r in (board.get("issues") or [])]
+    rows += [(r, "backlog") for r in (board.get("backlog") or [])]
+    listed = [line.strip() for line in git_out(root, "ls-files").splitlines() if line.strip()]
+    if not listed:
+        # Ett projekt behöver inte vara ett git-repo: skolans inlämning är en zip med
+        # källkod i. Då läses katalogen i stället -- samma svar, utan git.
+        skip = {".git", ".idea", "node_modules", "target", "build", "dist", "out", ".gradle"}
+        listed = sorted(str(p.relative_to(root)) for p in root.rglob("*")
+                        if p.is_file() and not any(part in skip for part in p.parts))[:4000]
+    # Ord som står i nästan varje sökväg pekar inte ut något: repots eget namn ligger
+    # i varenda fil (mätt: gav 125 av 131 "mappade" -- allt matchade allt). Ett ord som
+    # finns i mer än var fjärde fil säger ingenting om vilken fil ärendet gäller.
+    listed_low = [(p, p.lower()) for p in listed]
+    all_words = set()
+    for row, _pool in rows[:limit]:
+        all_words |= code_words(f"{row.get('summary') or ''} {row.get('description') or ''}")
+    common = {w for w in all_words
+              if sum(1 for _p, low in listed_low if w in low) > max(3, len(listed_low) // 4)}
+    mentioned = set()
+    mapped, unmapped = [], []
+    for row, pool in rows[:limit]:
+        words = [w for w in sorted(code_words(
+            f"{row.get('summary') or ''} {row.get('description') or ''}")) if w not in common][:12]
+        hits = []
+        if words:
+            pairs = [piece for word in words for piece in ("-e", word)]
+            hits = [line.strip() for line in
+                    git_out(root, "grep", "-l", "-i", "-F", *pairs, timeout=120).splitlines()
+                    if line.strip()]
+        # git grep svarar "något av orden", och ett enda löst ord ger träff i nästan
+        # allt (mätt: 130 av 131 ärenden "mappade", README som svar på "Boka
+        # avstämning"). Bara två sorters svar räknas som en koppling:
+        #   - ordet står i filens namn (det är vad filen handlar om), eller
+        #   - minst två av ärendets ord står i filens text.
+        # Ett ensamt ord i texten är brus och lämnas till "oklart var"-listan.
+        named, weak = [], []
+        for hit in hits:
+            low = hit.lower()
+            if any(w in low for w in words):
+                named.append(hit)
+                continue
+            try:
+                text = (root / hit).read_text(errors="replace").lower()
+            except (OSError, UnicodeError):
+                continue
+            if sum(1 for w in words if w in text) >= 2:
+                weak.append(hit)
+        top = (named + weak)[:3]
+        mentioned.update(top)
+        entry = {"key": row.get("key"), "summary": row.get("summary"),
+                 "status": row.get("statusName") or "", "pool": pool, "files": top}
+        (mapped if top else unmapped).append(entry)
+    silent = [p for p in listed if p not in mentioned]
+    return {"project": project.upper(), "root": str(root), "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "files": len(listed), "issues": len(rows[:limit]),
+            "mapped": len(mapped), "unmapped": len(unmapped),
+            "map": mapped, "missing": [{"key": e["key"], "summary": e["summary"], "pool": e["pool"]}
+                                       for e in unmapped],
+            "silent": silent[:60], "silentCount": len(silent)}
+
+
 def code_context(root: Path, words) -> tuple:
     """Filkartan ur git, kontrakten per fil, och hela texten för de närmaste filerna.
 
@@ -534,8 +611,14 @@ def local_clone(name: str) -> str:
             continue
         seen = {}
         # Roten själv först: en kopia behöver inte heta samma som repot (hubben ligger
-        # i sin plugin-katalog, custom.jira). Sedan kataloger som *heter* något av namnet.
-        for hit in [root] + list(root.glob(short)) + list(root.glob("*" + short)) + list(root.glob(short + "*")):
+        # i sin plugin-katalog, custom.jira). Sedan kataloger som *heter* något av
+        # namnet -- jämfört utan skiftläge, för katalogen heter AutoCore medan repot
+        # heter autocore, och glob är skiftlägeskänsligt (mätt: gav ingen kopia alls).
+        try:
+            near = [p for p in root.iterdir() if short in p.name.lower()]
+        except OSError:
+            near = []
+        for hit in [root] + near:
             seen[str(hit)] = hit
         for hit in seen.values():
             if not (hit / ".git").is_dir():
@@ -1517,6 +1600,51 @@ def cmd_link(args) -> int:
     return 0
 
 
+def cmd_scan(args) -> int:
+    """Hela projektet mot repots kod: en karta över kopplingarna, och luckorna.
+
+    Skrivs till `~/.config/jira-flow/scan-<PROJEKT>.json` (0600) så att panelen kan
+    visa den utan att själv gå mot Jira -- samma arbetsdelning som länken.
+    """
+    started = time.time()
+    project, source = link_project(args)
+    root = plan_repo_dir(args)
+    if not root:
+        # Utan namn: den enda länken är den man menar. Samma regel som projektnyckeln.
+        linked = [dict(value or {}, repo=key) for key, value in load_links().items()
+                  if (value or {}).get("project")]
+        if len(linked) == 1:
+            root = local_clone(linked[0]["repo"]) or ""
+    if not root or not Path(root).is_dir():
+        say(args, {}, [])
+        print("no local copy of the repo to scan — link it, or give --repo <dir>")
+        return 1
+    try:
+        result = scan_map(client(), project, Path(root), limit=int(getattr(args, "limit", 250)))
+    except Exception as exc:      # noqa: BLE001 -- ett svar, inte en stacktrace
+        print("scan failed: {}: {}".format(type(exc).__name__, exc))
+        return 2
+    result.update({"projectSource": source, "repo": repo_slug_of_dir(root) or root,
+                   "seconds": round(time.time() - started, 1)})
+    SCAN_FILE.mkdir(parents=True, exist_ok=True)
+    path = SCAN_FILE / "scan-{}.json".format(result["project"])
+    try:
+        path.write_text(json.dumps(result, ensure_ascii=False, indent=2))
+        os.chmod(path, 0o600)
+        result["savedTo"] = str(path)
+    except OSError as exc:
+        print("the map could not be written: {}: {}".format(type(exc).__name__, exc))
+        return 2
+    say(args, result, [
+        "{}: {} issues against {} files in {}s — {} point at code, {} do not.".format(
+            result["project"], result["issues"], result["files"], result["seconds"],
+            result["mapped"], result["unmapped"]),
+        "{} files are named by no issue. The map is at {}.".format(
+            result["silentCount"], path),
+    ])
+    return 0
+
+
 def cmd_repo(args) -> int:
     """Ett repo: vad det är, vad som är öppet, var kopian ligger, och Jira-länken.
 
@@ -2408,6 +2536,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_link.add_argument("--issue", default="", help="the issue you are working against (SCRUM-133)")
     p_link.add_argument("--note", default="", help="a line for the humans")
     p_link.add_argument("--json", action="store_true")
+    p_scan = sub.add_parser("scan", help="map the whole Jira project to the repo's code")
+    p_scan.add_argument("--repo-name", default="", help="the linked repo (default: the only link)")
+    p_scan.add_argument("--repo", default="", help="a directory instead of the local copy")
+    p_scan.add_argument("--project", default="", help="override the linked project key")
+    p_scan.add_argument("--limit", type=int, default=250, help="how many issues to map")
+    p_scan.add_argument("--json", action="store_true")
     p_repo = sub.add_parser("repo", help="one repo: what it is, what is open, and its link")
     p_repo.add_argument("name", nargs="?", help="owner/name, or a name")
     p_repo.add_argument("--json", action="store_true")
@@ -2455,6 +2589,8 @@ def main(argv) -> int:
         return cmd_link(args)
     if args.cmd == "repo":
         return cmd_repo(args)
+    if args.cmd == "scan":
+        return cmd_scan(args)
     # En plats för projektnyckeln: flaggan, annars länken, annars standarden. Nästa,
     # aktuellt och plan går alla genom den -- ingen av dem har en egen uppfattning.
     if args.cmd in ("next", "current") and not (args.project or "").strip():

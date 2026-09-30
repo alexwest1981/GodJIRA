@@ -372,6 +372,67 @@ def journal(limit: int = 20) -> dict:
 
 
 
+SCAN_DIR = Path.home() / ".config/jira-flow"
+_scan_running: dict = {}
+_scan_lock = threading.Lock()
+
+
+def scan_read(repo: str) -> dict:
+    """Kartan som scannen skrev, för det projekt repot är kopplat till.
+
+    Panelen läser filen i stället för att fråga Jira: samma arbetsdelning som länken,
+    och en scanning pågår i tio-tjugo sekunder utan att vyn står och väntar.
+    """
+    links = (links_state().get("links") or [])
+    hit = next((l for l in links if str((l or {}).get("repo") or "").lower() == repo.lower()), None)
+    if not hit:
+        hit = links[0] if len(links) == 1 else None
+    if not hit:
+        return {"ok": True, "map": None, "running": False,
+                "note": "no Jira link here, so there is no project to scan"}
+    project = str(hit.get("project") or "").upper()
+    path = SCAN_DIR / "scan-{}.json".format(project)
+    answer = {"ok": True, "project": project, "repo": hit.get("repo"),
+              "running": bool(_scan_running.get(repo or project)), "map": None}
+    try:
+        answer["map"] = json.loads(path.read_text())
+    except (OSError, ValueError):
+        answer["note"] = "no scan has been run for {} yet".format(project)
+    return answer
+
+
+def scan_start(payload: dict) -> tuple[int, dict]:
+    """Starta en scanning av hela projektet. Jobbet går i bakgrunden: en scanning tar
+    tio-tjugo sekunder, och en panel som står och väntar ser trasig ut.
+
+    ponytail: en scanning per repo i taget, och en ny nekas inom tre minuter. Räcker
+    för en användare; en kö behövs först om flera trycker samtidigt.
+    """
+    repo = str(payload.get("repo") or "").strip()
+    if repo and not re.fullmatch(r"[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)?", repo):
+        return 400, {"ok": False, "error": "repot såg inte ut som ett namn"}
+    key = repo or "standard"
+    with _scan_lock:
+        started = float(_scan_running.get(key) or 0)
+        if started and time.time() - started < 180:
+            return 200, {"ok": True, "running": True,
+                         "secondsAgo": round(time.time() - started)}
+        _scan_running[key] = time.time()
+
+    def work() -> None:
+        args = ["flow", "scan"]
+        if repo:
+            args += ["--repo-name", repo]
+        args += ["--json"]
+        try:
+            seam(*args, timeout=900)
+        finally:
+            _scan_running[key] = 0
+
+    threading.Thread(target=work, daemon=True).start()
+    return 200, {"ok": True, "started": True, "repo": repo or None}
+
+
 def links_state() -> dict:
     """Vilket repo som hör till vilket Jira-projekt. Registret bor i CLI:t."""
     env = seam("flow", "link", "--json", timeout=60)
@@ -591,6 +652,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/state":
             self._send(200, json.dumps(state(), ensure_ascii=False).encode(), "application/json; charset=utf-8")
             return
+        if path == "/api/scan":
+            query = parse_qs(urlparse(self.path).query)
+            self._json(200, scan_read((query.get("repo") or [""])[0]))
+            return
         if path == "/api/repo":
             query = parse_qs(urlparse(self.path).query)
             name = (query.get("name") or [""])[0]
@@ -612,7 +677,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802 -- http.server's own naming
         handler = {"/api/import": import_parse, "/api/import/apply": import_apply,
-                   "/api/link": link_set, "/api/automation": automation_report}.get(self.path.split("?")[0])
+                   "/api/link": link_set, "/api/automation": automation_report,
+                   "/api/scan": scan_start}.get(self.path.split("?")[0])
         if not handler:
             self._send(404, b"not found", "text/plain")
             return
