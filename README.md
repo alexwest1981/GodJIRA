@@ -146,6 +146,33 @@ the plugin folder, keeps the widget's place in the bar layout, and moves the Jir
 token from the old keyring name to `godjira` the first time the bridge looks for it
 — nothing to do by hand.
 
+## What it exposes, and to whom
+
+The panel listens on `127.0.0.1` unless you say otherwise, and every request passes two
+checks. Both exist because this is a local HTTP server that writes to Jira with your
+token, and a web page can talk to local servers:
+
+- **Host** — a page cannot reach the panel through a hostname that resolves to 127.0.0.1
+  (DNS rebinding). A plain IP address is allowed, which is what keeps a panel you bound
+  to your network working. `PANEL_HOST=<name>` allows one name of your own.
+- **Origin** — anything with a body must come from the panel's own origin. A form POST
+  needs no preflight, so without this a page you happen to visit could press the panel's
+  buttons from your browser.
+
+`PANEL_BIND=0.0.0.0` deliberately opens the panel to everyone who can reach that port —
+they can read it and press its buttons. The journal says so at startup, and the installer
+only writes that into the unit if you pass it. This is the one setting to think about.
+
+Where the data lives: the Jira and GitHub tokens are in your **session keyring**, never in
+a file, never in a log, and never sent to the browser — `/api/token` answers *whether* a
+token is there and where to make one, not the token itself. The panel's own state is
+`~/.config/jira-flow/` (config, links, scan results, mode 600), its log is
+`~/.local/state/jira-flow/actions.log`, and what it writes to Jira goes through the
+automation guard in `debug_automation.json`. Removing a credential:
+`secret-tool clear service godjira account <your email>`; removing everything the panel
+kept: delete `~/.config/jira-flow/` and `~/.local/state/jira-flow/`. Uninstalling the
+plugin leaves both alone, on purpose — the panel is the app, the plugin is a view of it.
+
 ## Quick start (mock)
 
 The plugin defaults to `mode: mock`. Toggle the window from the bar widget

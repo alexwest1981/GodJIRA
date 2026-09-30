@@ -37,7 +37,40 @@ SEAM = ROOT / "n8n" / "bin" / "flow-call.sh"
 UI = Path(__file__).resolve().parent / "index.html"
 LOGO = Path(__file__).resolve().parent.parent / "assets" / "godjira.svg"
 PORT = int(os.environ.get("PANEL_PORT", "8788"))
-BIND = os.environ.get("PANEL_BIND", "0.0.0.0")
+# Panelen visar din Jira-data med din nyckel i ryggen: den lyssnar på den egna maskinen
+# om ingen sagt något annat. PANEL_BIND=0.0.0.0 öppnar den i nätet, medvetet.
+BIND = os.environ.get("PANEL_BIND", "127.0.0.1")
+
+# Väktaren: bara den här maskinen får svar. Utan den kan en sida du råkar besöka skicka
+# en POST hit (webbläsaren gör det utan förvarning -- en så kallad simple request) och
+# till exempel skriva om adminlistan, eller läsa allt genom ett värdnamn som pekar på
+# 127.0.0.1. Panelen är ett lokalt verktyg.
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0"}
+IP4 = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
+
+
+def host_ok(value: str) -> bool:
+    """Sant om Host/Origin pekar på den här maskinen.
+
+    Ett *värdnamn* nekas -- det är precis så en rebinding-attack ser ut. En ren
+    IP-adress släpps igenom, så en panel som medvetet bundits till nätet fungerar
+    (en sida någon annanstans kan ändå inte sätta Host själv, och skrivningar har
+    dessutom ursprungskontrollen nedan). PANEL_HOST=<namn> tillåter ett eget namn.
+    """
+    text = (value or "").strip().lower()
+    if not text or text == "null":
+        return False
+    if "://" in text:                      # Origin skickar med sitt scheme
+        text = text.split("://", 1)[1]
+    text = text.split("/")[0]
+    if text.startswith("["):               # IPv6 skrivs [::1]:8788
+        text = text.split("]")[0] + "]"
+    else:
+        text = text.split(":")[0]
+    if text in LOCAL_HOSTS or IP4.match(text):
+        return True
+    extra = os.environ.get("PANEL_HOST", "").strip().lower()
+    return bool(extra) and text == extra
 TTL = int(os.environ.get("PANEL_TTL", "60"))
 PROJECT = os.environ.get("JIRA_FLOW_PROJECT", "SCRUM")
 # Automationens senaste ord. n8n skriver den, panelen visar den -- och den ligger i
@@ -1073,7 +1106,20 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass  # a tab that closed mid-answer is normal, not a crash
 
+    def _guard(self) -> bool:
+        """Före varje svar: rätt värd, och rätt ursprung på skrivningar."""
+        if not host_ok(self.headers.get("Host", "")):
+            self._send(403, b"forbidden: wrong host", "text/plain; charset=utf-8")
+            return False
+        origin = self.headers.get("Origin")
+        if origin and not host_ok(origin):
+            self._send(403, b"forbidden: cross-site request", "text/plain; charset=utf-8")
+            return False
+        return True
+
     def do_GET(self) -> None:  # noqa: N802 -- http.server's own naming
+        if not self._guard():
+            return
         path = self.path.split("?")[0]
         if path in ("/", "/index.html"):
             self._send(200, UI.read_bytes(), "text/html; charset=utf-8")
@@ -1125,6 +1171,8 @@ class Handler(BaseHTTPRequestHandler):
         self._send(code, json.dumps(payload, ensure_ascii=False).encode(), "application/json; charset=utf-8")
 
     def do_POST(self) -> None:  # noqa: N802 -- http.server's own naming
+        if not self._guard():
+            return
         handler = {"/api/import": import_parse, "/api/import/apply": import_apply,
                    "/api/link": link_set, "/api/automation": automation_report,
                    "/api/scan": scan_start, "/api/token": token_save,
@@ -1159,4 +1207,8 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     print("panel on http://{}:{}/ (cache {} s)".format(BIND, PORT, TTL), flush=True)
+    if BIND not in ("127.0.0.1", "::1", "localhost"):
+        print("GodJIRA listens on {}:{} -- anyone who can reach that port reads the panel "
+              "and can press its buttons. It is the same network your Jira data is on."
+              .format(BIND, PORT), flush=True)
     ThreadingHTTPServer((BIND, PORT), Handler).serve_forever()
