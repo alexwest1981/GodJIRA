@@ -1,12 +1,38 @@
 # GodJIRA
 
 <p align="center">
-  <img src="assets/godjira-jira-ide.jpg" alt="Jira och IDE:erna, sammanbundna av GodJIRA" width="760">
+  <img src="docs/screenshots/overview.png" alt="GodJIRA: the overview — Jira, GitHub and the flow in one window" width="900">
 </p>
 
-A Jira client inside your Omarchy shell. Board with drag-and-drop, backlog and
-summary views in one floating window, kept fresh by a periodic refresh. Add and
-delete issues when you have the right permissions.
+A Jira client inside your Omarchy shell: board with drag-and-drop, backlog,
+timeline, reports and the code map, with GitHub and the n8n flow beside it — one
+floating window, nine languages. Add and delete issues when you have the right
+permissions.
+
+**Look at it before you connect anything.** Started without a Jira or GitHub
+account, the app runs on its own sample data — the whole thing can be tried out
+first, and nothing is written to Jira:
+
+```
+git clone https://github.com/alexwest1981/GodJIRA.git ~/Projects/godjira
+cd ~/Projects/godjira && python3 panel/server.py     # open http://127.0.0.1:8788
+```
+
+The overview, the board, the issue list, the reports and the flow drawing are all
+live on the sample data; the account card says *mock*, and **Kom igång** is where a
+real Jira key and `gh auth login` go when you are ready. Nothing to undo: no key,
+no keyring entry, no file in the repo.
+
+<p align="center">
+  <img src="docs/screenshots/board.png" alt="The board: kanban columns from the sprint" width="440">
+  <img src="docs/screenshots/flow.png" alt="The flow: the n8n workflow drawn from its own file" width="440">
+</p>
+<p align="center">
+  <img src="docs/screenshots/reports.png" alt="Reports: throughput and where the work stands" width="440">
+  <img src="docs/screenshots/tasks.png" alt="Every issue, filtered and searchable" width="440">
+</p>
+
+*Screenshots are the built-in sample data, not a real account.*
 
 - **Board view** – kanban columns per status, scoped to a sprint the way
   Jira's board is. The picker under the header switches between *Aktiv* (the

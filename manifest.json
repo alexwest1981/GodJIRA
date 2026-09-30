@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "GodJIRA.plugin",
   "name": "Jira",
-  "version": "0.2.0",
+  "version": "0.9.0",
   "author": "Alex Weström",
   "license": "MIT",
   "description": "A Jira client inside your Omarchy shell: board, backlog, timeline, reports, development and activity, with nine languages.",

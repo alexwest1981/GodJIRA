@@ -216,7 +216,59 @@ def setup_read() -> dict:
             "ready": bool(jira.get("present") and jira.get("connected") and hub.get("ok"))}
 
 
+def demo_mode() -> bool:
+    """Sant när bryggan kör mot sin egen testdata, alltså när inget konto är kopplat.
+
+    Panelen är då en provkörning: Jira-delen kommer ur bryggans mock, och GitHub och
+    flödet får exempelsvar av sina egna funktioner nedan. Det är poängen -- man skall
+    kunna se hela appen innan man kopplar något. Anropet cachas: det är en process.
+    """
+    try:
+        return (seam("bridge", "status", timeout=60).get("payload") or {}).get("mode") == "mock"
+    except Exception:  # ingen brygga alls: då finns inget provläge att tala om
+        return False
+
+
+def demo() -> bool:
+    return bool(cached("demo", demo_mode, ttl=60))
+
+
+DEMO_LOGIN = "demo-user"
+DEMO_REPOS = [
+    {"name": "web-platform", "description": "Storefront and account pages", "visibility": "PUBLIC",
+     "isPrivate": False, "updatedAt": "2026-09-29T14:20:00Z", "primaryLanguage": {"name": "TypeScript"},
+     "stargazerCount": 128, "url": "https://github.com/demo-user/web-platform"},
+    {"name": "mobile-app", "description": "iOS and Android client", "visibility": "PUBLIC",
+     "isPrivate": False, "updatedAt": "2026-09-28T08:05:00Z", "primaryLanguage": {"name": "Kotlin"},
+     "stargazerCount": 54, "url": "https://github.com/demo-user/mobile-app"},
+    {"name": "design-tokens", "description": "The colours, spacing and type scale", "visibility": "PUBLIC",
+     "isPrivate": False, "updatedAt": "2026-09-26T19:41:00Z", "primaryLanguage": {"name": "CSS"},
+     "stargazerCount": 12, "url": "https://github.com/demo-user/design-tokens"},
+    {"name": "internal-tools", "description": "Scripts the team runs by hand", "visibility": "PRIVATE",
+     "isPrivate": True, "updatedAt": "2026-09-25T07:12:00Z", "primaryLanguage": {"name": "Python"},
+     "stargazerCount": 0, "url": "https://github.com/demo-user/internal-tools"},
+]
+DEMO_PRS = [
+    {"number": 212, "title": "Checkout: keep the cart when the session expires", "isDraft": False,
+     "updatedAt": "2026-09-29T16:02:00Z", "url": "https://github.com/demo-user/web-platform/pull/212",
+     "repository": {"name": "web-platform", "nameWithOwner": "demo-user/web-platform"}},
+    {"number": 87, "title": "Bump the payment SDK", "isDraft": True,
+     "updatedAt": "2026-09-28T11:30:00Z", "url": "https://github.com/demo-user/mobile-app/pull/87",
+     "repository": {"name": "mobile-app", "nameWithOwner": "demo-user/mobile-app"}},
+]
+DEMO_GITHUB_ISSUES = [
+    {"number": 419, "title": "Search returns stale results after a rename",
+     "updatedAt": "2026-09-27T09:15:00Z", "url": "https://github.com/demo-user/web-platform/issues/419",
+     "repository": {"name": "web-platform", "nameWithOwner": "demo-user/web-platform"}},
+]
+
+
 def github_state() -> dict:
+    if demo():
+        # Provläget: gh får inte ens köra. Den skulle svara med användarens *egna* repos
+        # och inloggningsnamn, och en skärmdump av provläget skall inte bära någons konto.
+        return {"ok": True, "error": None, "login": DEMO_LOGIN, "repos": DEMO_REPOS,
+                "pullRequests": DEMO_PRS, "issues": DEMO_GITHUB_ISSUES, "demo": True}
     # Fyra gh-anrop i rad tog ~4 s av panelens tio. De frågar olika saker, så de får
     # gå samtidigt; "@me" betyder samma som inloggningsnamnet (mätt: samma svar).
     with ThreadPoolExecutor(max_workers=4) as pool:
@@ -391,9 +443,26 @@ def project_of_the_link(flow: dict) -> dict:
     env = seam("flow", "link", "--json", timeout=60)
     links = [l for l in (((env.get("payload") or {}).get("links")) or []) if (l or {}).get("project")]
     one = links[0] if len(links) == 1 else {}
-    return {"key": (flow or {}).get("project") or PROJECT,
-            "source": (flow or {}).get("projectSource") or "standarden",
-            "repo": one.get("repo") or "", "issue": one.get("issue") or ""}
+    if (flow or {}).get("project"):
+        return {"key": flow["project"], "source": flow.get("projectSource") or "standarden",
+                "repo": one.get("repo") or "", "issue": one.get("issue") or ""}
+    # Ingen länk att peka på: ta det första projektet anslutningen ser. I provläget är det
+    # mockens WEB, för en ny anslutning hens eget första projekt -- annars möttes en färsk
+    # installation av en tom tavla och en projektnyckel hon aldrig hört talas om.
+    return {"key": (first_project_of_connection() or PROJECT), "source": "anslutningens första",
+            "repo": "", "issue": ""}
+
+
+def first_project_of_connection() -> str:
+    """Nyckeln till det första projektet anslutningen ser, annars tom sträng."""
+    try:
+        snapshot = (seam("bridge", "snapshot", timeout=90).get("payload") or {})
+    except Exception:  # ingen anslutning alls: standarden får gälla
+        return ""
+    for project in snapshot.get("projects") or []:
+        if (project or {}).get("key"):
+            return str(project["key"])
+    return ""
 
 
 def automation_state() -> dict:
@@ -463,6 +532,15 @@ def automation_report(payload: dict) -> tuple[int, dict]:
 
 
 def flow_state() -> dict:
+    if demo():
+        # Flödets nästa kräver en riktig anslutning, så i provläget svarar panelen själv
+        # med ett exempel. Annars stod det ett tokenfel i kortet i stället för en uppgift.
+        return {"ok": True, "exitCode": 0, "demo": True, "error": None,
+                "project": "WEB", "projectSource": "provläget",
+                "pick": {"key": "WEB-42", "summary": "Fix flaky CI for the e2e suite",
+                         "priority": "Highest", "statusName": "In Progress"},
+                "someoneElses": {"key": "MOB-24", "summary": "Crash on startup with empty account"},
+                "runnersUp": [{"key": "WEB-44", "summary": "Migrate build pipeline to the new runner"}]}
     # Utan --project: CLI:t tar projektet ur länken (flaggan vinner om den finns).
     env = seam("flow", "next", "--dry-run", "--json")
     payload = env.get("payload") or {}
@@ -540,6 +618,9 @@ def token_read() -> dict:
               "expires": meta.get("expires") or "", "setAt": meta.get("at") or "",
               "daysLeft": left, "warnDays": WARN_DAYS, "tokenPage": TOKEN_PAGE,
               "error": data.get("error") or ""}
+    if demo():
+        answer.update(alert="", note="provläge: exempeldata, inget konto kopplat", demo=True)
+        return answer
     if not answer["present"]:
         answer["alert"], answer["note"] = "missing", "ingen nyckel sparad på den här maskinen"
     elif data.get("error") and not answer["connected"]:

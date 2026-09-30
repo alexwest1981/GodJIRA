@@ -1659,26 +1659,26 @@ MOCK_TRANSITIONS = {
 # key -> issue seed. status is the starting column id.
 MOCK_ISSUES = [
     # WEB kanban
-    ("WEB-41", "WEB", "todo", "Redesign the settings page navigation", "Story", "Alex Weström", "alex@westrom.dev", "High", 3),
-    ("WEB-42", "WEB", "progress", "Fix flaky CI for the e2e suite", "Bug", "Alex Weström", "alex@westrom.dev", "Highest", 2),
+    ("WEB-41", "WEB", "todo", "Redesign the settings page navigation", "Story", "Demo User", "demo@example.com", "High", 3),
+    ("WEB-42", "WEB", "progress", "Fix flaky CI for the e2e suite", "Bug", "Demo User", "demo@example.com", "Highest", 2),
     ("WEB-43", "WEB", "progress", "Add dark mode toggle to the header", "Story", "Maja Lind", "maja@westrom.dev", "Medium", 5),
-    ("WEB-44", "WEB", "review", "Migrate build pipeline to the new runner", "Task", "Alex Weström", "alex@westrom.dev", "High", None),
+    ("WEB-44", "WEB", "review", "Migrate build pipeline to the new runner", "Task", "Demo User", "demo@example.com", "High", None),
     ("WEB-45", "WEB", "review", "Accessibility pass on forms", "Story", "Noah Berg", "noah@westrom.dev", "Medium", 8),
-    ("WEB-46", "WEB", "todo", "Write onboarding docs for contributors", "Task", "Alex Weström", "alex@westrom.dev", "Low", None),
-    ("WEB-47", "WEB", "done", "Ship cookie consent banner", "Story", "Alex Weström", "alex@westrom.dev", "Medium", 5),
+    ("WEB-46", "WEB", "todo", "Write onboarding docs for contributors", "Task", "Demo User", "demo@example.com", "Low", None),
+    ("WEB-47", "WEB", "done", "Ship cookie consent banner", "Story", "Demo User", "demo@example.com", "Medium", 5),
     ("WEB-48", "WEB", "done", "Reduce bundle size below 200 kB", "Task", "Maja Lind", "maja@westrom.dev", "Medium", None),
     # MOB scrum - in the active sprint
-    ("MOB-21", "MOB", "progress", "Pull-to-refresh on the feed", "Story", "Alex Weström", "alex@westrom.dev", "High", 5),
-    ("MOB-22", "MOB", "todo", "Offline cache for search results", "Story", "Alex Weström", "alex@westrom.dev", "Medium", 3),
+    ("MOB-21", "MOB", "progress", "Pull-to-refresh on the feed", "Story", "Demo User", "demo@example.com", "High", 5),
+    ("MOB-22", "MOB", "todo", "Offline cache for search results", "Story", "Demo User", "demo@example.com", "Medium", 3),
     ("MOB-23", "MOB", "review", "Deep links into the article view", "Story", "Elin Åkerman", "elin@westrom.dev", "High", 5),
-    ("MOB-24", "MOB", "progress", "Crash on startup with empty account", "Bug", "Alex Weström", "alex@westrom.dev", "Highest", 2),
+    ("MOB-24", "MOB", "progress", "Crash on startup with empty account", "Bug", "Demo User", "demo@example.com", "Highest", 2),
     ("MOB-25", "MOB", "done", "Biometric unlock", "Story", "Elin Åkerman", "elin@westrom.dev", "Medium", 8),
-    ("MOB-26", "MOB", "todo", "Localize notifications", "Task", "Alex Weström", "alex@westrom.dev", "Low", None),
+    ("MOB-26", "MOB", "todo", "Localize notifications", "Task", "Demo User", "demo@example.com", "Low", None),
     # MOB scrum - backlog (not yet started)
-    ("MOB-31", "MOB", "todo", "Widget for the home screen", "Story", "Alex Weström", "alex@westrom.dev", "Medium", 8),
+    ("MOB-31", "MOB", "todo", "Widget for the home screen", "Story", "Demo User", "demo@example.com", "Medium", 8),
     ("MOB-32", "MOB", "todo", "Support iPad layout", "Story", "Elin Åkerman", "elin@westrom.dev", "Low", 13),
     ("MOB-33", "MOB", "todo", "Analytics events audit", "Task", "Noah Berg", "noah@westrom.dev", "Medium", None),
-    ("MOB-34", "MOB", "todo", "Empty states across the app", "Story", "Alex Weström", "alex@westrom.dev", "Medium", 3),
+    ("MOB-34", "MOB", "todo", "Empty states across the app", "Story", "Demo User", "demo@example.com", "Medium", 3),
     ("MOB-35", "MOB", "todo", "Switch CDN provider", "Task", "Noah Berg", "noah@westrom.dev", "High", None),
 ]
 
@@ -1724,7 +1724,7 @@ MOCK_BOARDS = [
 MOCK_COMMENTS = {
     "MOB-22": [
         ("Elin Åkerman", "elin@westrom.dev", "Ska cachen tömmas när kontot byter?"),
-        ("Alex Weström", "alex@westrom.dev", "Ja - töm listan vid utloggning."),
+        ("Demo User", "demo@example.com", "Ja - töm listan vid utloggning."),
     ],
     "MOB-24": [
         ("Noah Berg", "noah@westrom.dev", "Repro: tomt konto + flygplansläge."),
@@ -1886,7 +1886,7 @@ def mock_issue(key, state):
         "sprintName": sprint_name,
         "startMs": 0,
         "dueMs": 0,
-        "parentKey": row.get("parentKey") or "",
+        "parentKey": raw.get("parentKey") or "",
         "parentSummary": "",
     }
 
@@ -1894,8 +1894,8 @@ def mock_issue(key, state):
 def mock_snapshot(cfg):
     state = mock_state()
     account = {
-        "email": cfg.get("email") or "alex@westrom.dev",
-        "displayName": "Alex Weström",
+        "email": cfg.get("email") or "demo@example.com",
+        "displayName": "Demo User",
         "siteUrl": "mock",
         "connected": True,
     }
@@ -2026,8 +2026,8 @@ def mock_create(state, board_id, payload):
 
     key = mock_next_key(state, project)
     cfg = load_config()
-    email = cfg.get("email") or "alex@westrom.dev"
-    display = "Alex Weström"
+    email = cfg.get("email") or "demo@example.com"
+    display = "Demo User"
     issue = {
         "key": key,
         "projectKey": project,
@@ -2091,8 +2091,8 @@ def mock_add_comment(state, key, text):
     cfg = load_config()
     comments.append({
         "id": "c-{}-{}".format(key, len(comments) + 1),
-        "authorName": "Alex Weström",
-        "authorEmail": cfg.get("email") or "alex@westrom.dev",
+        "authorName": "Demo User",
+        "authorEmail": cfg.get("email") or "demo@example.com",
         "body": body,
         "createdMs": now,
         "updatedMs": now,
@@ -2175,14 +2175,14 @@ MOCK_DEV = {
     "MOB-22": {
         "pullRequests": [
             {"id": "412", "title": "Cache search results offline", "status": "OPEN",
-             "url": "https://example.invalid/pull/412", "author": "Alex Weström", "updatedMs": 0},
+             "url": "https://example.invalid/pull/412", "author": "Demo User", "updatedMs": 0},
         ],
         "branches": [{"name": "feature/offline-cache", "url": "", "lastCommit": "Wire the cache into search"}],
         "commits": [
             {"id": "a1b2c3d", "message": "Cache the last query and its results", "url": "",
-             "author": "Alex Weström", "updatedMs": 0},
+             "author": "Demo User", "updatedMs": 0},
             {"id": "e4f5a6b", "message": "Mark cached results stale on reconnect", "url": "",
-             "author": "Alex Weström", "updatedMs": 0},
+             "author": "Demo User", "updatedMs": 0},
         ],
         "builds": [{"name": "CI · ios-debug", "status": "SUCCESSFUL", "url": ""}],
     },
@@ -2202,7 +2202,7 @@ def mock_dev_status(state, key):
     seeded = MOCK_DEV.get(key) or {}
     out = {"configured": bool(seeded), "counts": {}, "pullRequests": [], "branches": [],
            "commits": [], "builds": [], "applications": ["GitHub"],
-           "history": [{"authorName": "Alex Weström", "createdMs": 0,
+           "history": [{"authorName": "Demo User", "createdMs": 0,
                         "text": "status: To Do -> {}".format(MOCK_STATUSES[issue["statusId"]][0])}]}
     for data_type in ("pullrequest", "branch", "commit", "build"):
         out["counts"][data_type] = 0

@@ -2506,8 +2506,11 @@ async function load(refresh) {
   STATE = next;
   // Första gången på en maskin: utan nyckel kan ingenting läsas, så en tom översikt
   // vore en återvändsgränd. Setupen visas i stället -- en gång, inte som en spärr.
-  if (!SETUP.met && STATE.token && STATE.token.present === false) {
+  // Provläget har data utan nyckel: då visas den, och Kom igång ligger kvar i menyn.
+  const mock = (STATE.jira || {}).mode === "mock";
+  if (!SETUP.met && !mock && STATE.token && STATE.token.present === false) {
     SETUP.met = true;
+    splashHide();   // annars låg splash-fönstret kvar över Kom igång-skärmen (mätt)
     show("setup");
     return;
   }
