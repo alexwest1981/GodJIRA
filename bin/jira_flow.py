@@ -732,7 +732,10 @@ def admin_roles(bridge, project: str) -> list:
                            "accountId": str((((actor or {}).get("actorUser") or {}).get("accountId"))
                                             or (((actor or {}).get("actorGroup") or {}).get("groupId")) or "")})
         rows.append({"role": label, "actors": actors})
-    return sorted(rows, key=lambda row: row["role"])
+    # Apparnas roller (addons) är maskiner, inte folk: de hamnar sist i listan.
+    # Apparnas och gästernas roller är inte folk: de hamnar sist, efter människorna.
+    return sorted(rows, key=lambda row: (any(w in row["role"].lower() for w in ("addon", "guest")),
+                                         row["role"].lower()))
 
 
 def admin_fields(bridge) -> list:

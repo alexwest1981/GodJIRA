@@ -109,6 +109,12 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   .badge { font-size: 9.5px; letter-spacing: .07em; text-transform: uppercase; white-space: nowrap;
            border: 1px solid var(--line-3); border-radius: 999px; padding: 1px 6px; color: var(--muted); }
   .badge.on { color: var(--accent); border-color: var(--accent); }
+  /* Blocken i en vy behöver samma rytm som vyn själv har mellan sig. */
+  .stack { display: flex; flex-direction: column; gap: 16px; }
+  /* En roll i taget: namnraden, sedan brickorna -- och luft till nästa roll. */
+  .roleblock { margin-top: 12px; }
+  .roleblock:first-child { margin-top: 2px; }
+  .roleblock .badge { margin: 5px 5px 0 0; }
   .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 10px; }
   .facts .f { border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; background: var(--card); }
   /* Långa commit-budskap skall bryta, inte trycka ihop sig med datumet intill. */
@@ -493,7 +499,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
     <section class="view" id="v-admin">
       <div class="meta">Det som annars kräver en tur in i Jiras webbgränssnitt: rollerna och vilka
         som sitter i dem, och sajtens fält. Bara läsning — och bara det din roll får se.</div>
-      <div id="adminBox" class="meta" style="margin-top:12px">läser …</div>
+      <div id="adminBox" class="meta">läser …</div>
     </section>
 
     <section class="view" id="v-setup">
@@ -504,20 +510,21 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
     </section>
 
     <section class="view" id="v-settings">
-      <div class="card">
-        <h2 style="margin:0 0 4px">Inställningar</h2>
-        <div class="meta">Jira-nyckeln: vems den är, om den svarar, och när den går ut.</div>
-        <div id="tokenBox" class="meta" style="margin-top:10px">läser …</div>
-        <div class="linkbar" style="margin-top:12px">
-          <button class="chip" id="setupOpen">kom igång — koppla på Jira och GitHub</button>
+      <div class="stack">
+        <div class="panel">
+          <h3>Nyckeln <span class="meta">vems den är, om den svarar, och när den går ut</span></h3>
+          <div class="body">
+            <div id="tokenBox" class="meta">läser …</div>
+            <div class="linkbar">
+              <button class="chip" id="setupOpen">kom igång — koppla på Jira och GitHub</button>
+            </div>
+          </div>
         </div>
-      </div>
-      <div class="card" style="margin-top:14px">
-        <h2 style="margin:0 0 4px">Vad dina rättigheter visar</h2>
-        <div class="meta">Ett verktyg syns bara om din roll i projektet bär behörigheten för det.
-          Jira är den som svarar nej — här står bara vad det svaret blev. Saknas behörigheten
-          finns verktyget inte i gränssnittet alls.</div>
-        <div id="rightsBox" class="meta" style="margin-top:10px">läser …</div>
+        <div class="panel">
+          <h3>Vad dina rättigheter visar
+            <span class="meta">ett verktyg syns bara om din roll bär behörigheten — Jira säger nej på riktigt</span></h3>
+          <div class="body"><div id="rightsBox" class="meta">läser …</div></div>
+        </div>
       </div>
     </section>
 
@@ -1049,8 +1056,8 @@ function renderSettings() {
   const t = STATE.token || {};
   box.classList.remove("meta");
   box.innerHTML = tokenRows(t) +
-    (t.note ? `<div class="meta err" style="margin-top:9px">${esc(t.note)}</div>` : "") +
-    `<div class="linkbar" style="margin-top:12px">
+    (t.note ? `<div class="meta err" style="margin-top:10px">${esc(t.note)}</div>` : "") +
+    `<div class="linkbar">
       <input class="inp" type="password" id="tokNew" placeholder="klistra in en ny nyckel"
              autocomplete="off" spellcheck="false">
       <input class="inp" type="date" id="tokExp" title="nyckelns utgångsdatum (valfritt)">
@@ -1097,6 +1104,7 @@ function renderTokenAlert() {
 // Nav-valet syns bara när länkens behörigheter bär projektadmin -- Jira svarar, och
 // den som saknar rätten ser varken fliken eller verktygen. Det är hela poängen.
 function adminVisible() {
+  if (!STATE) return false;
   const project = (STATE.project || {}).key || "";
   const link = ((STATE.links || {}).links || []).find(l => (l || {}).project === project) || {};
   return ["ADMINISTER", "ADMINISTER_PROJECTS"].some(name => (link.can || []).includes(name));
@@ -1115,6 +1123,7 @@ function peopleRows(people) {
 function renderAdmin() {
   const box = document.getElementById("adminBox");
   if (!box) return;
+  if (!STATE) { box.textContent = "väntar på svaret från Jira …"; return; }
   const d = ADMIN.data;
   if (!d) { box.textContent = ADMIN.error || "läser …"; return; }
   if (!adminVisible()) {
@@ -1129,7 +1138,7 @@ function renderAdmin() {
     ? `<div class="f"><div class="l">${esc(label)}</div><div class="v"><span style="color:var(--accent)">ja</span></div></div>`
     : `<div class="f"><div class="l">${esc(label)}</div><div class="v"><span class="meta">nej — verktyget göms</span></div></div>`;
   const roles = (d.roles || []).map(r =>
-    `<div style="margin-top:8px"><div class="meta">${esc(r.role)} · ${(r.actors || []).length}</div>` +
+    `<div class="roleblock"><div class="meta">${esc(r.role)} · ${(r.actors || []).length}</div>` +
     `<div>${(r.actors || []).map(a => `<span class="badge${a.kind === "grupp" ? "" : " on"}">${esc(a.name)}</span>`).join(" ") ||
       '<span class="meta">tom</span>'}</div></div>`).join("");
   const own = (d.fields || []).filter(f => f.custom);
@@ -1137,26 +1146,34 @@ function renderAdmin() {
     `<div class="r"><span class="key">${esc(f.name)}</span><span class="t mono">${esc(f.id)}</span>` +
     `<span class="tside meta">${esc(f.type)}</span></div>`).join("") || `<div class="empty">inga egna fält</div>`;
   box.classList.remove("meta");
+  const panelHead = (title, note) =>
+    '<h3>' + title + (note ? ' <span class="meta">' + note + '</span>' : '') + '</h3>';
   box.innerHTML =
-    `<div class="meta" style="margin-bottom:8px">projekt <b>${esc(d.project || "")}</b> · ${esc(d.projectSource || "")}
-      · ${(d.fields || []).length} fält, varav ${own.length} egna</div>
-     <div class="facts">
-       ${allowed("ADMINISTER", "sajtadmin")}
-       ${allowed("ADMINISTER_PROJECTS", "projektadmin")}
-       ${allowed("ASSIGN_ISSUES", "tilldela ärenden")}
-       ${allowed("MANAGE_SPRINTS_PERMISSION", "sprintar")}
-     </div>
-     <div style="margin-top:16px"><div class="meta">roller i ${esc(d.project || "")}</div>${roles ||
-       '<div class="empty">inga roller att visa</div>'}</div>
-     <div style="margin-top:16px"><div class="meta">egna fält · ${own.length}</div><div class="wl">${fields}</div></div>
-     <div style="margin-top:16px"><div class="meta">folk på sajten</div>
-       <div class="linkbar" style="margin-top:8px">
-         <input class="inp" id="adminQuery" placeholder="sök namn eller e-post (minst två tecken)">
-         <button class="chip" data-act="admin-people">sök</button>
-         <span class="grow"></span><span class="meta" id="adminNote"></span>
-       </div>
-       <div id="adminPeople" class="wl"></div>
-     </div>`;
+    '<div class="stack">' +
+      '<div class="panel">' + panelHead('Behörigheter', esc(d.project || "") + ' · ' + esc(d.projectSource || "")) +
+        '<div class="body"><div class="facts">' +
+          allowed("ADMINISTER", "sajtadmin") +
+          allowed("ADMINISTER_PROJECTS", "projektadmin") +
+          allowed("ASSIGN_ISSUES", "tilldela ärenden") +
+          allowed("MANAGE_SPRINTS_PERMISSION", "sprintar") +
+        '</div></div></div>' +
+      '<div class="panel">' +
+        panelHead('Roller i ' + esc(d.project || ""), (d.roles || []).length + ' stycken') +
+        '<div class="body">' + (roles || '<div class="empty">inga roller att visa</div>') + '</div></div>' +
+      '<div class="panel">' +
+        panelHead('Egna fält', own.length + ' av ' + (d.fields || []).length + ' fält') +
+        '<div class="body wl">' + fields + '</div></div>' +
+      '<div class="panel">' +
+        panelHead('Folk på sajten', 'sök för att hitta någon att tilldela') +
+        '<div class="body">' +
+          '<div class="linkbar">' +
+            '<input class="inp" id="adminQuery" placeholder="sök namn eller e-post">' +
+            '<button class="chip" data-act="admin-people">sök</button>' +
+            '<span class="grow"></span><span class="meta" id="adminNote"></span>' +
+          '</div>' +
+          '<div id="adminPeople" class="wl"></div>' +
+        '</div></div>' +
+    '</div>';
 }
 
 async function adminLoad() {
@@ -1247,6 +1264,7 @@ function renderSetup() {
 function renderRights() {
   const host = document.getElementById("rightsBox");
   if (!host) return;
+  if (!STATE) { host.textContent = "väntar på svaret från Jira …"; return; }
   const project = (STATE.project || {}).key || "";
   const link = ((STATE.links || {}).links || []).find(l => (l || {}).project === project) || {};
   if (!project || !Object.keys(link).length) {
@@ -1257,9 +1275,11 @@ function renderRights() {
   const can = link.can || [], cannot = link.cannot || [];
   const pc = STATE.projectCan || {};
   const may = name => (can.includes(name) ? true : (cannot.includes(name) ? false : null));
+  // Skälet i en tooltip i stället för i kortet: det är långt (Jiras egen mening) och
+  // kortet kapar det mitt i. "syns inte" är det man behöver se; resten får man på hover.
   const row = (label, allowed, why) =>
-    `<div class="f"><div class="l">${esc(label)}</div><div class="v">` +
-    (allowed === false ? `<span class="meta">syns inte</span> <span class="meta">${esc(why || "")}</span>`
+    `<div class="f"${why ? ` title="${esc(why)}"` : ""}><div class="l">${esc(label)}</div><div class="v">` +
+    (allowed === false ? `<span class="meta">syns inte</span>`
                        : `<span style="color:var(--accent)">syns</span>`) +
     `</div></div>`;
   host.classList.remove("meta");
