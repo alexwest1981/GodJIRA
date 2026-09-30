@@ -263,6 +263,85 @@ DEMO_GITHUB_ISSUES = [
 ]
 
 
+# ------------------------------------------------------------------ panelens språk
+#
+# Panelens egna strängar ligger i panel/i18n/<kod>.json. Det är samma val som widgeten
+# läser (bryggans config), så en inställning gäller båda -- och widgeten har redan
+# nio språk; hit flyttas bara panelen till samma källa.
+
+PANEL_I18N = Path(__file__).resolve().parent / "i18n"
+
+
+def panel_languages() -> list:
+    """Språkkoderna panelen har filer för."""
+    return sorted(p.stem for p in PANEL_I18N.glob("*.json"))
+
+
+def read_panel_strings(code: str) -> dict:
+    """En språkfil, eller tomt. Trasig json betyder tom, inte krasch."""
+    try:
+        data = json.loads((PANEL_I18N / "{}.json".format(code)).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def panel_language(want: str = "") -> str:
+    """Språket panelen skall visa: det som efterfrågas, annars bryggans val, annars engelska."""
+    have = panel_languages()
+    if not have:
+        return "sv"
+    code = (want or "").strip().lower()
+    if code in have:
+        return code
+    try:
+        chosen = ((seam("bridge", "status", timeout=60).get("payload") or {}).get("language") or "")
+    except Exception:  # ingen brygga: engelska är ett tryggare val än svenska för en främling
+        chosen = ""
+    chosen = chosen.strip().lower()
+    if chosen in have:
+        return chosen
+    return "en" if "en" in have else have[0]
+
+
+def panel_strings(want: str = "") -> dict:
+    """Panelens strängar på ett språk, med svenskan som fallback rad för rad."""
+    have = panel_languages()
+    code = panel_language(want)
+    base = read_panel_strings("sv") if "sv" in have else {}
+    table = read_panel_strings(code)
+    merged = {key: (table.get(key) or value) for key, value in base.items()}
+    for key, value in table.items():
+        merged.setdefault(key, value)
+    return {"ok": True, "language": code, "available": available_languages(have),
+            "strings": merged, "keys": len(merged), "translated": len(table)}
+
+
+def available_languages(have: list = None) -> list:
+    """Kod och eget namn, till rullistan. Namnen kommer ur bryggans katalog."""
+    have = have or panel_languages()
+    try:
+        catalog = (seam("bridge", "strings", "sv", timeout=60).get("payload") or {}).get("available") or []
+    except Exception:
+        catalog = []
+    out = [{"code": item.get("code"), "native": item.get("native") or item.get("code")}
+           for item in catalog if (item or {}).get("code") in have]
+    return out or [{"code": c, "native": c} for c in have]
+
+
+def language_save(payload: dict) -> tuple:
+    """Spara språkvalet. Samma config som widgeten läser, så valet gäller båda."""
+    code = str(payload.get("language") or "").strip().lower()
+    if code not in panel_languages():
+        return 400, {"ok": False, "error": "okänt språk: {}".format(code[:12])}
+    env = seam("bridge", "configure", json.dumps({"language": code}), timeout=90)
+    ok = env.get("exitCode") == 0 and bool((env.get("payload") or {}).get("ok", True))
+    with _lock:
+        _cache.clear()   # allt som svarar med text skall svara på det nya språket
+    return (200 if ok else 500), {"ok": ok, "language": code,
+                                  "error": None if ok else first_line(env)}
+
+
 def github_state() -> dict:
     if demo():
         # Provläget: gh får inte ens köra. Den skulle svara med användarens *egna* repos
@@ -1223,6 +1302,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/token":
             self._json(200, token_read())
             return
+        if path == "/api/strings":
+            query = parse_qs(urlparse(self.path).query)
+            want = (query.get("lang") or [""])[0][:8]
+            self._json(200, cached("strings:" + want, lambda: panel_strings(want), ttl=300))
+            return
         if path == "/api/scan":
             query = parse_qs(urlparse(self.path).query)
             self._json(200, scan_read((query.get("repo") or [""])[0]))
@@ -1257,7 +1341,7 @@ class Handler(BaseHTTPRequestHandler):
         handler = {"/api/import": import_parse, "/api/import/apply": import_apply,
                    "/api/link": link_set, "/api/automation": automation_report,
                    "/api/scan": scan_start, "/api/token": token_save,
-                   "/api/github": github_save,
+                   "/api/github": github_save, "/api/language": language_save,
                    "/api/admin/people": admin_people}.get(self.path.split("?")[0])
         if not handler:
             self._send(404, b"not found", "text/plain")

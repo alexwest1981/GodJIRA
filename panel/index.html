@@ -632,6 +632,10 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
     <section class="view" id="v-settings">
       <div class="stack">
         <div class="panel">
+          <h3>Panelens språk <span class="meta">samma val som i baren</span></h3>
+          <div class="body"><div id="langBox" class="meta">läser …</div></div>
+        </div>
+        <div class="panel">
           <h3>Nyckeln <span class="meta">vems den är, om den svarar, och när den går ut</span></h3>
           <div class="body">
             <div id="tokenBox" class="meta">läser …</div>
@@ -687,6 +691,64 @@ const F = { scope: "all", prio: new Set(), pool: "", project: "" };   // project
 
 /* ---------------------------------------------------------------- bitar --- */
 const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// ------------------------------------------------------------------ språk
+//
+// Panelens texter kommer från panel/i18n/<språk>.json, och nycklarna ÄR den svenska
+// texten. Därför behöver ingen ritningskod skrivas om: efter varje målning byts de
+// textnoder som står i tabellen. Text som byggs ihop av flera delar (ett nyckelvärde
+// mitt i en mening) lämnas orörd — den är oftast data, inte text.
+let LANG = "sv", STRINGS = {}, LANGS = [];
+
+async function loadStrings(code) {
+  try {
+    const r = await fetch("/api/strings" + (code ? "?lang=" + encodeURIComponent(code) : ""), { cache: "no-store" });
+    const data = await r.json();
+    LANG = data.language || "sv";
+    STRINGS = data.strings || {};
+    LANGS = data.available || [];
+  } catch (e) {
+    STRINGS = {};   // utan tabell står svenskan kvar: sämre, men inte trasigt
+  }
+}
+
+const t = s => STRINGS[s] || s;
+
+const SKIP_TAGS = { SCRIPT: 1, STYLE: 1, TEXTAREA: 1, CODE: 1, PRE: 1 };
+let translating = false;
+
+function translateTree(root) {
+  if (translating || LANG === "sv" || !Object.keys(STRINGS).length) return;
+  translating = true;
+  try {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const parent = node.parentNode;
+      if (!parent || SKIP_TAGS[parent.nodeName]) continue;
+      const raw = node.nodeValue, key = raw.trim();
+      if (!key || !STRINGS[key] || STRINGS[key] === key) continue;
+      node.nodeValue = raw.replace(key, STRINGS[key]);
+    }
+    root.querySelectorAll?.("[placeholder],[title]").forEach(el => {
+      ["placeholder", "title"].forEach(attr => {
+        const now = el.getAttribute(attr);
+        if (now && STRINGS[now.trim()] && STRINGS[now.trim()] !== now.trim()) {
+          el.setAttribute(attr, STRINGS[now.trim()]);
+        }
+      });
+    });
+  } finally {
+    translating = false;
+  }
+}
+
+// Panelen ritar om sig själv vid varje uppdatering och vybyte, så översättningen måste
+// följa med efter målningen. Vaktflaggan hindrar att våra egna byten startar en ny runda;
+// en text som redan är bytt matchar ingen nyckel och stannar där den är.
+new MutationObserver(() => {
+  clearTimeout(window.__gjTranslate);
+  window.__gjTranslate = setTimeout(() => translateTree(document.documentElement), 25);
+}).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
 function ago(iso) {
   const t = new Date(iso).getTime(); if (!t) return TEXT.never;
   const m = Math.round((Date.now() - t) / 60000);
@@ -1744,6 +1806,31 @@ function renderSetup() {
 
 // Rättigheterna: behörigheterna kommer ur länken (lästa ur Jira för det projektet).
 // Verktyget syns bara när Jira säger ja -- här står bara vad Jira svarade.
+function renderLanguage() {
+  const host = document.getElementById("langBox");
+  if (!host) return;
+  if (!LANGS.length) { host.textContent = t("hittar inga språkfiler"); return; }
+  host.classList.remove("meta");
+  host.innerHTML = `<div class="linkbar"><select class="inp" id="langSel" title="${esc(t("samma val som i baren"))}">` +
+    LANGS.map(l => `<option value="${esc(l.code)}"${l.code === LANG ? " selected" : ""}>` +
+      `${esc(l.native || l.code)}</option>`).join("") +
+    `</select></div>`;
+}
+
+async function languageSave(code) {
+  const host = document.getElementById("langBox");
+  if (host) host.textContent = t("byter språk …");
+  try {
+    const r = await fetch("/api/language", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ language: code }) });
+    const answer = await r.json();
+    if (!answer.ok) throw new Error(answer.error || "svaret gick inte att läsa");
+    location.reload();   // allt ritas om från grunden på det nya språket
+  } catch (e) {
+    if (host) host.textContent = String(e.message || e);
+  }
+}
+
 function renderRights() {
   const host = document.getElementById("rightsBox");
   if (!host) return;
@@ -2584,7 +2671,7 @@ function show(v) {
   // Vyerna som frågar efter något eget laddar det när de öppnas -- samma väg för
   // kugghjulet, setupen och första starten.
   if (view === "setup") setupLoad();
-  if (view === "settings") renderRights();
+  if (view === "settings") { renderRights(); renderLanguage(); }
   if (view === "admin") adminLoad();
   if (view === "insights") insightLoad();
   if (view === "karta") { mapLoad(); renderCodeMap(); }
@@ -2642,6 +2729,7 @@ document.addEventListener("click", e => {
       .then(() => setupLoad());
     return;
   }
+  if (e.target.closest("#langSel")) return;   // bytet sköts av change-lyssnaren nedan
   if (e.target.closest('[data-act="setup-github"]')) {
     const v = id => ((document.getElementById(id) || {}).value || "").trim();
     const box = document.getElementById("setupBox");
@@ -2702,6 +2790,7 @@ document.getElementById("itemProject").addEventListener("change", e => {
 // Automatik: väljaren i stället för en rad knappar.
 document.addEventListener("change", e => {
   if (e.target && e.target.id === "flowPickSel") { flowSel = e.target.value; renderFlow(); }
+  if (e.target && e.target.id === "langSel") languageSave(e.target.value);
 });
 
 // Tema: följer skrivbordet tills man väljer något. Valet bor i Inställningar.
@@ -2746,8 +2835,11 @@ document.addEventListener("input", e => {
   }
 });
 window.addEventListener("hashchange", () => show(readHash()));
-show(readHash());
-load(false);
+// Strängarna först: skärmen skall inte hinna visa svenska och sedan byta språk.
+loadStrings().finally(() => {
+  show(readHash());
+  load(false);
+});
 setInterval(() => load(false), 60000);
 </script>
 </body>
