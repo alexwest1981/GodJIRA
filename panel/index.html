@@ -169,6 +169,10 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   .scanbox summary { cursor: pointer; margin-top: 7px; color: var(--muted); }
   ul.tight { margin: 5px 0 0; padding-left: 18px; }
   /* Katalogerna i kartan: rubriken bär sökvägen, raderna under bara filnamnen. */
+  /* Kodkartan ritas i naturlig storlek och scrollas. Regeln ovan tvingar varje .graph-svg
+     till rutan, och tavlan är tio kolumner bred: krympt blev texten 4 px (mätt). */
+  #codeCanvas { overflow: auto; max-height: 62vh; }
+  #codeCanvas svg { width: auto; height: auto; max-width: none; }
   .dir { margin-top: 7px; }
   .dir > .mono { color: var(--muted); }
   .dir ul.tight { margin: 2px 0 0 14px; }
@@ -466,7 +470,19 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
 
     <section class="view" id="v-karta">
       <div class="panel">
-        <h3>Kartan över <span class="meta" id="mapWho"></span>
+        <h3>Kodkartan över <span class="meta" id="codeWho"></span>
+          <span class="grow"></span>
+          <button class="chip" data-act="code-reset">läs om</button></h3>
+        <div class="body">
+          <div class="meta">Paketen och vad de använder — samma tavla som n8n:s flöde, så
+            vägarna går åt höger: den som anropar till vänster, det anropade till höger.
+            Dra i en ruta för att flytta den, dra i bakgrunden för att panorera, rullhjulet zoomar.</div>
+          <div class="graph" id="codeCanvas"><div class="empty">hämtar kodkartan …</div></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>Ärendena mot filerna <span class="meta" id="mapWho"></span>
           <span class="grow"></span>
           <button class="chip" data-act="scan-run">scanna om</button></h3>
         <div class="body">
@@ -928,7 +944,7 @@ const flowXf = view => `translate(${view.x} ${view.y}) scale(${view.s})`;
 // Efter en flytt ritas bara det som rör sig: gruppernas förskjutning och vägarna.
 // En omritning av hela SVG:en hade tappat taget om pekaren mitt i ett drag.
 function flowRepaint() {
-  const svg = document.getElementById("flowSvg");
+  const svg = document.getElementById(`${FLOW.canvas || "flow"}Svg`);
   if (!svg) return;
   Object.entries(FLOW.pos).forEach(([key, p]) => {
     const group = svg.querySelector(`[data-node="${key}"]`);
@@ -942,8 +958,8 @@ function flowRepaint() {
 }
 
 function flowBind(file, box) {
-  const svg = document.getElementById("flowSvg");
-  const scene = document.getElementById("flowScene");
+  const svg = document.getElementById(`${FLOW.canvas || "flow"}Svg`);
+  const scene = document.getElementById(`${FLOW.canvas || "flow"}Scene`);
   if (!svg || !scene) return;
   FLOW.stores = FLOW.stores || {};
   const store = FLOW.stores[file] || (FLOW.stores[file] = flowStore(file));
@@ -1004,6 +1020,100 @@ function flowBind(file, box) {
   }, { passive: false });
 }
 
+// Rutorna i en tavla. Flödet har en körordning (stegets nummer) och kodkartan en egen
+// tooltip; allt annat är samma ruta. Förskjutningen sätts REDAN HÄR, inte bara under ett
+// drag: annars ritas rutorna på filens plats medan pilarna räknas från den flyttade
+// (mätt: efter en omladdning stod rutorna still och vägarna pekade i tomma luften).
+function flowBoxes(nodes, W, H, order = {}, tip = null) {
+  return nodes.map(n => {
+    const key = n.key || n.name, step = order[key], lines = flowWrap(n.name);
+    const spot = FLOW.pos[key];
+    return `<g class="fnode" data-node="${esc(key)}" ` +
+      `transform="translate(${spot.x - n.x} ${spot.y - n.y})">` +
+      `<title>${esc(tip ? tip(n) : `${n.name} — ${n.type}${step ? " · steg " + step : ""}`)}</title>` +
+      `<rect x="${n.x}" y="${n.y}" width="${W}" height="${H}" rx="10" fill="var(--card)" ` +
+        `stroke="var(--line-2)"/>` +
+      lines.map((line, i) => `<text x="${n.x + 15}" y="${n.y + 26 + i * 16}" fill="var(--text)" ` +
+        `font-size="13.5">${i === 0 ? esc(flowGlyphOf(n.type)) + "  " : ""}${esc(line)}</text>`).join("") +
+      `<text x="${n.x + 15}" y="${n.y + H - 12}" fill="var(--text)" opacity="0.62" ` +
+        `font-size="11.5">${esc(n.type)}</text>` +
+      (step ? `<text x="${n.x + W - 13}" y="${n.y + 22}" fill="var(--text)" opacity="0.55" ` +
+        `font-size="11.5" text-anchor="end">${step}</text>` : "") +
+      `</g>`;
+  }).join("");
+}
+
+// Kodkartan: paketen som noder, importerna som vägar. Samma tavla, samma panorering --
+// därför samma id-mönster, med canvasten i FLOW.canvas ("flow" eller "code").
+const CODE = { repo: "", graph: null, error: "" };
+
+async function renderCodeMap(force) {
+  const canvas = document.getElementById("codeCanvas");
+  if (!canvas) return;
+  const who = document.getElementById("codeWho");
+  const repo = scanRepo();
+  if (force || CODE.repo !== repo || !CODE.graph) {
+    CODE.repo = repo || "";
+    try {
+      const a = await (await fetch("/api/codemap?repo=" + encodeURIComponent(repo))).json();
+      if (!a.ok) throw new Error(a.error || "inget svar");
+      CODE.graph = a; CODE.error = "";
+    } catch (e) {
+      CODE.graph = null; CODE.error = "kunde inte läsa kodkartan: " + e.message;
+    }
+  }
+  if (who) who.textContent = CODE.graph ? (CODE.graph.repo || "") + " · " +
+    `${CODE.graph.packages} paket · ${CODE.graph.edgesCount} vägar` : "";
+  if (CODE.error) { canvas.innerHTML = `<div class="empty err">${esc(CODE.error)}</div>`; return; }
+  const graph = CODE.graph;
+  if (!graph || !(graph.nodes || []).length) {
+    canvas.innerHTML = `<div class="empty">${esc((graph && graph.note) || "ingen kodkarta")}</div>`;
+    return;
+  }
+  const W = 250, H = 68, PAD = 22;
+  FLOW.canvas = "code"; FLOW.W = W; FLOW.H = H;
+  FLOW.pos = {}; FLOW.base = {};
+  // Nyckeln för sparningen: samma i ritningen och i nollställningen. Olika nycklar där
+  // gav en nollställningsknapp som inte gjorde något (mätt: vyn stod kvar).
+  CODE.key = "kod:" + (graph.repo || "");
+  const store = flowStore(CODE.key);
+  graph.nodes.forEach(n => {
+    const [dx, dy] = store.move[n.key] || [0, 0];
+    FLOW.base[n.key] = { x: n.x, y: n.y };
+    FLOW.pos[n.key] = { x: n.x + dx, y: n.y + dy };
+  });
+  const xs = Object.values(FLOW.pos).map(p => p.x), ys = Object.values(FLOW.pos).map(p => p.y);
+  const x0 = Math.min(...xs) - PAD, x1 = Math.max(...xs) + W + PAD;
+  const y0 = Math.min(...ys) - PAD, y1 = Math.max(...ys) + H + PAD;
+  const view = store.view || { x: 0, y: 0, s: 1 };
+  // Tjockleken är hur många importer vägen bär: de tunga beroendena syns först.
+  const edges = (graph.edges || []).map(e => {
+    const a = FLOW.pos[e.from], b = FLOW.pos[e.to];
+    if (!a || !b) return "";
+    const width = (1 + Math.min(2.6, (e.weight || 1) * 0.22)).toFixed(1);
+    return `<path class="fedge" data-from="${esc(e.from)}" data-to="${esc(e.to)}" ` +
+      `d="${flowEdgeD(a, b, W, H)}" fill="none" stroke="var(--line-2)" stroke-width="${width}" ` +
+      `marker-end="url(#codearrow)"><title>${esc(e.from + " → " + e.to + " · " + e.weight)}</title></path>`;
+  }).join("");
+  const boxes = flowBoxes(graph.nodes, W, H, {}, n =>
+    `${n.name} — ${n.type}${(n.examples || []).length ? " · " + n.examples.join(", ") : ""}`);
+  // Naturlig storlek i stället för att krympas in i rutan: tavlan är tio kolumner bred,
+  // och inpassad blev texten oläslig (mätt: ~4,6 px). Rutan scrollar i stället, och
+  // panorering/zoom fungerar ovanpå.
+  canvas.innerHTML = `<svg id="codeSvg" viewBox="${x0} ${y0} ${x1 - x0} ${y1 - y0}" ` +
+    `width="${Math.round(x1 - x0)}" height="${Math.round(y1 - y0)}" ` +
+    `role="img" aria-label="kodkartan över ${esc(graph.repo || "")}">` +
+    `<defs><marker id="codearrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" ` +
+    `markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--line-2)"/>` +
+    `</marker></defs>` +
+    `<g id="codeScene" transform="${flowXf(view)}">${edges}${boxes}</g></svg>` +
+    `<div class="flowtools"><span class="meta">paketen ur källfilernas importer — ` +
+    `dra i en ruta för att flytta den · dra i bakgrunden för att panorera · rullhjulet zoomar` +
+    `</span><span class="grow"></span>` +
+    `<button class="chip" data-act="code-reset">nollställ vyn</button></div>`;
+  flowBind(CODE.key, { x0, y0, w: x1 - x0, h: y1 - y0 });
+}
+
 function renderFlow() {
   const chips = document.getElementById("flowChips");
   const canvas = document.getElementById("flowCanvas");
@@ -1045,6 +1155,7 @@ function renderFlow() {
   const W = 250, H = 68, PAD = 22;
   const store = flowStore(flow.file);
   const order = flowOrder(flow);
+  FLOW.canvas = "flow";
   FLOW.file = flow.file; FLOW.W = W; FLOW.H = H;
   FLOW.pos = {}; FLOW.base = {};
   flow.nodes.forEach(n => {
@@ -1064,25 +1175,7 @@ function renderFlow() {
       `d="${flowEdgeD(a, b, W, H)}" fill="none" stroke="var(--line-2)" stroke-width="1.6" ` +
       `marker-end="url(#flowarrow)"/>`;
   }).join("");
-  const boxes = flow.nodes.map(n => {
-    const key = n.key || n.name, step = order[key], lines = flowWrap(n.name);
-    // Förskjutningen sätts REDAN HÄR, inte bara under ett drag: annars ritas rutorna
-    // på filens plats medan pilarna räknas från den flyttade (mätt: efter en
-    // omladdning stod rutorna still och vägarna pekade i tomma luften).
-    const spot = FLOW.pos[key];
-    return `<g class="fnode" data-node="${esc(key)}" ` +
-      `transform="translate(${spot.x - n.x} ${spot.y - n.y})">` +
-      `<title>${esc(n.name)} — ${esc(n.type)}${step ? " · steg " + step : ""}</title>` +
-      `<rect x="${n.x}" y="${n.y}" width="${W}" height="${H}" rx="10" fill="var(--card)" ` +
-        `stroke="var(--line-2)"/>` +
-      lines.map((line, i) => `<text x="${n.x + 15}" y="${n.y + 26 + i * 16}" fill="var(--text)" ` +
-        `font-size="13.5">${i === 0 ? esc(flowGlyphOf(n.type)) + "  " : ""}${esc(line)}</text>`).join("") +
-      `<text x="${n.x + 15}" y="${n.y + H - 12}" fill="var(--text)" opacity="0.62" ` +
-        `font-size="11.5">${esc(n.type)}</text>` +
-      (step ? `<text x="${n.x + W - 13}" y="${n.y + 22}" fill="var(--text)" opacity="0.55" ` +
-        `font-size="11.5" text-anchor="end">${step}</text>` : "") +
-      `</g>`;
-  }).join("");
+  const boxes = flowBoxes(flow.nodes, W, H, order);
 
   canvas.innerHTML = `<svg id="flowSvg" viewBox="${x0} ${y0} ${x1 - x0} ${y1 - y0}" ` +
     `preserveAspectRatio="xMidYMid meet" role="img" ` +
@@ -1896,7 +1989,9 @@ async function mapLoad() {
 // Repot kartan gäller: det som är valt i listan, annars det som är kopplat. Karta-vyn
 // och Översikt har inget valt repo, och där blev REPO.name tom -- frågan gick ut utan
 // repo och svaret såg ut som en saknad karta. Ett ställe löser det, inte fyra.
-const scanRepo = () => REPO.name || (STATE.project || {}).repo || "";
+// STATE är null tills svaret kommit: Karta-vyn ritas redan då, och utan vakten kastade
+// uppslaget ("Cannot read properties of null") och rutan visade ett fel i stället för en karta.
+const scanRepo = () => REPO.name || ((STATE || {}).project || {}).repo || "";
 
 async function scanLoad() {
   const box = document.getElementById("scanBody");
@@ -2179,6 +2274,7 @@ function render() {
   renderRail(); renderSide(); renderCrumbs(); renderFilters(); renderItemProject();
   renderTokenAlert(); renderSettings(); renderTheme();
   if (view === "insights") renderInsights();
+  if (view === "karta" && document.getElementById("codeCanvas")) renderCodeMap();
   // Tillåtlista, inte blocklista: en ny vy skall aldrig ärva filterrader den inte
   // använder. Repon har sin egen sökning i sidofältet.
   document.getElementById("filtersRow").hidden = !["board", "items"].includes(view);
@@ -2302,7 +2398,7 @@ function show(v) {
   if (view === "settings") renderRights();
   if (view === "admin") adminLoad();
   if (view === "insights") insightLoad();
-  if (view === "karta") mapLoad();
+  if (view === "karta") { mapLoad(); renderCodeMap(); }
 }
 document.addEventListener("click", e => {
   if (e.target.closest('[data-act="refresh"]')) return load(true);
@@ -2344,6 +2440,12 @@ document.addEventListener("click", e => {
     if (FLOW.stores) delete FLOW.stores[FLOW.file];
     try { localStorage.removeItem("godjira.flow." + FLOW.file); } catch { /* utan lagring */ }
     return renderFlow();
+  }
+  // Kodkartan har sin egen nollställning, och "läs om" hämtar om den ur filerna.
+  if (e.target.closest('[data-act="code-reset"]')) {
+    if (FLOW.stores) delete FLOW.stores[CODE.key];
+    try { localStorage.removeItem("godjira.flow." + CODE.key); } catch { /* utan lagring */ }
+    return renderCodeMap();
   }
   if (e.target.closest('[data-act="imp-all"]')) { IMP.keep = new Set(IMP.plan.map((_, i) => i)); return renderImport(); }
   if (e.target.closest('[data-act="imp-none"]')) { IMP.keep = new Set(); return renderImport(); }

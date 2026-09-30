@@ -577,6 +577,27 @@ _scan_running: dict = {}
 _scan_lock = threading.Lock()
 
 
+def codemap_read(repo: str) -> dict:
+    """Kodkartan för repot: paketen och deras beroenden.
+
+    Motorn läser källfilerna -- den känner till var kopian ligger och äger parsningen --
+    och panelen ritar. Samma arbetsdelning som kartan över ärendena: vyn väntar aldrig
+    på att något skall räknas i webbläsaren.
+    """
+    name = (repo or "").strip()
+    if not name:
+        links = (links_state().get("links") or [])
+        name = str((links[0] or {}).get("repo") or "") if len(links) == 1 else ""
+    if not name:
+        return {"ok": False, "error": "no repo to map"}
+    env = seam("flow", "codemap", "--repo-name", name, "--json", timeout=120)
+    data = env.get("payload") if isinstance(env.get("payload"), dict) else None
+    if not data:
+        return {"ok": False, "error": first_line(env) or "the code map could not be read"}
+    data["ok"] = bool(data.get("nodes"))
+    return data
+
+
 def scan_read(repo: str) -> dict:
     """Kartan som scannen skrev, för det projekt repot är kopplat till.
 
@@ -1078,6 +1099,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/scan":
             query = parse_qs(urlparse(self.path).query)
             self._json(200, scan_read((query.get("repo") or [""])[0]))
+            return
+        if path == "/api/codemap":
+            query = parse_qs(urlparse(self.path).query)
+            name = (query.get("repo") or [""])[0]
+            self._json(200, cached("codemap:" + name, lambda: codemap_read(name), ttl=120))
             return
         if path == "/api/repo":
             query = parse_qs(urlparse(self.path).query)

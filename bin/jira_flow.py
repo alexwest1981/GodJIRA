@@ -499,6 +499,114 @@ def scan_map(bridge, project: str, root: Path, limit: int = 250) -> dict:
             "issuesTotal": len(rows)}
 
 
+def code_map(root: Path) -> dict:
+    """Kodkartan: paketen som noder, importerna som vägar, lagda i lager.
+
+    Frågan den svarar på är Alex egen: hur hänger koden ihop? Importerna läses ur
+    källfilerna och slås upp mot paketen i samma repo, så noderna blir paket och vägarna
+    det ena paketet använder hos det andra. Lagret (x) är hur djupt paketet ligger i
+    beroendekedjan: en väg går alltid åt höger, som i en ritning över ett flöde.
+
+    ponytail: bara Java-importer läses (import a.b.c;). Andra språk får en rad som säger
+    det i stället för en tom ruta -- lägg till fler parsers när ett repo behöver det.
+    """
+    files = sorted(p for p in Path(root).rglob("*.java"))
+    if not files:
+        return {"root": str(root), "nodes": [], "edges": [], "layers": 0, "files": 0,
+                "note": "kodkartan läser Java-importer, och repot har inga .java-filer"}
+    package_of, imports_of, classes_of = {}, {}, {}
+    for path in files:
+        try:
+            source = path.read_text(errors="replace")
+        except OSError:
+            continue
+        hit = re.search(r"^\s*package\s+([\w.]+)\s*;", source, re.M)
+        package = hit.group(1) if hit else "(utan paket)"
+        package_of[path] = package
+        classes_of.setdefault(package, []).append(path.stem)
+        imports_of[path] = re.findall(r"^\s*import\s+(?:static\s+)?([\w.]+)\s*;", source, re.M)
+    by_class = {name: package for package, names in classes_of.items() for name in names}
+    weight = {}
+    for path, package in package_of.items():
+        for target in imports_of.get(path, []):
+            other = by_class.get(target.split(".")[-1])
+            if other and other != package:
+                weight[(package, other)] = weight.get((package, other), 0) + 1
+    edges = [{"from": a, "to": b, "weight": n} for (a, b), n in sorted(weight.items())]
+    # Lagret: en kant går alltid åt höger. Paket beroende av varandra i en slinga finns
+    # i riktig kod, och en utjämning ("mottagaren ett steg längre fram") växer då utan
+    # gräns -- mätt: 71 lager och x = 21800. Här plockas i stället de paket som ingen
+    # pekar på ut först, varv för varv; det som bara är en slinga hamnar på samma lager.
+    pairs = {(edge["from"], edge["to"]) for edge in edges}
+    # Slingor bryts först. Utan det hamnar allt som hänger samman i en ring i samma
+    # kolumn -- mätt: 16 av 22 paket i en hög. En kant som pekar tillbaka på en nod vi
+    # redan är inne i räknas inte när lagren läggs (den ritas ändå, den bara styr inte).
+    order, visited = [], set()
+
+    def visit(node):
+        visited.add(node)
+        for other in sorted(t for a, t in pairs if a == node):
+            if other not in visited:
+                visit(other)
+        order.append(node)
+
+    for node in sorted(classes_of):
+        if node not in visited:
+            visit(node)
+    rank = {node: i for i, node in enumerate(order)}
+    kept = [(a, b) for a, b in pairs if rank[b] < rank[a]]
+    depth = {package: 0 for package in classes_of}
+    for node in sorted(classes_of, key=lambda n: -rank[n]):
+        for a, b in kept:
+            if a == node:
+                depth[b] = max(depth[b], depth[node] + 1)
+    # Etiketten: det gemensamma ledet bort ("com.wac.autocore."), kvar blir "ui.views".
+    # Minst ett led lämnas kvar, annars blir etiketten tom.
+    shared: list = []
+    names = sorted(classes_of)
+    # Bara namn med punkter är med: ett paket utan namn har inga led att jämföra.
+    parts = [name.split(".") for name in names if "." in name]
+    if len(parts) > 1:
+        while (all(len(p) > len(shared) for p in parts)
+               and len({p[len(shared)] for p in parts}) == 1):
+            shared.append(parts[0][len(shared)])
+    short = lambda package: ".".join(package.split(".")[len(shared):]) or package
+    nodes, seen = [], {}
+    for package in names:
+        slot = seen.get(depth[package], 0)
+        seen[depth[package]] = slot + 1
+        nodes.append({"key": package, "name": short(package),
+                      "type": "{} filer".format(len(classes_of[package])),
+                      "x": 40 + depth[package] * 320, "y": 40 + slot * 120,
+                      "examples": sorted(classes_of[package])[:6]})
+    return {"root": str(root), "nodes": nodes, "edges": edges, "layers": max(depth.values()) + 1,
+            "files": len(files), "packages": len(classes_of), "edgesCount": len(edges),
+            "prefix": ".".join(shared)}
+
+
+def cmd_codemap(args) -> int:
+    """Kodkartan för repot: hur paketen hänger ihop, ritad som en tavla."""
+    root = plan_repo_dir(args)
+    if not root:
+        linked = [dict(value or {}, repo=key) for key, value in load_links().items()
+                  if (value or {}).get("project")]
+        if len(linked) == 1:
+            root = local_clone(linked[0]["repo"]) or ""
+    if not root or not Path(root).is_dir():
+        say(args, {"ok": False, "error": "no local copy of the repo to map"}, [])
+        print("no local copy of the repo to map — link it, or give --repo <dir>")
+        return 1
+    graph = code_map(Path(root))
+    graph["repo"] = repo_slug_of_dir(root) or root
+    graph["ok"] = bool(graph["nodes"])
+    say(args, graph, [
+        "{}: {} files in {} packages, {} connections between them.".format(
+            graph["repo"], graph.get("files", 0), graph.get("packages", 0),
+            graph.get("edgesCount", 0)),
+    ] if graph["nodes"] else [graph.get("note", "no map")])
+    return 0 if graph["nodes"] else 2
+
+
 def code_context(root: Path, words) -> tuple:
     """Filkartan ur git, kontrakten per fil, och hela texten för de närmaste filerna.
 
@@ -2602,6 +2710,33 @@ def selftest() -> int:
         globals()["AGENT"] = saved_agent
     checks += 1
 
+    # Kodkartan: paketen som noder, importerna som vägar. Provet bygger ett litet repo
+    # där ui använder service som använder model -- en väg skall alltid gå åt höger, och
+    # paketet ingen pekar på skall ligga först.
+    tmp = tempfile.mkdtemp(prefix="godjira-codemap-")
+    try:
+        root = Path(tmp)
+        # Klassnamnen måste vara de importen pekar på: uppslaget går på det enkla namnet.
+        for package, cls, target in (("ui", "Ui", "Service"),
+                                     ("service", "Service", "Model"),
+                                     ("model", "Model", "")):
+            folder = root / package
+            folder.mkdir()
+            line = "import com.x.{0}.{1};".format(target.lower(), target) if target else ""
+            (folder / (cls + ".java")).write_text(
+                "package com.x.{};\n{}\nclass {} {{}}\n".format(package, line, cls))
+        graph = code_map(root)
+        layers = {node["key"]: node["x"] for node in graph["nodes"]}
+        assert graph["packages"] == 3 and graph["edgesCount"] == 2, graph
+        assert layers["com.x.ui"] < layers["com.x.service"] < layers["com.x.model"], layers
+        assert [node["name"] for node in graph["nodes"] if node["x"] == min(layers.values())] == ["ui"]
+        assert {edge["from"] for edge in graph["edges"]} == {"com.x.ui", "com.x.service"}
+        empty = code_map(Path(tmp) / "finns-inte")
+        assert empty["nodes"] == [] and "Java" in empty["note"], "utan java-filer sägs det"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    checks += 1
+
     # Kartan: hela listan med, inte ett tyst tak. Kapades den (60 av 74) såg de visade
     # ut som alla -- samma klass av fel som att tiga om vad som klippts. Provet har fler
     # filer än det gamla taket, så en återinförd kapning syns direkt.
@@ -2682,6 +2817,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_scan.add_argument("--project", default="", help="override the linked project key")
     p_scan.add_argument("--limit", type=int, default=250, help="how many issues to map")
     p_scan.add_argument("--json", action="store_true")
+    p_codemap = sub.add_parser("codemap", help="the packages of a repo and how they depend on each other")
+    p_codemap.add_argument("--repo-name", default="", help="the linked repo (default: the only link)")
+    p_codemap.add_argument("--repo", default="", help="a directory instead of the local copy")
+    p_codemap.add_argument("--json", action="store_true")
     p_repo = sub.add_parser("repo", help="one repo: what it is, what is open, and its link")
     p_repo.add_argument("name", nargs="?", help="owner/name, or a name")
     p_repo.add_argument("--json", action="store_true")
@@ -2731,6 +2870,8 @@ def main(argv) -> int:
         return cmd_repo(args)
     if args.cmd == "scan":
         return cmd_scan(args)
+    if args.cmd == "codemap":
+        return cmd_codemap(args)
     if args.cmd == "admin":
         return cmd_admin(args)
     # En plats för projektnyckeln: flaggan, annars länken, annars standarden. Nästa,
