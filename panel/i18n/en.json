@@ -353,5 +353,11 @@
  "uppdatera kartan med färsk data": "refresh the map with fresh data",
  "publicera till n8n": "publish to n8n",
  "publicerat och påslaget": "published and switched on",
- "kunde inte publicera": "could not publish"
+ "kunde inte publicera": "could not publish",
+ "kunskapsgrafen": "the knowledge graph",
+ "hämtar grafen …": "fetching the graph …",
+ "kunde inte läsa grafen": "could not read the graph",
+ "används av": "used by",
+ "filer": "files",
+ "ingen uppgift nämner filerna i paketet": "no issue mentions the files in this package"
 }

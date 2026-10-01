@@ -353,5 +353,11 @@
  "uppdatera kartan med färsk data": "actualiser la carte avec des données fraîches",
  "publicera till n8n": "publier dans n8n",
  "publicerat och påslaget": "publié et activé",
- "kunde inte publicera": "impossible de publier"
+ "kunde inte publicera": "impossible de publier",
+ "kunskapsgrafen": "le graphe de connaissances",
+ "hämtar grafen …": "chargement du graphe …",
+ "kunde inte läsa grafen": "impossible de lire le graphe",
+ "används av": "utilisé par",
+ "filer": "fichiers",
+ "ingen uppgift nämner filerna i paketet": "aucun ticket ne mentionne les fichiers du paquet"
 }

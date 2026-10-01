@@ -355,7 +355,8 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   /* Flödesvyn: rutan och nodens inspektör sida vid sida, som i n8n. Inspektören tar
      plats först när en nod är vald -- annars står rutan själv kvar i full bredd. */
   .flowsplit { display: grid; gap: 16px; align-items: start; }
-  .flowsplit:has(#flowNode:not([hidden])) { grid-template-columns: minmax(0, 1fr) 330px; }
+  .flowsplit:has(#flowNode:not([hidden])),
+.flowsplit:has(#codeNode:not([hidden])) { grid-template-columns: minmax(0, 1fr) 330px; }
   /* Flödesytan viker för editorn. [hidden] förlorar mot display: grid -- samma fälla
      som filterraden gick i en gång. */
   .flowsplit[hidden] { display: none; }
@@ -642,7 +643,13 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
           <div class="meta">Paketen och vad de använder — samma tavla som n8n:s flöde, så
             vägarna går åt höger: den som anropar till vänster, det anropade till höger.
             Dra i en ruta för att flytta den, dra i bakgrunden för att panorera, rullhjulet zoomar.</div>
-          <div class="graph" id="codeCanvas"><div class="empty">hämtar kodkartan …</div></div>
+          <div class="flowsplit" id="codeSplit">
+            <div class="graph" id="codeCanvas"><div class="empty">hämtar kodkartan …</div></div>
+            <!-- Paketets inspektör. Klicket är hela poängen: vad paketet innehåller, vem
+                 som använder det, och vilka ärenden som nämner dess filer. Skarvningen
+                 finns bara i kunskapsgrafen — de två halvorna visas redan var för sig. -->
+            <div class="panel" id="codeNode" hidden></div>
+          </div>
         </div>
       </div>
 
@@ -794,6 +801,9 @@ const TEXT = {
   flowPublished: "publicerat och påslaget",
   flowPublishFailed: "kunde inte publicera",
   flowUnreadable: "flödesfilen går inte att läsa", flowNodes: "noder", flowEdges: "vägar",
+  graphFacts: "kunskapsgrafen", graphLoading: "hämtar grafen …",
+  graphFailed: "kunde inte läsa grafen", graphUsedBy: "används av", graphFiles: "filer",
+  graphNoIssues: "ingen uppgift nämner filerna i paketet",
   n8nCanvas: "n8n:s egen tavla", under: "under", readCode: "läst ur repot",
   none: "utan",
 };
@@ -1547,6 +1557,9 @@ function renderKartaProject() {
 // n8n:s ruta i miniatyr. Panelen visar; ändrar gör man i n8n, via ändra-knappen nedan
 // -- men ett klick skall svara på frågan "vad gör den här noden?".
 function flowNodeShow(key) {
+  // Kodkartans rutor är paket, inte n8n-noder: de har sin egen inspektör i sitt eget hus
+  // (flödets ruta sitter i Automatik-fliken, så ett paketklick ritade ingenting alls).
+  if (FLOW.canvas === "code") { codeNodeShow(key); return; }
   const ruta = document.getElementById("flowNode");
   if (ruta) ruta.hidden = false;   // artefakten håller undan den; ritytan vill ha den
   const host = document.getElementById("flowNode");
@@ -1573,9 +1586,80 @@ function flowNodeShow(key) {
     </div>`;
 }
 
+// Kunskapsgrafen: paket, filer och ärenden med sina relationer. Den hämtas i stället för
+// att ritas -- det grafen tillför är SKARVNINGEN (vilka uppgifter nämner filerna i det här
+// paketet), och den frågan besvaras av uppslag, inte av 274 rutor på en duk.
+const GRAPH = { repo: null, data: null, error: "" };
+
+async function graphOf(repo) {
+  const nyckel = repo || "";
+  if (GRAPH.repo === nyckel && (GRAPH.data || GRAPH.error)) return GRAPH.data;
+  GRAPH.repo = nyckel; GRAPH.data = null; GRAPH.error = "";
+  try {
+    const a = await (await fetch("/api/graph?repo=" + encodeURIComponent(nyckel))).json();
+    if (a && a.ok) GRAPH.data = a;
+    else GRAPH.error = (a && (a.error || a.note)) || "inget svar";
+  } catch (e) { GRAPH.error = e.message; }
+  return GRAPH.data;
+}
+
+// Ren funktion: grafen in, fakta ut. Provas i test_wiring på en handgjord graf, av samma
+// skäl som i MCP-verktyget -- logiken skall inte hänga på att maskinen råkar ha en scanning.
+function graphFacts(graph, paket) {
+  const byId = {};
+  ((graph || {}).entities || []).forEach(e => { byId[e.id] = e; });
+  const rel = (graph || {}).relations || [];
+  const namn = id => (byId[id] || {}).name || id;
+  const id = "paket:" + paket;
+  const users = rel.filter(r => r.kind === "använder" && r.to === id).map(r => namn(r.from));
+  const filer = rel.filter(r => r.kind === "ligger-i" && r.to === id).map(r => r.from);
+  const sedda = {};
+  filer.forEach(f => rel.forEach(r => {
+    if (r.kind === "nämner" && r.to === f) sedda[r.from] = byId[r.from] || { id: r.from, name: r.from };
+  }));
+  return { users: users, files: filer.map(namn).sort(), issues: Object.values(sedda) };
+}
+
+async function codeNodeShow(key) {
+  const host = document.getElementById("codeNode");
+  if (!host) return;
+  const svg = document.getElementById("codeSvg");
+  if (svg) [...svg.querySelectorAll(".fnode")].forEach(g =>
+    g.classList.toggle("sel", g.dataset.node === key));
+  const node = ((CODE || {}).graph || {}).nodes
+    ? (CODE.graph.nodes || []).find(n => n.key === key) : null;
+  if (!node) { host.hidden = true; host.innerHTML = ""; return; }
+  const ex = node.examples || [];
+  host.hidden = false;
+  host.innerHTML = `<h3>${esc(node.name || key)}</h3>
+    <div class="body">
+      <div class="meta">${esc(node.type || "")}${ex.length ? " · " + esc(ex.join(", ")) : ""}</div>
+      <div class="phead">${esc(TEXT.graphFacts)}</div>
+      <div id="codeGraphFacts" class="meta">${esc(TEXT.graphLoading)}</div>
+    </div>`;
+  const graph = await graphOf(scanRepo());
+  const ruta = document.getElementById("codeGraphFacts");
+  if (!ruta) return;                       // rutan hann bytas medan grafen hämtades
+  if (!graph) { ruta.textContent = TEXT.graphFailed + (GRAPH.error ? ": " + GRAPH.error : ""); return; }
+  const f = graphFacts(graph, node.name || key);
+  const arader = f.issues.slice(0, 8).map(i => `<div class="r">` +
+    link(jiraOrigin() ? `${jiraOrigin()}/browse/${i.name}` : "",
+         `<span class="key">${esc(i.name)}</span> <span class="t">${esc(i.summary || "")}</span>`) +
+    `</div>`).join("");
+  ruta.className = "";
+  ruta.innerHTML = kpi([[TEXT.graphUsedBy, f.users.length, ""],
+                        [TEXT.graphFiles, f.files.length, ""],
+                        ["ärenden", f.issues.length, ""]]) +
+    (arader ? `<div class="wl">${arader}</div>`
+            : `<div class="meta" style="margin-top:8px">${esc(TEXT.graphNoIssues)}</div>`);
+}
+
 function flowNodeClear() {
-  const host = document.getElementById("flowNode");
-  if (host) { host.hidden = true; host.innerHTML = ""; }
+  // Båda: den som inte är öppen skall inte ligga kvar och gapa i sin flik.
+  ["flowNode", "codeNode"].forEach(id => {
+    const host = document.getElementById(id);
+    if (host) { host.hidden = true; host.innerHTML = ""; }
+  });
   const svg = document.getElementById(`${FLOW.canvas || "flow"}Svg`);
   if (svg) [...svg.querySelectorAll(".fnode.sel")].forEach(g => g.classList.remove("sel"));
 }

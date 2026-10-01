@@ -353,5 +353,11 @@
  "uppdatera kartan med färsk data": "uppdatera kartan med färsk data",
  "publicera till n8n": "publicera till n8n",
  "publicerat och påslaget": "publicerat och påslaget",
- "kunde inte publicera": "kunde inte publicera"
+ "kunde inte publicera": "kunde inte publicera",
+ "kunskapsgrafen": "kunskapsgrafen",
+ "hämtar grafen …": "hämtar grafen …",
+ "kunde inte läsa grafen": "kunde inte läsa grafen",
+ "används av": "används av",
+ "filer": "filer",
+ "ingen uppgift nämner filerna i paketet": "ingen uppgift nämner filerna i paketet"
 }

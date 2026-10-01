@@ -210,6 +210,52 @@ console.log(JSON.stringify(got) === JSON.stringify(want) ? "OK" : "FEL " + JSON.
               "katalogen bär sökvägen, raden bara filnamnet",
               (group_run.stdout + group_run.stderr).strip()[:140])
 
+    # Kunskapsgrafen: skarvningen mellan kod och ärenden räknas ur relationerna, och ett
+    # paket får bara sina egna. Ren funktion mot en handgjord graf -- den skall inte hänga
+    # på att maskinen råkar ha en scanning för tillfället.
+    fn = re.search(r"function graphFacts\(graph, paket\) \{.*?\n\}", html, re.S)
+    check(bool(fn), "grafens fakta går att läsa")
+    if fn:
+        with _tf.NamedTemporaryFile("w", suffix=".js", delete=False, encoding="utf-8") as fh:
+            fh.write(fn.group(0) + """
+const g = {
+  entities: [
+    {id: "paket:a", name: "a"}, {id: "paket:b", name: "b"}, {id: "paket:c", name: "c"},
+    {id: "fil:a/Foo.java", name: "Foo.java"}, {id: "fil:a/Bar.java", name: "Bar.java"},
+    {id: "fil:b/Zap.java", name: "Zap.java"},
+    {id: "ärende:P-1", name: "P-1", summary: "ett"},
+    {id: "ärende:P-2", name: "P-2", summary: "två"},
+  ],
+  relations: [
+    {from: "fil:a/Foo.java", to: "paket:a", kind: "ligger-i"},
+    {from: "fil:a/Bar.java", to: "paket:a", kind: "ligger-i"},
+    {from: "fil:b/Zap.java", to: "paket:b", kind: "ligger-i"},
+    {from: "ärende:P-1", to: "fil:a/Foo.java", kind: "nämner"},
+    {from: "ärende:P-2", to: "fil:a/Bar.java", kind: "nämner"},
+    {from: "ärende:P-1", to: "fil:b/Zap.java", kind: "nämner"},
+    {from: "paket:c", to: "paket:a", kind: "använder"},
+    {from: "paket:b", to: "paket:a", kind: "använder"},
+  ],
+};
+const fel = [];
+const a = graphFacts(g, "a");
+if (a.users.sort().join(",") !== "b,c") fel.push("användare: " + a.users.join(","));
+if (a.files.join(",") !== "Bar.java,Foo.java") fel.push("filer: " + a.files.join(","));
+if (a.issues.map(i => i.name).sort().join(",") !== "P-1,P-2") fel.push("ärenden: " + a.issues.map(i => i.name).join(","));
+const b = graphFacts(g, "b");
+if (b.issues.map(i => i.name).join(",") !== "P-1") fel.push("b:s ärenden: " + b.issues.map(i => i.name).join(","));
+if (b.users.length) fel.push("b skall inte ha användare");
+if (graphFacts(g, "(utan paket)").files.length) fel.push("okänt paket gav filer");
+if (graphFacts({}, "a").files.length) fel.push("tom graf gav filer");
+console.log(fel.length ? "FEL " + fel.join(" | ") : "OK");
+""")
+            graph_js = fh.name
+        graph_run = _sp.run(["node", graph_js], capture_output=True, text=True)
+        _os.unlink(graph_js)
+        check(graph_run.stdout.strip() == "OK",
+              "ett paket får sina egna filer och sina egna ärenden",
+              (graph_run.stdout + graph_run.stderr).strip()[:160])
+
     # Vad som syns: valet ligger i webbläsaren som en lista av det som är AV. Skräp i
     # lagringen skall ge inga val (allt syns), inte ett halvt trasigt gränssnitt.
     fn = re.search(r"function hiddenPrefs\(raw\) \{.*?\n\}", html, re.S)

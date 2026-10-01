@@ -353,5 +353,11 @@
  "uppdatera kartan med färsk data": "kaart bijwerken met verse data",
  "publicera till n8n": "publiceren naar n8n",
  "publicerat och påslaget": "gepubliceerd en aangezet",
- "kunde inte publicera": "kon niet publiceren"
+ "kunde inte publicera": "kon niet publiceren",
+ "kunskapsgrafen": "de kennisgraaf",
+ "hämtar grafen …": "graaf wordt geladen …",
+ "kunde inte läsa grafen": "kon de graaf niet lezen",
+ "används av": "gebruikt door",
+ "filer": "bestanden",
+ "ingen uppgift nämner filerna i paketet": "geen taak noemt de bestanden in dit pakket"
 }
