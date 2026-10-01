@@ -59,6 +59,29 @@ n8nac push n8n/workflows/<fil> --verify
 n8nac pull <workflow-id>            # om något ändrades i editorn
 ```
 
+## Ett flöde för ett annat repo
+
+Panelen ritar varje `workflows/*.workflow.ts` som finns här — men bara i det repo flödet
+hör till. AutoCore har inget eget flöde än, alltså står dess Automatik-tabb tom med en not
+om varför. Så gör man ett:
+
+```sh
+cp n8n/workflows/github-what-needs-me.workflow.ts n8n/workflows/autocore-<vad den gör>.workflow.ts
+#   byt namn, noder och vad den gör -- och TA BORT id-raden i @workflow: låter du den stå
+#   skriver push över flödet du kopierade i stället för att skapa ett nytt.
+n8nac push n8n/workflows/autocore-<vad den gör>.workflow.ts --verify   # ger den ett n8n-id
+```
+
+Sedan hemvisten, i `workflows/.scopes.json`:
+
+```json
+{ "autocore-<vad den gör>.workflow.ts": "AutoCore" }
+```
+
+Utan post visas flödet i **alla** repon; med post bara i sitt eget. Provat: en ny fil
+plockas upp av panelen direkt (den ritas ur filen), och `id`-raden är den som avgör om
+push skapar eller skriver över.
+
 ## Nya maskiner
 
 ```sh
