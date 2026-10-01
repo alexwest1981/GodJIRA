@@ -1153,17 +1153,32 @@ def cmd_flowmap(args) -> int:
     return 0 if ok else 1
 
 
+def chosen_repo_dir(args) -> str:
+    """Repot kommandot gäller, när det är namngivet.
+
+    Föll förut tillbaka på "den enda länken" även när ett namn gavs, och den enda länken
+    är AutoCore -- alltså svarade kommandot för AutoCore hur man än frågade (mätt:
+    obsidian-valvet, hermes-skills och OmaNotation fick alla AutoCore-kartan, 22 paket).
+    Ett namn som inte känns igen skall ge ett besked, inte ett annat repos svar.
+    """
+    root = plan_repo_dir(args)
+    if root or (getattr(args, "repo_name", "") or "").strip():
+        return root
+    linked = [dict(value or {}, repo=key) for key, value in load_links().items()
+              if (value or {}).get("project")]
+    return local_clone(linked[0]["repo"]) if len(linked) == 1 else ""
+
+
 def cmd_codemap(args) -> int:
     """Kodkartan för repot: hur paketen hänger ihop, ritad som en tavla."""
-    root = plan_repo_dir(args)
-    if not root:
-        linked = [dict(value or {}, repo=key) for key, value in load_links().items()
-                  if (value or {}).get("project")]
-        if len(linked) == 1:
-            root = local_clone(linked[0]["repo"]) or ""
+    root = chosen_repo_dir(args)
     if not root or not Path(root).is_dir():
-        say(args, {"ok": False, "error": "no local copy of the repo to map"}, [])
-        print("no local copy of the repo to map — link it, or give --repo <dir>")
+        # Namnet står i beskedet: "no local copy" sade inte vilket repo som inte hade
+        # någon kopia, och den som frågade om ett repo fick ett svar om ett annat.
+        say(args, {"ok": False, "error": "no local copy of {} to map".format(
+            (getattr(args, "repo_name", "") or "the repo").strip())},
+            ["no local copy of {} to map — link it, or give --repo <dir>".format(
+                (getattr(args, "repo_name", "") or "the repo").strip())])
         return 1
     graph = code_map(Path(root))
     graph["repo"] = repo_slug_of_dir(root) or root
@@ -1183,15 +1198,14 @@ def cmd_graph(args) -> int:
     arbetsdelning som scanningen: kommandot läser, panelen och agenten läser filen.
     """
     project, _source = link_project(args)
-    root = plan_repo_dir(args)
-    if not root:
-        linked = [dict(value or {}, repo=key) for key, value in load_links().items()
-                  if (value or {}).get("project")]
-        if len(linked) == 1:
-            root = local_clone(linked[0]["repo"]) or ""
+    root = chosen_repo_dir(args)
     if not root or not Path(root).is_dir():
-        say(args, {"ok": False, "error": "no local copy of the repo to graph"}, [])
-        print("no local copy of the repo to graph — link it, or give --repo <dir>")
+        # Namnet står i beskedet: "no local copy" sade inte vilket repo som inte hade
+        # någon kopia, och den som frågade om ett repo fick ett svar om ett annat.
+        say(args, {"ok": False, "error": "no local copy of {} to graph".format(
+            (getattr(args, "repo_name", "") or "the repo").strip())},
+            ["no local copy of {} to graph — link it, or give --repo <dir>".format(
+                (getattr(args, "repo_name", "") or "the repo").strip())])
         return 1
     scan_path = SCAN_FILE / "scan-{}.json".format(project.upper())
     scan = {}
@@ -2752,16 +2766,14 @@ def cmd_scan(args) -> int:
     """
     started = time.time()
     project, source = link_project(args)
-    root = plan_repo_dir(args)
-    if not root:
-        # Utan namn: den enda länken är den man menar. Samma regel som projektnyckeln.
-        linked = [dict(value or {}, repo=key) for key, value in load_links().items()
-                  if (value or {}).get("project")]
-        if len(linked) == 1:
-            root = local_clone(linked[0]["repo"]) or ""
+    # Utan namn: den enda länken är den man menar. Med ett namn som inte känns igen är
+    # svaret inget repo alls -- annars skannade ett okänt namn AutoCore och skrev sin
+    # scanning över det projektets fil (scan-<PROJEKT>.json).
+    root = chosen_repo_dir(args)
     if not root or not Path(root).is_dir():
         say(args, {}, [])
-        print("no local copy of the repo to scan — link it, or give --repo <dir>")
+        print("no local copy of {} to scan — link it, or give --repo <dir>".format(
+            (getattr(args, "repo_name", "") or "the repo").strip()))
         return 1
     try:
         result = scan_map(client(), project, Path(root), limit=int(getattr(args, "limit", 250)))
