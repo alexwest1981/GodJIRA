@@ -359,5 +359,11 @@
  "kunde inte läsa grafen": "could not read the graph",
  "används av": "used by",
  "filer": "files",
- "ingen uppgift nämner filerna i paketet": "no issue mentions the files in this package"
+ "ingen uppgift nämner filerna i paketet": "no issue mentions the files in this package",
+ "stäng": "close",
+ "paketet": "the package",
+ "ärenden som nämner": "issues mentioning it",
+ "filer som nämns": "files mentioned",
+ "visa alla": "show all",
+ "visa färre": "show fewer"
 }

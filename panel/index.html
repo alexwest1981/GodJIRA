@@ -804,6 +804,8 @@ const TEXT = {
   graphFacts: "kunskapsgrafen", graphLoading: "hämtar grafen …",
   graphFailed: "kunde inte läsa grafen", graphUsedBy: "används av", graphFiles: "filer",
   graphNoIssues: "ingen uppgift nämner filerna i paketet",
+  graphMentions: "ärenden som nämner", graphFilesMentioned: "filer som nämns",
+  paketet: "paketet", visaAlla: "visa alla", visaFärre: "visa färre", stäng: "stäng",
   n8nCanvas: "n8n:s egen tavla", under: "under", readCode: "läst ur repot",
   none: "utan",
 };
@@ -1559,7 +1561,7 @@ function renderKartaProject() {
 function flowNodeShow(key) {
   // Kodkartans rutor är paket, inte n8n-noder: de har sin egen inspektör i sitt eget hus
   // (flödets ruta sitter i Automatik-fliken, så ett paketklick ritade ingenting alls).
-  if (FLOW.canvas === "code") { codeNodeShow(key); return; }
+  if (FLOW.canvas === "code") { codeNodeShow("paket:" + key); return; }
   const ruta = document.getElementById("flowNode");
   if (ruta) ruta.hidden = false;   // artefakten håller undan den; ritytan vill ha den
   const host = document.getElementById("flowNode");
@@ -1587,9 +1589,11 @@ function flowNodeShow(key) {
 }
 
 // Kunskapsgrafen: paket, filer och ärenden med sina relationer. Den hämtas i stället för
-// att ritas -- det grafen tillför är SKARVNINGEN (vilka uppgifter nämner filerna i det här
-// paketet), och den frågan besvaras av uppslag, inte av 274 rutor på en duk.
+// att ritas -- och den går att GÅ I: varje rad i inspektören öppnar nästa enhet, samma data
+// ett uppslag i taget. Ett paket visar sina filer, en fil vilka ärenden som nämner den, ett
+// ärende vilka filer det rör. Det är djupet, och det behöver ingen egen tavla.
 const GRAPH = { repo: null, data: null, error: "" };
+const GRAF = { id: "", expand: false, hist: [] };
 
 async function graphOf(repo) {
   const nyckel = repo || "";
@@ -1603,55 +1607,134 @@ async function graphOf(repo) {
   return GRAPH.data;
 }
 
-// Ren funktion: grafen in, fakta ut. Provas i test_wiring på en handgjord graf, av samma
-// skäl som i MCP-verktyget -- logiken skall inte hänga på att maskinen råkar ha en scanning.
-function graphFacts(graph, paket) {
+// Ren funktion: grafen in, en enhets grannar ut, grupperade per relationstyp och riktning.
+// Provas i test_wiring på en handgjord graf -- logiken skall inte hänga på att maskinen
+// råkar ha en scanning för tillfället.
+function graphView(graph, id) {
   const byId = {};
   ((graph || {}).entities || []).forEach(e => { byId[e.id] = e; });
-  const rel = (graph || {}).relations || [];
-  const namn = id => (byId[id] || {}).name || id;
-  const id = "paket:" + paket;
-  const users = rel.filter(r => r.kind === "använder" && r.to === id).map(r => namn(r.from));
-  const filer = rel.filter(r => r.kind === "ligger-i" && r.to === id).map(r => r.from);
-  const sedda = {};
-  filer.forEach(f => rel.forEach(r => {
-    if (r.kind === "nämner" && r.to === f) sedda[r.from] = byId[r.from] || { id: r.from, name: r.from };
-  }));
-  return { users: users, files: filer.map(namn).sort(), issues: Object.values(sedda) };
+  if (!byId[id]) return null;
+  const pointsAt = {}, pointedAtBy = {};
+  ((graph || {}).relations || []).forEach(r => {
+    if (r.from === id) (pointsAt[r.kind] = pointsAt[r.kind] || []).push(byId[r.to] || { id: r.to });
+    if (r.to === id) (pointedAtBy[r.kind] = pointedAtBy[r.kind] || []).push(byId[r.from] || { id: r.from });
+  });
+  return { entity: byId[id], pointsAt: pointsAt, pointedAtBy: pointedAtBy };
 }
 
-async function codeNodeShow(key) {
+// Ärendena bakom en fil (nämner), och för ett paket: ärendena bakom alla dess filer. Det är
+// skarvningen kodkartan och scanningen inte kan visa var för sig.
+function graphIssues(graph, id) {
+  const v = graphView(graph, id);
+  if (!v) return [];
+  const filer = v.entity.type === "package"
+    ? (v.pointedAtBy["ligger-i"] || []).map(e => e.id) : [id];
+  const sedda = {};
+  filer.forEach(f => {
+    const w = graphView(graph, f);
+    if (w) (w.pointedAtBy["nämner"] || []).forEach(e => { sedda[e.id] = e; });
+  });
+  return Object.values(sedda);
+}
+
+const GRAF_LIMIT = 8;
+
+// En rad i listan. Ärendenyckeln är en länk till Jira; raden runt omkring öppnar enheten --
+// klickdelegaten låter länkar gå före, annars stal raden länkens klick.
+function grafRad(e) {
+  const under = e.type === "issue" ? (e.summary || "")
+              : e.type === "file" ? (e.package || "") : (e.label || "");
+  const namn = e.type === "issue"
+    ? link(jiraOrigin() ? `${jiraOrigin()}/browse/${e.name}` : "",
+           `<span class="key">${esc(e.name)}</span>`)
+    : `<span class="t">${esc(e.name || e.id)}</span>`;
+  return `<div class="r" data-graf="${esc(e.id)}">${namn}` +
+    `<span class="tside meta">${esc(under)}</span></div>`;
+}
+
+function grafLista(head, poster) {
+  if (!poster.length) return "";
+  const visa = GRAF.expand ? poster : poster.slice(0, GRAF_LIMIT);
+  const knapp = poster.length > GRAF_LIMIT
+    ? `<button class="chip" data-gall="1">${esc(GRAF.expand ? TEXT.visaFärre : TEXT.visaAlla)}</button>` : "";
+  return `<div class="phead">${esc(head)} (${poster.length}) ${knapp}</div>` +
+    `<div class="wl">${visa.map(grafRad).join("")}</div>`;
+}
+
+// Ritar om ur det som redan hämtats. Navigeringen är ett id i taget, inget mer.
+function grafRita() {
   const host = document.getElementById("codeNode");
   if (!host) return;
+  const v = GRAPH.data && GRAF.id ? graphView(GRAPH.data, GRAF.id) : null;
+  if (!v) { host.hidden = true; host.innerHTML = ""; return; }
+  const e = v.entity, b = v.pointedAtBy, a = v.pointsAt;
+  let rubrik = e.name || e.id, under = "";
+  const delar = [];
+  if (e.type === "package") {
+    const filer = b["ligger-i"] || [], anv = b["använder"] || [];
+    const iss = graphIssues(GRAPH.data, e.id);
+    under = `${filer.length} ${TEXT.graphFiles} · ${TEXT.graphUsedBy} ${anv.length} · ${iss.length} ärenden`;
+    delar.push(grafLista(TEXT.graphFiles, filer), grafLista(TEXT.graphUsedBy, anv),
+               grafLista("ärenden", iss));
+  } else if (e.type === "file") {
+    const paket = a["ligger-i"] || [];
+    const iss = graphIssues(GRAPH.data, e.id);
+    under = e.path || "";
+    delar.push(grafLista(TEXT.paketet, paket),
+               grafLista(TEXT.graphMentions, iss));
+  } else {
+    under = (e.summary || "") + (e.status || e.pool ? ` · ${e.status || e.pool}` : "");
+    delar.push(grafLista(TEXT.graphFilesMentioned, a["nämner"] || []));
+  }
+  const tillbaka = GRAF.hist.length
+    ? `<a data-gback="1">← ${esc(GRAF.hist[GRAF.hist.length - 1].namn)}</a> · ` : "";
+  host.hidden = false;
+  host.innerHTML = `<h3>${esc(rubrik)} <span class="grow"></span>` +
+      `<span class="meta">${tillbaka}<a data-gclose="1">${esc(TEXT.stäng)}</a></span></h3>
+    <div class="body">
+      <div class="meta">${esc(under)}</div>
+      <div class="phead">${esc(TEXT.graphFacts)}</div>
+      ${delar.join("") || `<div class="meta">${esc(TEXT.graphNoIssues)}</div>`}
+    </div>`;
+}
+
+async function codeNodeShow(id, tillbaka) {
+  const host = document.getElementById("codeNode");
+  if (!host) return;
+  if (tillbaka) {
+    const forra = GRAF.hist.pop();
+    if (forra) GRAF.id = forra.id;
+  } else if (id) {
+    if (GRAF.id && GRAF.id !== id) {
+      const v = GRAPH.data ? graphView(GRAPH.data, GRAF.id) : null;
+      GRAF.hist.push({ id: GRAF.id, namn: (v && (v.entity.name || v.entity.id)) || GRAF.id });
+    }
+    GRAF.id = id;
+  }
+  GRAF.expand = GRAF.expand && !!id;         // "visa alla" gäller en vy, inte nästa
+  // Paketklicket kommer från kodkartan: markera rutan där, och hämta grafen om den inte är
+  // hämtad. Namnet i kartan är paketets, och grafens paket-id är samma namn med prefix.
+  const paketNamn = GRAF.id.startsWith("paket:") ? GRAF.id.slice(6) : "";
   const svg = document.getElementById("codeSvg");
   if (svg) [...svg.querySelectorAll(".fnode")].forEach(g =>
-    g.classList.toggle("sel", g.dataset.node === key));
-  const node = ((CODE || {}).graph || {}).nodes
-    ? (CODE.graph.nodes || []).find(n => n.key === key) : null;
-  if (!node) { host.hidden = true; host.innerHTML = ""; return; }
-  const ex = node.examples || [];
-  host.hidden = false;
-  host.innerHTML = `<h3>${esc(node.name || key)}</h3>
-    <div class="body">
-      <div class="meta">${esc(node.type || "")}${ex.length ? " · " + esc(ex.join(", ")) : ""}</div>
-      <div class="phead">${esc(TEXT.graphFacts)}</div>
-      <div id="codeGraphFacts" class="meta">${esc(TEXT.graphLoading)}</div>
-    </div>`;
-  const graph = await graphOf(scanRepo());
-  const ruta = document.getElementById("codeGraphFacts");
-  if (!ruta) return;                       // rutan hann bytas medan grafen hämtades
-  if (!graph) { ruta.textContent = TEXT.graphFailed + (GRAPH.error ? ": " + GRAPH.error : ""); return; }
-  const f = graphFacts(graph, node.name || key);
-  const arader = f.issues.slice(0, 8).map(i => `<div class="r">` +
-    link(jiraOrigin() ? `${jiraOrigin()}/browse/${i.name}` : "",
-         `<span class="key">${esc(i.name)}</span> <span class="t">${esc(i.summary || "")}</span>`) +
-    `</div>`).join("");
-  ruta.className = "";
-  ruta.innerHTML = kpi([[TEXT.graphUsedBy, f.users.length, ""],
-                        [TEXT.graphFiles, f.files.length, ""],
-                        ["ärenden", f.issues.length, ""]]) +
-    (arader ? `<div class="wl">${arader}</div>`
-            : `<div class="meta" style="margin-top:8px">${esc(TEXT.graphNoIssues)}</div>`);
+    g.classList.toggle("sel", !!paketNamn && g.dataset.node === paketNamn));
+  if (!GRAPH.data) {
+    await graphOf(scanRepo());
+    if (!GRAPH.data) {                              // ingen graf: visa det kartan vet
+      const node = paketNamn ? (((CODE || {}).graph || {}).nodes || [])
+        .find(n => n.key === paketNamn) : null;
+      host.hidden = false;
+      host.innerHTML = node
+        ? `<h3>${esc(node.name || GRAF.id)}</h3><div class="body">
+             <div class="meta">${esc(node.type || "")}</div>
+             <div class="phead">${esc(TEXT.graphFacts)}</div>
+             <div class="meta">${esc(TEXT.graphFailed)}${GRAPH.error ? ": " + esc(GRAPH.error) : ""}</div>
+           </div>`
+        : "";
+      return;
+    }
+  }
+  grafRita();
 }
 
 function flowNodeClear() {
@@ -3447,6 +3530,16 @@ document.addEventListener("dragend", () => {
 });
 
 document.addEventListener("click", e => {
+  // Raderna i kunskapsgrafen öppnar nästa enhet -- men länken inuti raden (ärendenyckeln)
+  // skall öppna Jira. Bara länkar som NAVIGERAR går före: bakåt och stäng är ankare utan
+  // href, och en vakt på varje <a> svalde deras klick (mätt: bakåt gjorde ingenting).
+  if (!e.target.closest("a[href]")) {
+    const graf = e.target.closest("[data-graf]");
+    if (graf) return codeNodeShow(graf.dataset.graf);
+    if (e.target.closest("[data-gall]")) { GRAF.expand = !GRAF.expand; return grafRita(); }
+    if (e.target.closest("[data-gback]")) return codeNodeShow(null, true);
+    if (e.target.closest("[data-gclose]")) return flowNodeClear();
+  }
   if (e.target.closest('[data-act="refresh"]')) return load(true);
   const lay = e.target.closest('[data-act="lay"]');
   if (lay) return layoutToggle(lay.dataset.id);

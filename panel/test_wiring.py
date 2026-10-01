@@ -210,21 +210,25 @@ console.log(JSON.stringify(got) === JSON.stringify(want) ? "OK" : "FEL " + JSON.
               "katalogen bär sökvägen, raden bara filnamnet",
               (group_run.stdout + group_run.stderr).strip()[:140])
 
-    # Kunskapsgrafen: skarvningen mellan kod och ärenden räknas ur relationerna, och ett
-    # paket får bara sina egna. Ren funktion mot en handgjord graf -- den skall inte hänga
-    # på att maskinen råkar ha en scanning för tillfället.
-    fn = re.search(r"function graphFacts\(graph, paket\) \{.*?\n\}", html, re.S)
-    check(bool(fn), "grafens fakta går att läsa")
+    # Kunskapsgrafen går att GÅ I: en enhets grannar räknas ur relationerna, ett paket får
+    # sina egna filer och sina egna ärenden (ingenting läckt från grannpaketet), och filens
+    # ärenden är de som nämner just den. Rena funktioner mot en handgjord graf -- de skall
+    # inte hänga på att maskinen råkar ha en scanning för tillfället.
+    fn = re.search(r"function graphView\(graph, id\) \{.*?\n\}", html, re.S)
+    check(bool(fn), "grafens uppslag går att läsa")
     if fn:
         with _tf.NamedTemporaryFile("w", suffix=".js", delete=False, encoding="utf-8") as fh:
-            fh.write(fn.group(0) + """
+            fh.write(fn.group(0) + re.search(r"function graphIssues\(graph, id\) \{.*?\n\}",
+                                             html, re.S).group(0) + """
 const g = {
   entities: [
-    {id: "paket:a", name: "a"}, {id: "paket:b", name: "b"}, {id: "paket:c", name: "c"},
-    {id: "fil:a/Foo.java", name: "Foo.java"}, {id: "fil:a/Bar.java", name: "Bar.java"},
-    {id: "fil:b/Zap.java", name: "Zap.java"},
-    {id: "ärende:P-1", name: "P-1", summary: "ett"},
-    {id: "ärende:P-2", name: "P-2", summary: "två"},
+    {id: "paket:a", type: "package", name: "a"}, {id: "paket:b", type: "package", name: "b"},
+    {id: "paket:c", type: "package", name: "c"},
+    {id: "fil:a/Foo.java", type: "file", name: "Foo.java", package: "a"},
+    {id: "fil:a/Bar.java", type: "file", name: "Bar.java", package: "a"},
+    {id: "fil:b/Zap.java", type: "file", name: "Zap.java", package: "b"},
+    {id: "ärende:P-1", type: "issue", name: "P-1", summary: "ett"},
+    {id: "ärende:P-2", type: "issue", name: "P-2", summary: "två"},
   ],
   relations: [
     {from: "fil:a/Foo.java", to: "paket:a", kind: "ligger-i"},
@@ -237,23 +241,28 @@ const g = {
     {from: "paket:b", to: "paket:a", kind: "använder"},
   ],
 };
+const namn = xs => (xs || []).map(e => e.name).sort().join(",");
 const fel = [];
-const a = graphFacts(g, "a");
-if (a.users.sort().join(",") !== "b,c") fel.push("användare: " + a.users.join(","));
-if (a.files.join(",") !== "Bar.java,Foo.java") fel.push("filer: " + a.files.join(","));
-if (a.issues.map(i => i.name).sort().join(",") !== "P-1,P-2") fel.push("ärenden: " + a.issues.map(i => i.name).join(","));
-const b = graphFacts(g, "b");
-if (b.issues.map(i => i.name).join(",") !== "P-1") fel.push("b:s ärenden: " + b.issues.map(i => i.name).join(","));
-if (b.users.length) fel.push("b skall inte ha användare");
-if (graphFacts(g, "(utan paket)").files.length) fel.push("okänt paket gav filer");
-if (graphFacts({}, "a").files.length) fel.push("tom graf gav filer");
+const p = graphView(g, "paket:a");
+if (!p) fel.push("paket:a saknas");
+if (namn(p.pointedAtBy["ligger-i"]) !== "Bar.java,Foo.java") fel.push("paketets filer: " + namn(p.pointedAtBy["ligger-i"]));
+if (namn(p.pointedAtBy["använder"]) !== "b,c") fel.push("paketets användare: " + namn(p.pointedAtBy["använder"]));
+if (p.pointsAt["ligger-i"]) fel.push("paketet skall inte ligga i något");
+if (namn(graphIssues(g, "paket:a")) !== "P-1,P-2") fel.push("paketets ärenden: " + namn(graphIssues(g, "paket:a")));
+if (namn(graphIssues(g, "fil:a/Foo.java")) !== "P-1") fel.push("filens ärenden: " + namn(graphIssues(g, "fil:a/Foo.java")));
+if (namn(graphIssues(g, "paket:b")) !== "P-1") fel.push("grannpaketets ärenden läckte in: " + namn(graphIssues(g, "paket:b")));
+const f = graphView(g, "fil:a/Foo.java");
+if (namn(f.pointsAt["ligger-i"]) !== "a") fel.push("filens paket: " + namn(f.pointsAt["ligger-i"]));
+if (!graphView(g, "ärende:P-1").pointsAt["nämner"].length) fel.push("ärendet pekar inte på några filer");
+if (graphView(g, "finns-inte")) fel.push("okänt id gav en vy");
+if (graphView({}, "a")) fel.push("tom graf gav en vy");
 console.log(fel.length ? "FEL " + fel.join(" | ") : "OK");
 """)
             graph_js = fh.name
         graph_run = _sp.run(["node", graph_js], capture_output=True, text=True)
         _os.unlink(graph_js)
         check(graph_run.stdout.strip() == "OK",
-              "ett paket får sina egna filer och sina egna ärenden",
+              "en enhet får sina egna grannar -- och bara sina egna",
               (graph_run.stdout + graph_run.stderr).strip()[:160])
 
     # Vad som syns: valet ligger i webbläsaren som en lista av det som är AV. Skräp i

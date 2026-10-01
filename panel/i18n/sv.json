@@ -359,5 +359,11 @@
  "kunde inte läsa grafen": "kunde inte läsa grafen",
  "används av": "används av",
  "filer": "filer",
- "ingen uppgift nämner filerna i paketet": "ingen uppgift nämner filerna i paketet"
+ "ingen uppgift nämner filerna i paketet": "ingen uppgift nämner filerna i paketet",
+ "stäng": "stäng",
+ "paketet": "paketet",
+ "ärenden som nämner": "ärenden som nämner",
+ "filer som nämns": "filer som nämns",
+ "visa alla": "visa alla",
+ "visa färre": "visa färre"
 }

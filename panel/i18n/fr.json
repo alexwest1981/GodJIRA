@@ -359,5 +359,11 @@
  "kunde inte läsa grafen": "impossible de lire le graphe",
  "används av": "utilisé par",
  "filer": "fichiers",
- "ingen uppgift nämner filerna i paketet": "aucun ticket ne mentionne les fichiers du paquet"
+ "ingen uppgift nämner filerna i paketet": "aucun ticket ne mentionne les fichiers du paquet",
+ "stäng": "fermer",
+ "paketet": "le paquet",
+ "ärenden som nämner": "tickets qui le mentionnent",
+ "filer som nämns": "fichiers mentionnés",
+ "visa alla": "tout afficher",
+ "visa färre": "afficher moins"
 }

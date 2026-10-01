@@ -359,5 +359,11 @@
  "kunde inte läsa grafen": "nie udało się odczytać grafu",
  "används av": "używane przez",
  "filer": "pliki",
- "ingen uppgift nämner filerna i paketet": "żadne zadanie nie wymienia plików w tym pakiecie"
+ "ingen uppgift nämner filerna i paketet": "żadne zadanie nie wymienia plików w tym pakiecie",
+ "stäng": "zamknij",
+ "paketet": "pakiet",
+ "ärenden som nämner": "zadania, które go wymieniają",
+ "filer som nämns": "wymienione pliki",
+ "visa alla": "pokaż wszystkie",
+ "visa färre": "pokaż mniej"
 }

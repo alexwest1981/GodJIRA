@@ -359,5 +359,11 @@
  "kunde inte läsa grafen": "kon de graaf niet lezen",
  "används av": "gebruikt door",
  "filer": "bestanden",
- "ingen uppgift nämner filerna i paketet": "geen taak noemt de bestanden in dit pakket"
+ "ingen uppgift nämner filerna i paketet": "geen taak noemt de bestanden in dit pakket",
+ "stäng": "sluiten",
+ "paketet": "het pakket",
+ "ärenden som nämner": "taken die het noemen",
+ "filer som nämns": "genoemde bestanden",
+ "visa alla": "alles tonen",
+ "visa färre": "minder tonen"
 }

@@ -359,5 +359,11 @@
  "kunde inte läsa grafen": "konnte den Graphen nicht lesen",
  "används av": "verwendet von",
  "filer": "Dateien",
- "ingen uppgift nämner filerna i paketet": "keine Aufgabe nennt die Dateien dieses Pakets"
+ "ingen uppgift nämner filerna i paketet": "keine Aufgabe nennt die Dateien dieses Pakets",
+ "stäng": "schließen",
+ "paketet": "das Paket",
+ "ärenden som nämner": "Aufgaben, die es nennen",
+ "filer som nämns": "genannte Dateien",
+ "visa alla": "alle anzeigen",
+ "visa färre": "weniger anzeigen"
 }
