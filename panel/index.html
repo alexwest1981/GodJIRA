@@ -246,21 +246,28 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
     align-items: stretch; gap: 2px; padding: 12px 10px; height: 100%;
   }
   .rail .mark {
+    /* Rutan ÄR logotypen: masken fyller den, så måttet går att mäta i webbläsaren i
+       stället för att räknas fram. Rälens egen padding (10 px) och gapet (2 px) ingår
+       i marginalerna: 8 + 12 = 20 px ovanför, 38 + 2 = 40 px under. Bredden 136 px
+       lämnar 20 px luft till var sida (176 - 2x20). */
     position: relative;
-    width: 41px; height: 36px; border-radius: 11px;
-    /* bara odjuret: motivet är 76 % av höjden, ordmärket de sista 21 procenten.
-       Rita om logotypen -> räkna om 47px (36 / 0,7625). ponytail: ett fast mått,
-       blir logotypen en annan form får det bli en egen ikonfil i stället. */
-    background: var(--panel);
-    align-self: center; margin-bottom: 10px;
+    width: 136px; height: 106px;
+    align-self: center; margin: 8px 0 38px;
   }
   /* Rälens märke målas i stället för att filtreras: en mask lägger formen, färgen kommer
      från --text (nära svart i ljust, nära vitt i mörkt). Ett filter hade färgat hela
      rutan, chippet inräknat. */
   .rail .mark::before {
     content: ""; position: absolute; inset: 0; background-color: var(--text);
-    -webkit-mask: url(/godjira.svg) center top / auto 47px no-repeat;
-    mask: url(/godjira.svg) center top / auto 47px no-repeat;
+    -webkit-mask: url(/godjira.svg) center / contain no-repeat;
+    mask: url(/godjira.svg) center / contain no-repeat;
+  }
+  /* Chippet bakom odjuret, inte bakom ordmärket: samma form som förut, skalenligt
+     uppväxt med märket (41x36 -> 92x81, rundningen 11 -> 25). z-index -1 lägger det
+     under masken, som målar hela rutan. */
+  .rail .mark::after {
+    content: ""; position: absolute; z-index: -1; left: 50%; top: 0; margin-left: -46px;
+    width: 92px; height: 81px; border-radius: 25px; background: var(--panel);
   }
   .railitem {
     /* Ikonkolumn på fast bredd: där den börjar börjar varje etikett, och det är hela
