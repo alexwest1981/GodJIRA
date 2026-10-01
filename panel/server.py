@@ -822,6 +822,90 @@ def token_read() -> dict:
     return answer
 
 
+CHAT_TIMEOUT = 900          # en tur är ett agentjobb, inte ett uppslagsverk: den får ta tid
+CHAT_TURNS = 40             # samtalet som följer med, fler än så är inte ett samtal
+CHAT_ASKED = 4000           # tecken i en fråga eller en tur
+
+
+def agent_state(payload: dict = None) -> tuple[int, dict]:
+    """Agentkopplingen: listan, och ändringar i den.
+
+    Samma kommando som CLI:t (`jira_flow agent`) -- panelen är ett fönster mot den,
+    inte en andra sanning om vilka agenter som finns. Ett tillägg är en kommandorad
+    som GodJIRA senare kör, så den tas emot som en rad och köras utan skal: shlex
+    delar den, subprocess startar den, ingenting tolkas av en shell.
+    """
+    if payload is None:
+        env = seam("flow", "agent", "list", "--json", timeout=60)
+        data = env.get("payload") if isinstance(env.get("payload"), dict) else None
+        if not data:
+            return 200, {"ok": False, "agents": [],
+                         "error": first_line(env) or "the agent list could not be read"}
+        return 200, data
+    action = str(payload.get("action") or "").strip()
+    if action not in ("add", "set", "rm"):
+        return 400, {"ok": False, "error": "action must be add, set or rm"}
+    commands = [str(c).strip() for c in (payload.get("commands") or []) if str(c).strip()]
+    if not commands:
+        return 400, {"ok": False, "error": "ingen kommandorad"}
+    if len(commands) > 8 or any(len(c) > 200 or "\n" in c for c in commands):
+        return 400, {"ok": False, "error": "det där är ingen kommandorad"}
+    env = seam("flow", "agent", action, *commands, timeout=60)
+    if env.get("exitCode") != 0:
+        return 400, {"ok": False, "error": first_line(env) or "listan ändrades inte"}
+    return agent_state()
+
+
+def chat_ask(payload: dict) -> tuple[int, dict]:
+    """En tur med agenten, för det som krånglar.
+
+    Frågan går som argument -- den är användarens egen text, ingen hemlighet, och
+    seam skickar en lista till subprocess (ingen shell). Samtalet och panelens egna
+    fel kan bli långa, så de skrivs till 0600-filer som raderas efter: samma väg som
+    nyckeln går, av samma skäl.
+    """
+    question = str(payload.get("question") or "").strip()
+    if not question:
+        return 400, {"ok": False, "error": "ingen fråga"}
+    if len(question) > CHAT_ASKED:
+        return 400, {"ok": False, "error": "frågan är för lång ({} tecken)".format(CHAT_ASKED)}
+    history = payload.get("history") if isinstance(payload.get("history"), list) else []
+    turns = [{"role": "user" if str(t.get("role")) == "user" else "agent",
+              "text": str(t.get("text") or "")[:CHAT_ASKED]}
+             for t in history[-CHAT_TURNS:] if isinstance(t, dict)]
+    errors = payload.get("context") if isinstance(payload.get("context"), list) else []
+    context = [{"what": str(e.get("what") or "")[:200], "why": str(e.get("why") or "")[:400]}
+               for e in errors[:8] if isinstance(e, dict)]
+    repo = str(payload.get("repo") or "").strip()
+    if repo and not re.fullmatch(r"[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)?", repo):
+        return 400, {"ok": False, "error": "det såg inte ut som ett repo"}
+
+    made = []
+    try:
+        for name, blob in (("--history", turns), ("--context", context)):
+            handle, path = tempfile.mkstemp(prefix="godjira-chat-")
+            with os.fdopen(handle, "w", encoding="utf-8") as fh:
+                json.dump(blob, fh, ensure_ascii=False)
+            os.chmod(path, 0o600)
+            made += [(name, path)]
+        args = ["flow", "chat", question, "--json",
+                "--history", made[0][1], "--context", made[1][1]]
+        if repo:
+            args += ["--repo-name", repo]
+        env = seam(*args, timeout=CHAT_TIMEOUT)
+    finally:
+        for _, path in made:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+    data = env.get("payload") if isinstance(env.get("payload"), dict) else None
+    if not data or not data.get("ok"):
+        return 502, {"ok": False, "error": (data or {}).get("error") or first_line(env)
+                     or "agenten svarade inte"}
+    return 200, data
+
+
 def token_save(payload: dict) -> tuple[int, dict]:
     """En ny nyckel, genom bryggans egen login.
 
@@ -1450,6 +1534,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._send(200, found["html"].read_bytes(), "text/html; charset=utf-8")
             return
+        if path == "/api/agent":
+            self._json(200, agent_state()[1])
+            return
         if path == "/api/codemap":
             query = parse_qs(urlparse(self.path).query)
             name = (query.get("repo") or [""])[0]
@@ -1486,7 +1573,8 @@ class Handler(BaseHTTPRequestHandler):
                    "/api/link": link_set, "/api/automation": automation_report,
                    "/api/scan": scan_start, "/api/token": token_save,
                    "/api/github": github_save, "/api/language": language_save,
-                   "/api/admin/people": admin_people}.get(self.path.split("?")[0])
+                   "/api/admin/people": admin_people, "/api/chat": chat_ask,
+                   "/api/agent": agent_state}.get(self.path.split("?")[0])
         if not handler:
             self._send(404, b"not found", "text/plain")
             return

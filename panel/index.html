@@ -95,6 +95,15 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   [data-theme="light"] .logo { filter: brightness(0); }
   [data-theme="dark"] .logo { filter: brightness(0) invert(1); }
   .grow { flex: 1; }
+  /* Chatten: turerna i en kolumn, den som frågar till höger och agenten till vänster,
+     så det syns vem som sagt vad utan att läsa namnet först. */
+  .chatlog { display: flex; flex-direction: column; gap: 10px; min-height: 80px; }
+  .say { max-width: 78%; padding: 9px 12px; border-radius: var(--r); font-size: 13.5px;
+    line-height: 1.5; background: var(--panel); border: 1px solid var(--line-2); }
+  .say b { display: block; font-size: 11px; color: var(--muted); font-weight: 600;
+    letter-spacing: .04em; text-transform: uppercase; margin-bottom: 3px; }
+  .say.me { align-self: flex-end; background: var(--card-hi); }
+  .say.err { border-color: var(--red); }
   .muted { color: var(--muted); }
   .key { font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
   a { color: inherit; text-decoration: none; }
@@ -677,6 +686,43 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
       </div>
     </section>
 
+    <section class="view" id="v-chat">
+      <div class="stack">
+        <!-- Frågan går till användarens egen agent -- samma kedja som flödet kör, vald
+             med `jira_flow agent`. Projektet följer med i miljön, så agentens MCP-koppling
+             mot GodJIRA är låst till det: den ser inget annat projekt. Samtalet hålls här,
+             en tur i taget -- det är hela poängen med att koppla in en CLI i stället för
+             att hålla en session. -->
+        <div class="panel">
+          <h3>Fråga agenten <span class="meta" id="chatWhere"></span></h3>
+          <div class="body">
+            <div id="chatLog" class="chatlog"></div>
+            <div class="linkbar" style="margin-top:12px">
+              <textarea class="inp" id="chatInput" rows="3"></textarea>
+            </div>
+            <div class="linkbar" style="margin-top:8px">
+              <button class="chip" id="chatSend">Skicka</button>
+              <button class="chip" id="chatClear">Rensa samtalet</button>
+              <span class="meta" id="chatState"></span>
+            </div>
+          </div>
+        </div>
+        <!-- Kopplingen: listan är användarens egen, och panelen är ett fönster mot den --
+             inte en andra sanning om vilka agenter som finns. -->
+        <div class="panel">
+          <h3>Kopplingen mot din agent <span class="meta">samma lista som kommandoraden använder</span></h3>
+          <div class="body">
+            <div class="meta">Agenten får bara projektet ovan: MCP-kopplingen är låst till det.</div>
+            <div id="agentList" style="margin-top:10px"></div>
+            <div class="linkbar" style="margin-top:10px">
+              <input class="inp" id="agentNew" />
+              <button class="chip" id="agentAdd">Lägg till</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <section class="view" id="v-admin">
       <div class="meta">Det som annars kräver en tur in i Jiras webbgränssnitt: rollerna och vilka
         som sitter i dem, och sajtens fält. Bara läsning — och bara det din roll får se.</div>
@@ -726,7 +772,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
 <script>
 const TEXT = {
   views: { overview: ["Översikt", "◫"], insights: ["Projekt", "◎"], board: ["Tavlan", "▤"], items: ["Uppgifter", "☰"], repos: ["Repon", "⌥"],
-           import: ["Importera", "⇪"], setup: ["Kom igång", "★"],
+           import: ["Importera", "⇪"], setup: ["Kom igång", "★"], chat: ["Agenten", "◈"],
            admin: ["Admin", "⚑"], settings: ["Inställningar", "⚙"] },
   // Flödenas namn i Karta-vyns källväljare. Låg förut i views-listan, då flödena hade en
   // egen räl-post; strängen står kvar här så översättningarna inte tappas.
@@ -1009,6 +1055,8 @@ const link = (url, inner) => url ? `<a href="${esc(url)}" target="_blank" rel="n
 // inte att rada upp -- ⌥ ⇪ ⚑ har olika bredd, och ⚙ ritades som färgemoji. Inställningar
 // är två reglage: enklare än ett kugghjul och omöjligt att förväxla med ett emoji.
 const ICONS = {
+  // Frågan går till en agent, inte till Jira: en pratbubbla med en gnista i.
+  chat: '<svg class="ico" viewBox="0 0 16 16"><path d="M13.5 9.5a1.5 1.5 0 0 1-1.5 1.5H7l-3 2.5V11H4a1.5 1.5 0 0 1-1.5-1.5v-6A1.5 1.5 0 0 1 4 2h8a1.5 1.5 0 0 1 1.5 1.5z"/><path d="M8 4.6v3M6.5 6.1h3"/></svg>',
   overview: '<svg class="ico" viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="5" rx="1.2"/><rect x="9" y="2" width="5" height="5" rx="1.2"/><rect x="2" y="9" width="5" height="5" rx="1.2"/><rect x="9" y="9" width="5" height="5" rx="1.2"/></svg>',
   insights: '<svg class="ico" viewBox="0 0 16 16"><path d="M3 13V9M8 13V4M13 13v-6"/></svg>',
   board: '<svg class="ico" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M6 3v10M10 3v10"/></svg>',
@@ -2875,6 +2923,122 @@ async function impApply() {
   finally { IMP.busy = false; renderImport(); }
 }
 
+let CHAT = [], CHAT_BUSY = false, CHAT_NOTE = "", AGENTS = null;
+
+
+function linkProject() {
+  const linked = links()[0] || {};
+  return linked.project || "";
+}
+
+
+function renderChat() {
+  const log = document.getElementById("chatLog");
+  if (!log) return;
+  const where = document.getElementById("chatWhere");
+  if (where) where.textContent = linkProject() || t("inget projekt kopplat");
+  log.innerHTML = CHAT.length ? CHAT.map(turn => {
+    const who = turn.role === "user" ? t("du") : (turn.role === "fel" ? t("fel") : t("agenten"));
+    const cls = turn.role === "user" ? "me" : (turn.role === "fel" ? "err" : "agent");
+    return `<div class="say ${cls}"><b>${esc(who)}</b><div>${esc(turn.text).replace(/\n/g, "<br>")}</div></div>`;
+  }).join("") : `<div class="meta">${esc(t("Inga frågor än"))}</div>`;
+  const state = document.getElementById("chatState");
+  if (state) state.textContent = CHAT_BUSY ? CHAT_NOTE : "";
+  document.getElementById("chatSend").disabled = CHAT_BUSY;
+  if (renderChat.wired) return;
+  renderChat.wired = true;
+  document.getElementById("chatSend").addEventListener("click", chatSend);
+  document.getElementById("chatClear").addEventListener("click", () => {
+    CHAT = []; CHAT_NOTE = ""; renderChat();
+  });
+  document.getElementById("agentAdd").addEventListener("click", () => {
+    const box = document.getElementById("agentNew");
+    const line = (box.value || "").trim();
+    if (line) agentChange("add", [line]).then(() => { box.value = ""; });
+  });
+  document.getElementById("chatInput").placeholder =
+    t("Skriv din fråga om fel du ser — agenten får bara projektet, inget annat.");
+  document.getElementById("agentNew").placeholder =
+    t("vilken agent som helst som pratar på stdin, t.ex. hermes chat --query-file -");
+}
+
+
+async function chatSend() {
+  const box = document.getElementById("chatInput");
+  const text = (box.value || "").trim();
+  if (!text || CHAT_BUSY) return;
+  box.value = "";
+  CHAT.push({ role: "user", text });
+  CHAT_BUSY = true;
+  CHAT_NOTE = t("Agenten arbetar …");
+  renderChat();
+  // Panelens egna fel följer med som sammanhang: det är dem man frågar om. Bara de
+  // som faktiskt svarade fel -- en tom plats i gränssnittet är inte ett fel.
+  const context = [];
+  for (const [what, part] of [["jira", (STATE || {}).jira], ["github", (STATE || {}).github],
+                              ["flödet", (STATE || {}).flow]]) {
+    if (part && part.ok === false && part.error) context.push({ what, why: part.error });
+  }
+  try {
+    const done = await fetch("/api/chat", { method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ question: text, repo: (links()[0] || {}).repo || "",
+                             history: CHAT.slice(0, -1), context }) });
+    const data = await done.json().catch(() => ({}));
+    if (!data.ok) throw new Error(data.error || t("Frågan gick inte fram"));
+    CHAT.push({ role: "agent", text: data.answer || "", agent: data.agent || "" });
+  } catch (err) {
+    CHAT.push({ role: "fel", text: String((err && err.message) || err) });
+  }
+  CHAT_BUSY = false;
+  CHAT_NOTE = "";
+  renderChat();
+}
+
+
+async function agentLoad() {
+  try {
+    AGENTS = await (await fetch("/api/agent")).json();
+  } catch (err) {
+    AGENTS = { ok: false, agents: [], error: String(err) };
+  }
+  renderAgents();
+}
+
+
+async function agentChange(action, commands) {
+  try {
+    const done = await fetch("/api/agent", { method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action, commands }) });
+    AGENTS = await done.json().catch(() => ({}));
+  } catch (err) {
+    AGENTS = { ok: false, agents: [], error: String(err) };
+  }
+  renderAgents();
+}
+
+
+function renderAgents() {
+  const host = document.getElementById("agentList");
+  if (!host || !AGENTS) return;
+  if (!AGENTS.ok && !(AGENTS.agents || []).length) {
+    host.innerHTML = `<div class="err">${esc(AGENTS.error || t("Kopplingen svarade inte"))}</div>`;
+    return;
+  }
+  host.innerHTML = (AGENTS.agents || []).map((row, index) => {
+    return `<div class="r"><span class="${row.installed ? "ok" : "muted"}">` +
+      `${esc(row.installed ? t("installerad") : t("inte installerad"))}</span>` +
+      `<span class="key">${esc(row.command)}</span>` +
+      `<button class="chip" data-agent-rm="${index}">${esc(t("Ta bort"))}</button></div>`;
+  }).join("") + (AGENTS.yours ? "" :
+    `<div class="meta">${esc(t("(den skeppade listan — din egen skrivs hit med Lägg till)"))}</div>`);
+  host.querySelectorAll("[data-agent-rm]").forEach(button => {
+    button.addEventListener("click", () => agentChange("rm", [button.dataset.agentRm]));
+  });
+}
+
+
 function render() {
   if (!STATE) return;
   renderRail(); renderSide(); renderCrumbs(); renderFilters(); renderItemProject();
@@ -2898,6 +3062,7 @@ function render() {
   document.getElementById("itemProject").hidden = view !== "items";
   if (view === "overview") { renderStats(); renderAutomation(); renderFlowPick(); renderJournal(); renderRecent(); }
   if (view === "board") renderBoard();
+  if (view === "chat") { renderChat(); if (!AGENTS) agentLoad(); }
   if (view === "items") renderItems();
   // In i Repon med inget valt: öppna det kopplade repot (annars det senast rörda),
   // så huvudrutan visar något i stället för en tom plats.

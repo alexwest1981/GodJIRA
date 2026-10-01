@@ -298,6 +298,10 @@ console.log(fel.length ? "FEL " + fel.join(" | ") : "OK");
     # agenten läser. Ingen Jira-trafik i den, så den svarar på under en sekund.
     check('"/api/graph"' in server and "graph_read" in server,
           "the knowledge graph is served to whoever asks for it")
+    check('"/api/chat"' in server and "chat_ask" in server and '"/api/agent"' in server,
+          "the chat and the agent connection are served")
+    check('id="v-chat"' in html and "renderChat" in html and "agentLoad" in html,
+          "the agent has a view of its own, with the connection in it")
     check('id="flowEdit"' in html and "getElementById(\"flowEdit\")" in html,
           "the edit button sits in the card head, so both views have it")
     # Fliksystemet: Karta flyttade ur rälen in i reposidan som flik, och den gamla
