@@ -787,7 +787,7 @@ const TEXT = {
   allTasks: "Alla uppgifter", sources: "Jira + GitHub",
   scope: { all: "Alla", shared: "Gemensamma", mine: "Egna" },
   flows: "Flöden", flowRuns: "går av sig själv", flowIdle: "trycks bara på",
-  flowNone: "här finns inget flöde att rita — n8n/workflows är tom",
+  flowNone: "här finns inget flöde att rita — det här repot har inget eget än",
   flowUnreadable: "flödesfilen går inte att läsa", flowNodes: "noder", flowEdges: "vägar",
   n8nCanvas: "n8n:s egen tavla", under: "under", readCode: "läst ur repot",
   none: "utan",
@@ -1735,17 +1735,18 @@ function renderFlow() {
   // skärmen stod kvar på splash medan panelen svarade 200.
   const flows = ((STATE || {}).flows || []).filter(f => f && f.file);
   const p = STATE.project || {};
-  // Bara flödet för projektet man står i. Hubbens egna har ingen hemvist och följer
-  // länken, alltså hör de hit; ett flöde som hör till en annan hemvist (GitHub) gör
-  // det inte. Matchar inget visas allt -- en tom ruta vore ett svar ingen bad om.
-  const mine = flows.filter(f => !f.scope ||
-    String(f.scope).toUpperCase() === String(p.key || "").toUpperCase());
-  const visade = mine.length ? mine : flows;
+  // Bara flödet för repot man står i. Hemvisten är repot, inte projektnyckeln: AutoCore
+  // skall ha sin egen automation, och GodJIRAs egna flöden hör till GodJIRA-repot -- de
+  // skall inte dyka upp i någon annans tabb. Ett flöde utan hemvist visas överallt, så
+  // ett nytt flöde syns där det skapas. Ingen reservväg: hellre en ärlig tom ruta än
+  // någon annans flöden.
+  const hem = String((REPO || {}).name || "").toUpperCase();
+  const visade = flows.filter(f => !f.scope || String(f.scope).toUpperCase() === hem);
   // Senaste körningen hör till flödet, inte till noden: det är svaret på om det lever.
   document.getElementById("flowMeta").textContent =
     (p.key ? `${p.key} · ${p.repo || "inget repo kopplat"} · ` : "") +
     `flödet ${visade.some(f => f.active) ? TEXT.flowRuns : TEXT.flowIdle}` + flowRun(visade);
-  if (!flows.length) {
+  if (!visade.length) {
     chips.innerHTML = ""; canvas.innerHTML = ""; link.hidden = true;
     note.textContent = TEXT.flowNone;
     return;

@@ -328,8 +328,8 @@ console.log(fel.length ? "FEL " + fel.join(" | ") : "OK");
 
     # Flödeskartan: bara flödet för projektet man står i (hemvisten ur .scopes.json),
     # och panelens EGEN palett pålagd på Archifys HTML i stället för renderarens blå.
-    check("const visade = mine.length ? mine : flows;" in html,
-          "flödeslistan visar bara projektets flöde")
+    check('String(f.scope).toUpperCase() === hem' in html and "const hem =" in html,
+          "flödeslistan visar bara repots eget flöde, utan reservväg")
     check("data-from=" in server and "flowmap_theme" in server,
           "panelens palett läggs på flödeskartan")
     print()

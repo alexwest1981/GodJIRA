@@ -1,3 +1,5 @@
 {
- "github-what-needs-me.workflow.ts": "github"
+ "godjira-flow-insight.workflow.ts": "GodJIRA",
+ "godjira-flow-take-next.workflow.ts": "GodJIRA",
+ "github-what-needs-me.workflow.ts": "GodJIRA"
 }
