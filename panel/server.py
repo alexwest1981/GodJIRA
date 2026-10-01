@@ -662,8 +662,15 @@ def flowmap_theme() -> str:
 
     dark = 'html[data-theme="dark"][data-preset],html[data-theme="dark"],:root'
     light = 'html[data-theme="light"][data-preset],html[data-theme="light"]'
-    return "{} {{color-scheme: dark;{}}} {} {{color-scheme: light;{}}}".format(
-        dark, block(1), light, block(0))
+    # Presetens egna dekoration står utanför variablerna och är blå: body bär en cyan
+    # och en violett glow som radial-gradient, och .diagram-container en blå
+    # linear-gradient -- mätt i den levande kartan, det var allt som återstod av det blå
+    # sedan variablerna bytts. Två regler med samma vikt tillbaka, och ytan blir panelens.
+    flat = ('html[data-preset][data-theme] body{background-image:none}'
+            'html[data-preset][data-theme] .diagram-container'
+            '{background-image:none;background-color:var(--panel)}')
+    return "{} {{color-scheme: dark;{}}} {} {{color-scheme: light;{}}} {}".format(
+        dark, block(1), light, block(0), flat)
 
 
 def flowmap_page(html: str) -> bytes:
