@@ -374,8 +374,9 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
      innehållet hamnar kant i kant med fönstret (mätt: luft vänster 0 px, höger 11 px =
      bara scrollbaren). Rutan skall fylla main och aldrig krympa under sitt innehåll. */
   .wrap { flex: 1 0 auto; padding: 24px 28px 56px; display: flex; flex-direction: column; gap: 16px; }
-  .view { display: none; flex-direction: column; gap: 16px; }
-  .view.on { display: flex; }
+  /* Vy och flik delar anatomi: en vy visas, en flik är samma sak fast inuti en vy. */
+  .view, .pane { display: none; flex-direction: column; gap: 16px; }
+  .view.on, .pane.on { display: flex; }
 
   /* -------------------------------------------------------------- overview */
   .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); gap: 10px; }
@@ -534,7 +535,80 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
       <div id="insightBox" class="meta">räknar …</div>
     </section>
 
-    <section class="view" id="v-karta">
+    <section class="view" id="v-board">
+      <div class="empty" id="sprintNote"></div>
+      <div class="cols" id="cols"></div>
+    </section>
+
+    <section class="view" id="v-items">
+      <div class="tablewrap"><table id="itemsTable"></table></div>
+    </section>
+
+    <section class="view" id="v-import">
+      <div class="panel">
+        <h3>Underlag in, ärenden ut <span class="meta">pdf, docx, odt, xlsx, pptx eller text</span></h3>
+        <div class="body">
+          <textarea id="impWish" rows="3"
+            placeholder="Vad ska bli ärenden? Lämna tomt för att utgå från dokumenten."></textarea>
+          <div class="improw">
+            <label class="meta" for="impRepo" style="min-width:74px">jobbar mot</label>
+            <select class="inp" id="impRepo"><option value="">— inget repo —</option></select>
+            <span class="meta" id="impTarget"></span>
+            <span class="grow"></span>
+          </div>
+          <div class="improw">
+            <label class="chip impfile"><input type="file" id="impFiles" multiple hidden accept=".pdf,.docx,.odt,.xlsx,.pptx,.txt,.md,.csv,.json,.xml,.rst,.log,.html,.htm">välj filer</label>
+            <span class="meta" id="impFiles">inga filer valda</span>
+            <span class="grow"></span>
+            <button class="chip" data-act="imp-parse" id="impParse">Tolka → förslag</button>
+          </div>
+          <div class="meta" id="impNote"></div>
+        </div>
+      </div>
+      <div class="panel" id="impProposalPanel" hidden>
+        <h3>Förslag <span class="meta" id="impProposalMeta"></span></h3>
+        <div class="body" id="impProposal"></div>
+      </div>
+      <div class="panel" id="impDonePanel" hidden>
+        <h3>Skapade ärenden <span class="meta" id="impDoneMeta"></span></h3>
+        <div class="body wl" id="impDone"></div>
+      </div>
+    </section>
+
+    <section class="view" id="v-repos">
+      <!-- Flikarna. Karta låg förut som en egen post i rälen -- samma tavla, en post för
+           mycket. Den hör hemma här, där repot och kopplingen redan bor. En flik är ett
+           block med klass pane vars id slutar på flikens nyckel; nycklarna står i TABS. -->
+      <div class="seg" id="tabs-repos"></div>
+      <div class="pane on" id="pane-repos-repot">
+      <div class="two">
+        <div class="panel">
+          <h3>Repot <span class="meta" id="repoDetailMeta"></span></h3>
+          <div class="body" id="repoDetail">
+            <div class="empty">välj ett repo i listan ovan — raden öppnar det</div>
+          </div>
+        </div>
+        <div class="panel">
+          <h3>Jira-kopplingen <span class="meta">projektet ett uppladdat underlag hamnar i</span></h3>
+          <div class="body" id="repoLink">
+            <div class="empty">inget repo valt</div>
+          </div>
+        </div>
+      </div>
+      <div class="two">
+        <div class="panel">
+          <h3>Öppna pull requests <span class="meta" id="prMeta"></span></h3>
+          <div class="body wl" id="prs"></div>
+        </div>
+        <div class="panel">
+          <h3>Öppna ärenden <span class="meta" id="issMeta"></span></h3>
+          <div class="body wl" id="issues"></div>
+        </div>
+      </div>
+
+      </div>
+
+      <div class="pane" id="pane-repos-kartan">
       <div class="linkbar">
         <div class="seg" id="kartaChips"></div>
         <select class="inp" id="kartaProject" hidden></select>
@@ -586,72 +660,6 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
         </div>
       </div>
       <div class="empty" id="flowNote"></div>
-    </section>
-
-    <section class="view" id="v-board">
-      <div class="empty" id="sprintNote"></div>
-      <div class="cols" id="cols"></div>
-    </section>
-
-    <section class="view" id="v-items">
-      <div class="tablewrap"><table id="itemsTable"></table></div>
-    </section>
-
-    <section class="view" id="v-import">
-      <div class="panel">
-        <h3>Underlag in, ärenden ut <span class="meta">pdf, docx, odt, xlsx, pptx eller text</span></h3>
-        <div class="body">
-          <textarea id="impWish" rows="3"
-            placeholder="Vad ska bli ärenden? Lämna tomt för att utgå från dokumenten."></textarea>
-          <div class="improw">
-            <label class="meta" for="impRepo" style="min-width:74px">jobbar mot</label>
-            <select class="inp" id="impRepo"><option value="">— inget repo —</option></select>
-            <span class="meta" id="impTarget"></span>
-            <span class="grow"></span>
-          </div>
-          <div class="improw">
-            <label class="chip impfile"><input type="file" id="impFiles" multiple hidden accept=".pdf,.docx,.odt,.xlsx,.pptx,.txt,.md,.csv,.json,.xml,.rst,.log,.html,.htm">välj filer</label>
-            <span class="meta" id="impFiles">inga filer valda</span>
-            <span class="grow"></span>
-            <button class="chip" data-act="imp-parse" id="impParse">Tolka → förslag</button>
-          </div>
-          <div class="meta" id="impNote"></div>
-        </div>
-      </div>
-      <div class="panel" id="impProposalPanel" hidden>
-        <h3>Förslag <span class="meta" id="impProposalMeta"></span></h3>
-        <div class="body" id="impProposal"></div>
-      </div>
-      <div class="panel" id="impDonePanel" hidden>
-        <h3>Skapade ärenden <span class="meta" id="impDoneMeta"></span></h3>
-        <div class="body wl" id="impDone"></div>
-      </div>
-    </section>
-
-    <section class="view" id="v-repos">
-      <div class="two">
-        <div class="panel">
-          <h3>Repot <span class="meta" id="repoDetailMeta"></span></h3>
-          <div class="body" id="repoDetail">
-            <div class="empty">välj ett repo i listan ovan — raden öppnar det</div>
-          </div>
-        </div>
-        <div class="panel">
-          <h3>Jira-kopplingen <span class="meta">projektet ett uppladdat underlag hamnar i</span></h3>
-          <div class="body" id="repoLink">
-            <div class="empty">inget repo valt</div>
-          </div>
-        </div>
-      </div>
-      <div class="two">
-        <div class="panel">
-          <h3>Öppna pull requests <span class="meta" id="prMeta"></span></h3>
-          <div class="body wl" id="prs"></div>
-        </div>
-        <div class="panel">
-          <h3>Öppna ärenden <span class="meta" id="issMeta"></span></h3>
-          <div class="body wl" id="issues"></div>
-        </div>
       </div>
     </section>
 
@@ -703,7 +711,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
 
 <script>
 const TEXT = {
-  views: { overview: ["Översikt", "◫"], insights: ["Projekt", "◎"], karta: ["Karta", "◈"], board: ["Tavlan", "▤"], items: ["Uppgifter", "☰"], repos: ["Repon", "⌥"],
+  views: { overview: ["Översikt", "◫"], insights: ["Projekt", "◎"], board: ["Tavlan", "▤"], items: ["Uppgifter", "☰"], repos: ["Repon", "⌥"],
            import: ["Importera", "⇪"], setup: ["Kom igång", "★"],
            admin: ["Admin", "⚑"], settings: ["Inställningar", "⚙"] },
   // Flödenas namn i Karta-vyns källväljare. Låg förut i views-listan, då flödena hade en
@@ -722,6 +730,12 @@ const TEXT = {
   n8nCanvas: "n8n:s egen tavla", under: "under", readCode: "läst ur repot",
   none: "utan",
 };
+// Flikarna: nycklarna här, markupen i vyn. Deklarationerna måste ligga före allt som
+// körs vid start -- parseHash läser dem, och en const längre ner är en krasch vid start
+// (mätt: hela rälen blev tom på #karta?kalla=flow).
+const TABS = { repos: [["repot", "Repot"], ["kartan", "Kartan"]] };
+const tabState = {};
+
 let STATE = null, view = "board";
 // Same rule as jira_flow.py (SHARED_PREFIX): a shared task is marked in the summary.
 const SHARED_PREFIX = "GEMENSAMT";
@@ -1404,6 +1418,28 @@ function flowBoxes(nodes, W, H, order = {}, tip = null) {
 // De låg i var sin räl-post förut, men det är samma ruta, samma panorering och samma
 // fråga -- hur hänger det ihop -- så de bor här med en källa i taget. Flödet är
 // skrivskyddat med flit (server.py: panelen är en dörr, inte en andra åsikt om flödet).
+/* --------------------------------------------------------------- flikar ---- */
+// Fliksystemet. En vy kan ha flera flikar, och varje flik är en .pane i vyns markup.
+// Valet kommer ihåg per vy: fliken man lämnade är den man kommer tillbaka till.
+// Nycklarna bor här, markupen i vyn -- en ny flik är en rad och en <div class="pane">.
+function tabPick(nyckel) {
+  if (!(TABS[view] || []).some(([k]) => k === nyckel)) return;
+  tabState[view] = nyckel;
+  renderTabs(view);
+  writeHash();
+  render();
+}
+
+function renderTabs(vy) {
+  const host = document.getElementById("tabs-" + vy);
+  if (!host) return;
+  const vald = tabState[vy] || ((TABS[vy] || [])[0] || [])[0];
+  host.innerHTML = (TABS[vy] || []).map(([nyckel, namn]) =>
+    `<button data-tab="${nyckel}"${nyckel === vald ? ' class="on"' : ""}>${esc(namn)}</button>`).join("");
+  for (const el of document.querySelectorAll(`#v-${vy} .pane`))
+    el.classList.toggle("on", el.id === `pane-${vy}-${vald}`);
+}
+
 let kartaKalla = "kod";
 
 function kartaShow(kalla) {
@@ -1423,7 +1459,9 @@ function renderKartaChips() {
   if (!host) return;
   // Etiketterna är de redan översatta vy-namnen: "Karta" för kodkartan (som förut) och
   // "Automatik" för flödena, som är vad de hette när de hade en egen post i rälen.
-  host.innerHTML = [["kod", TEXT.views.karta[0]], ["flow", TEXT.flowView]]
+  // "Karta" står som ord, inte ur TEXT.views: vyn finns inte längre där (den är en flik
+  // i reposidan nu), och etiketten skall inte hänga på en tabell som inte har den kvar.
+  host.innerHTML = [["kod", "Karta"], ["flow", TEXT.flowView]]
     .map(([nyckel, namn]) => `<button data-act="map-${nyckel}"` +
       `${nyckel === kartaKalla ? ' class="on"' : ""}>${esc(namn)}</button>`).join("");
 }
@@ -2534,7 +2572,7 @@ async function mapLoad() {
   const box = document.getElementById("mapBody");
   if (!box) return;
   const who = document.getElementById("mapWho");
-  const note = document.querySelector("#v-karta .scanNote");
+  const note = document.querySelector("#pane-repos-kartan .scanNote");
   try {
     const a = await (await fetch("/api/scan?repo=" + encodeURIComponent(scanRepo()))).json();
     if (who) who.textContent = a.repo && a.project ? a.repo + " · " + a.project : "";
@@ -2840,7 +2878,7 @@ function render() {
   if (view === "insights") renderInsights();
   // Kartan ritar sin aktiva källa även när staten kommer in efter en omladdning --
   // annars står en djup länk (#karta?kalla=flow) med tom yta tills man byter vy (mätt).
-  if (view === "karta") {
+  if (view === "repos" && tabState.repos === "kartan") {
     renderKartaChips();
     renderKartaProject();
     if (kartaKalla === "flow") renderFlow();
@@ -2864,9 +2902,10 @@ function render() {
                    (newest ? newest.name : "");
       if (pick) repoOpen(pick);
     }
+    renderTabs("repos");
     renderRepos();
   }
-  if (view === "karta") kartaShow(F.karta || kartaKalla);
+  if (view === "repos" && tabState.repos === "kartan") kartaShow(F.karta || kartaKalla);
   if (view === "import") renderImport();
 }
 
@@ -2952,7 +2991,12 @@ function readHash() {
   F.pool = p.get("pool") === "backlog" ? "backlog" : "";
   F.project = (p.get("project") || "").toUpperCase();
   F.karta = p.get("kalla") === "flow" ? "flow" : "kod";
-  return TEXT.views[v] ? v : "board";
+  // Kartan är en flik i reposidan sedan den flyttade ur rälen: #karta skall landa
+  // där i stället för på en vy som inte finns. v är const -- byt namn, mutera inte.
+  const vy = v === "karta" ? "repos" : v;
+  if (vy !== v) tabState[vy] = "kartan";
+  if (p.get("flik") && (TABS[vy] || []).some(([k]) => k === p.get("flik"))) tabState[vy] = p.get("flik");
+  return TEXT.views[vy] ? vy : "board";
 }
 function writeHash() {
   const q = new URLSearchParams();
@@ -2961,9 +3005,14 @@ function writeHash() {
   if (F.pool) q.set("pool", F.pool);
   if (F.project) q.set("project", F.project);
   if (F.karta === "flow") q.set("kalla", "flow");
+  const flik = tabState[view];
+  if (flik && flik !== ((TABS[view] || [])[0] || [])[0]) q.set("flik", flik);
   location.hash = view + (q.toString() ? "?" + q : "");
 }
 function show(v) {
+  // #karta betyder fortfarande kartan: den flyttade in i reposidan som flik, så vägen
+  // dit går via repot. Gamla länkar och layoutval skall inte landa på en tom vy.
+  if (v === "karta") { tabState.repos = "kartan"; v = "repos"; }
   view = TEXT.views[v] ? v : "board";
   document.querySelectorAll(".view").forEach(el => el.classList.toggle("on", el.id === "v-" + view));
   writeHash();
@@ -3052,6 +3101,8 @@ document.addEventListener("click", e => {
     return renderFlow();
   }
   // Kodkartan har sin egen nollställning, och "läs om" hämtar om den ur filerna.
+  const flik = e.target.closest("[data-tab]");
+  if (flik) return tabPick(flik.dataset.tab);
   if (e.target.closest('[data-act="map-kod"]')) { writeHash(); return kartaShow("kod"); }
   if (e.target.closest('[data-act="map-flow"]')) { writeHash(); return kartaShow("flow"); }
   if (e.target.closest('[data-act="code-reset"]')) {

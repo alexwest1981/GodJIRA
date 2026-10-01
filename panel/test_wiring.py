@@ -294,6 +294,13 @@ console.log(fel.length ? "FEL " + fel.join(" | ") : "OK");
           "the flow map is drawn where the canvas was")
     check('id="flowEdit"' in html and "getElementById(\"flowEdit\")" in html,
           "the edit button sits in the card head, so both views have it")
+    # Fliksystemet: Karta flyttade ur rälen in i reposidan som flik, och den gamla
+    # vägen dit (#karta) skall fortfarande landa rätt -- djupa länkar och layoutval
+    # pekar på den. Mätt i den skarpa panelen innan detta skrevs.
+    check('id="tabs-repos"' in html and 'id="pane-repos-kartan"' in html and 'id="pane-repos-repot"' in html,
+          "the repo page has tabs and the map is one of them")
+    check('karta: ["Karta"' not in html and 'if (v === "karta")' in html,
+          "the map left the rail, and its old route still lands")
     check('"/api/flowmap"' in server and "flowmap_available" in server,
           "the flow map route is in the server")
 
