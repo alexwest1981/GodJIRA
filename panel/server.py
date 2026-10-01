@@ -412,6 +412,16 @@ def decorator_body(text: str, start: int) -> str:
     return ""
 
 
+def flow_scopes() -> dict:
+    """Vem varje flöde tjänar. Flödesfilerna genereras av n8n-as-code, så hemvisten bor
+    i en fil bredvid dem och överlever en omskrivning. Utan post följer flödet länken
+    -- det är hubbens eget och hör till det projekt man står i."""
+    try:
+        return json.loads((FLOW_DIR / ".scopes.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
 def flow_graph(path: Path) -> dict:
     """Noderna och vägarna ur en flödesfil."""
     text = path.read_text(errors="replace")
@@ -436,7 +446,9 @@ def flow_graph(path: Path) -> dict:
                       "type": kind.group(1).split(".")[-1],
                       "x": int(spot.group(1)) if spot else 0,
                       "y": int(spot.group(2)) if spot else 0})
+    scopes = flow_scopes()
     return {"file": path.name,
+            "scope": str(scopes.get(path.name) or ""),
             "id": (re.search(r"\bid:\s*'([^']*)'", head) or [None, ""])[1] if head else "",
             "name": FLOW_NAME.search(head).group(1) if head and FLOW_NAME.search(head) else path.stem,
             "active": bool(re.search(r"active:\s*true", head)),
@@ -589,6 +601,79 @@ def flowmap_engine(args: list, timeout: int = 300) -> dict:
         except ValueError:
             continue
     return {"ok": False, "why": (proc.stderr or proc.stdout or "inget svar")[-200:]}
+
+
+def flowmap_theme() -> str:
+    """Appens palett, formulerad i Archifys egna variabler.
+
+    Archify ritar med sin egen skala (blått nattsvart och cyan) och har inget
+    temaargument. Men artefakten är HTML som styrs av :root-variabler, så panelen kan
+    säga vad de skall vara. Källan är panelens EGEN :root -- samma tokenrader som
+    test_palette.py vaktar -- så kartan följer appen även när paletten ändras.
+
+    Två saker som mättes fram: Archify sätter temat i <html data-theme data-preset>
+    och äger sina värden i [data-preset][data-theme] -- två attribut, alltså tyngre än
+    :root, och en naken :root förlorar hur sent den än står. Därför samma vikt tillbaka.
+    Och eftersom artefakten har sin egen tema-växlare skrivs båda temana ut, med
+    panelens ljusa respektive mörka kolumn -- växlar man inuti kartan följer den med.
+    """
+    try:
+        head = (Path(__file__).with_name("index.html")).read_text(errors="replace")
+        body = re.search(r":root\s*\{(.*?)\}", head, re.S).group(1)
+    except (OSError, AttributeError):
+        return ""
+    token = {}
+    for name, light, dark in re.findall(
+            r"--([a-z0-9-]+):\s*light-dark\(\s*([^,]+?)\s*,\s*([^)]+?)\s*\)", body):
+        token[name] = (light.strip(), dark.strip())
+    for name, value in re.findall(r"--([a-z0-9-]+):\s*([^;]+);", body):
+        token.setdefault(name, (value.strip(), value.strip()))
+    if not token.get("bg"):
+        return ""
+
+    def pick(theme, name, fallback=""):
+        return token.get(name, token.get(fallback, ("transparent", "transparent")))[theme]
+
+    def block(theme):
+        kinds = {"frontend": pick(theme, "navy"), "backend": pick(theme, "green"),
+                 "database": pick(theme, "line-3"), "cloud": pick(theme, "amber"),
+                 "security": pick(theme, "red"), "messagebus": pick(theme, "accent"),
+                 "external": pick(theme, "muted")}
+        css = ["--bg: {};".format(pick(theme, "bg")),
+               "--grid: {};".format(pick(theme, "line")),
+               "--canvas-dot: color-mix(in srgb, {} 22%, transparent);".format(pick(theme, "muted")),
+               "--text: {};".format(pick(theme, "text")),
+               "--text-muted: {};".format(pick(theme, "muted")),
+               "--text-dim: {};".format(pick(theme, "muted")),
+               "--text-faint: {};".format(pick(theme, "muted")),
+               "--panel: color-mix(in srgb, {} 55%, transparent);".format(pick(theme, "panel")),
+               "--panel-border: {};".format(pick(theme, "line-2")),
+               "--lane-fill: color-mix(in srgb, {} 40%, transparent);".format(pick(theme, "panel")),
+               "--lane-stroke: {};".format(pick(theme, "line-2")),
+               "--arrow: {};".format(pick(theme, "muted")),
+               "--arrow-emphasis: {};".format(pick(theme, "accent")),
+               "--mask: {};".format(pick(theme, "bg")),
+               "--toolbar-bg: color-mix(in srgb, {} 85%, transparent);".format(pick(theme, "panel")),
+               "--toolbar-border: {};".format(pick(theme, "line-2"))]
+        for kind, colour in kinds.items():
+            css += ["--{}-fill: color-mix(in srgb, {} 22%, transparent);".format(kind, colour),
+                    "--{}-stroke: {};".format(kind, colour)]
+        return "".join(css)
+
+    dark = 'html[data-theme="dark"][data-preset],html[data-theme="dark"],:root'
+    light = 'html[data-theme="light"][data-preset],html[data-theme="light"]'
+    return "{} {{color-scheme: dark;{}}} {} {{color-scheme: light;{}}}".format(
+        dark, block(1), light, block(0))
+
+
+def flowmap_page(html: str) -> bytes:
+    """Artefakten med panelens palett pålagd. Sist i dokumentet, för då vinner den
+    över Archifys egen :root utan att röra en rad i den renderade filen."""
+    style = flowmap_theme()
+    if style:
+        sheet = "<style data-from=\"godjira-panel\">{}</style>".format(style)
+        html = html.replace("</body>", sheet + "</body>") if "</body>" in html else html + sheet
+    return html.encode("utf-8")
 
 
 def flowmap_artifact(wid: str, lang: str) -> dict:
@@ -1575,7 +1660,8 @@ class Handler(BaseHTTPRequestHandler):
             if not found.get("ok"):
                 self._send(404, b"flow map not available", "text/plain")
                 return
-            self._send(200, found["html"].read_bytes(), "text/html; charset=utf-8")
+            self._send(200, flowmap_page(found["html"].read_text(errors="replace")),
+                       "text/html; charset=utf-8")
             return
         if path == "/api/agent":
             self._json(200, agent_state()[1])

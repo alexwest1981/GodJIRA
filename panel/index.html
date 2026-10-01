@@ -1735,28 +1735,34 @@ function renderFlow() {
   // skärmen stod kvar på splash medan panelen svarade 200.
   const flows = ((STATE || {}).flows || []).filter(f => f && f.file);
   const p = STATE.project || {};
+  // Bara flödet för projektet man står i. Hubbens egna har ingen hemvist och följer
+  // länken, alltså hör de hit; ett flöde som hör till en annan hemvist (GitHub) gör
+  // det inte. Matchar inget visas allt -- en tom ruta vore ett svar ingen bad om.
+  const mine = flows.filter(f => !f.scope ||
+    String(f.scope).toUpperCase() === String(p.key || "").toUpperCase());
+  const visade = mine.length ? mine : flows;
   // Senaste körningen hör till flödet, inte till noden: det är svaret på om det lever.
   document.getElementById("flowMeta").textContent =
     (p.key ? `${p.key} · ${p.repo || "inget repo kopplat"} · ` : "") +
-    `flödet ${flows.some(f => f.active) ? TEXT.flowRuns : TEXT.flowIdle}` + flowRun(flows);
+    `flödet ${visade.some(f => f.active) ? TEXT.flowRuns : TEXT.flowIdle}` + flowRun(visade);
   if (!flows.length) {
     chips.innerHTML = ""; canvas.innerHTML = ""; link.hidden = true;
     note.textContent = TEXT.flowNone;
     return;
   }
   note.textContent = "";
-  const usable = flows.filter(f => (f.nodes || []).length);
-  if (!flowSel || !flows.some(f => f.file === flowSel)) {
-    flowSel = (usable.find(f => f.active) || usable[0] || flows[0]).file;
+  const usable = visade.filter(f => (f.nodes || []).length);
+  if (!flowSel || !visade.some(f => f.file === flowSel)) {
+    flowSel = (usable.find(f => f.active) || usable[0] || visade[0]).file;
   }
-  const flow = flows.find(f => f.file === flowSel) || flows[0];
+  const flow = visade.find(f => f.file === flowSel) || visade[0];
   // Byter man flöde skall editorrutan stängas -- men en vanlig omladdning (var 60:e
   // sekund) får inte rycka den ur händerna på den som sitter i den.
   if (FLOW.editorFile && FLOW.editorFile !== flow.file) flowEditorClose();
   // En lista i stället för en rad knappar: automationerna blir fler än tre, och en
   // rad knappar går inte att läsa då. ◷ = den går av sig själv (ur n8n:s svar).
   chips.innerHTML = `<select class="inp" id="flowPickSel" title="${esc(flow.file)}">` +
-    flows.map(f => `<option value="${esc(f.file)}" ${f.file === flow.file ? "selected" : ""}>` +
+    visade.map(f => `<option value="${esc(f.file)}" ${f.file === flow.file ? "selected" : ""}>` +
       `${f.active ? "◷ " : ""}${esc(f.name || f.file)} — ${(f.nodes || []).length} ${TEXT.flowNodes}` +
       `${f.source === "n8n" ? "" : " (ur filen)"}</option>`).join("") + `</select>`;
   link.href = `${location.protocol}//${location.hostname}:5678` +

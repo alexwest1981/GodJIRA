@@ -326,6 +326,12 @@ console.log(fel.length ? "FEL " + fel.join(" | ") : "OK");
     check("AbortSignal.timeout" in html, "the state fetch has a time limit")
     check("retryLater" in html, "a failed refresh is retried and said out loud")
 
+    # Flödeskartan: bara flödet för projektet man står i (hemvisten ur .scopes.json),
+    # och panelens EGEN palett pålagd på Archifys HTML i stället för renderarens blå.
+    check("const visade = mine.length ? mine : flows;" in html,
+          "flödeslistan visar bara projektets flöde")
+    check("data-from=" in server and "flowmap_theme" in server,
+          "panelens palett läggs på flödeskartan")
     print()
     if failed:
         print("FAILED: " + ", ".join(failed))
