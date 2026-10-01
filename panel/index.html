@@ -262,13 +262,6 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
     -webkit-mask: url(/godjira.svg) center / contain no-repeat;
     mask: url(/godjira.svg) center / contain no-repeat;
   }
-  /* Chippet bakom odjuret, inte bakom ordmärket: samma form som förut, skalenligt
-     uppväxt med märket (41x36 -> 92x81, rundningen 11 -> 25). z-index -1 lägger det
-     under masken, som målar hela rutan. */
-  .rail .mark::after {
-    content: ""; position: absolute; z-index: -1; left: 50%; top: 0; margin-left: -46px;
-    width: 92px; height: 81px; border-radius: 25px; background: var(--panel);
-  }
   .railitem {
     /* Ikonkolumn på fast bredd: där den börjar börjar varje etikett, och det är hela
        skillnaden mot förut. Hela raden är hover-yta, inte bara orden. */
