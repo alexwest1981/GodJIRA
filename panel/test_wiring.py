@@ -157,6 +157,16 @@ def main() -> int:
     # Ritningen får inte läsa STATE innan den finns: en djup länk (#karta?kalla=flow)
     # ritade vid start och kastade, och då avbröts hela laddningen -- splash stod kvar.
     check("((STATE || {}).flows || [])" in html, "the drawing tolerates an empty state at boot")
+    # Editorn där flödet bor: n8n:s egen, inbäddad. Rutan byggs ur flödets id och
+    # panelens EGEN värd -- annars hamnar den på en värd man inte är inloggad på.
+    # (Mätt: src blev http://127.0.0.1:5678/workflow/Drq6dySctqkoGTPj.)
+    check('id="flowEditor"' in html and "location.hostname" in html and "/workflow/" in html
+          and 'data-act="flow-edit"' in html,
+          "the flow can be edited where it lives, without a second truth")
+    # En omladdning var 60:e sekund får inte rycka editorn ur händerna på den som sitter
+    # i den -- bara ett flödesbyte stänger rutan.
+    check("FLOW.editorFile && FLOW.editorFile !== flow.file" in html,
+          "the editor survives a refresh, but not a flow switch")
     # Nytt projekt kräver "Administer Jira", som är en annan behörighet än
     # "Administer Projects". Utan den skall raden säga varför -- inte vara en knapp.
     # Vyerna: show() slaepper bara igenom det som star i TEXT.views, sa en vy-sektion

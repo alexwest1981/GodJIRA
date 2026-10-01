@@ -335,6 +335,12 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
      plats först när en nod är vald -- annars står rutan själv kvar i full bredd. */
   .flowsplit { display: grid; gap: 16px; align-items: start; }
   .flowsplit:has(#flowNode:not([hidden])) { grid-template-columns: minmax(0, 1fr) 330px; }
+  /* Flödesytan viker för editorn. [hidden] förlorar mot display: grid -- samma fälla
+     som filterraden gick i en gång. */
+  .flowsplit[hidden] { display: none; }
+  /* n8n:s egen editor, inbäddad. Den tar flödets plats medan den är öppen. */
+  .editor iframe { width: 100%; height: 74vh; border: 0; display: block;
+                   border-radius: var(--r); background: var(--card); }
   .fnode.sel > rect:first-of-type { stroke-opacity: 1; stroke-width: 2; }
   .phead { margin: 14px 0 6px; color: var(--muted); font-size: 12px;
            text-transform: uppercase; letter-spacing: .04em; }
@@ -564,12 +570,16 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
           <span class="grow"></span><a class="chip" id="flowCanvasLink" hidden>n8n:s egen tavla</a></h3>
         <div class="body">
           <div class="seg" id="flowChips"></div>
-          <div class="flowsplit">
+          <div class="flowsplit" id="flowSplit">
             <div class="graph" id="flowCanvas"></div>
             <!-- Nodens inspektör. Klicket är hela poängen: vad noden är och vad den
                  gör, med de parametrar den faktiskt körs med. -->
             <div class="panel" id="flowNode" hidden></div>
           </div>
+          <!-- Editorn där flödet bor. Panelen ritar flödet; ändrar gör man i n8n:s
+               egen editor, inbäddad här, så det bara finns en sanning om flödet.
+               Rutan byggs först när man trycker -- annars laddades n8n jämt. -->
+          <div class="editor" id="flowEditor" hidden></div>
         </div>
       </div>
       <div class="empty" id="flowNote"></div>
@@ -1430,7 +1440,7 @@ function renderKartaProject() {
 }
 
 // Nodens inspektör: vad noden är och vad den gör, med de parametrar den körs med. Det är
-// n8n:s ruta i miniatyr. Flödet är fortfarande skrivskyddat -- panelen visar, n8n ändrar
+// n8n:s ruta i miniatyr. Panelen visar; ändrar gör man i n8n, via ändra-knappen nedan
 // -- men ett klick skall svara på frågan "vad gör den här noden?".
 function flowNodeShow(key) {
   const host = document.getElementById("flowNode");
@@ -1494,6 +1504,42 @@ function flowRun(flows) {
   const hur = (ms && slut && slut > ms) ? " · " + Math.round((slut - ms) / 1000) + " s" : "";
   return " · " + TEXT.lastRun + " " + (r.status === "success" ? TEXT.ranOk : TEXT.ranBad) +
          (r.stoppedAt ? " " + r.stoppedAt.slice(11, 16) : "") + hur;
+}
+
+// Editorn där flödet bor: n8n:s egen, inbäddad på flödets plats. Panelen ritar, n8n
+// ändrar -- en sanning om flödet i stället för två. Rutan byggs först när man trycker,
+// och rivs när man stänger (annars satt n8n och körde i bakgrunden hela dagen).
+// Värdnamnet tas från panelens EGEN adress: rutan skall hamna på samma värd som man
+// loggade in på, annars möts man av n8n:s inloggning i onödan.
+// ponytail: porten står som konstant -- flytta den till /api/state om n8n flyttar.
+const N8N_PORT = 5678;
+function flowEditorOpen() {
+  const flows = ((STATE || {}).flows || []).filter(f => f && f.file);
+  const flow = flows.find(f => f.file === FLOW.file) || flows[0] || {};
+  const ruta = document.getElementById("flowEditor");
+  const split = document.getElementById("flowSplit");
+  if (!ruta || !split) return;
+  if (!ruta.hidden) { return flowEditorClose(); }
+  if (!ruta.firstChild) {
+    const bas = `${location.protocol}//${location.hostname}:${N8N_PORT}`;
+    const url = flow.id ? `${bas}/workflow/${encodeURIComponent(flow.id)}` : bas;
+    ruta.innerHTML = `<iframe src="${esc(url)}" title="${esc(TEXT.flowN8n)}"` +
+                     ` referrerpolicy="no-referrer"></iframe>`;
+  }
+  FLOW.editorFile = flow.file;
+  ruta.hidden = false;
+  split.hidden = true;
+  const knapp = document.querySelector('[data-act="flow-edit"]');
+  if (knapp) knapp.textContent = "✓ klart";
+}
+function flowEditorClose() {
+  const ruta = document.getElementById("flowEditor");
+  const split = document.getElementById("flowSplit");
+  if (ruta) { ruta.hidden = true; ruta.innerHTML = ""; }
+  if (split) split.hidden = false;
+  FLOW.editorFile = "";
+  const knapp = document.querySelector('[data-act="flow-edit"]');
+  if (knapp) knapp.textContent = "✎ ändra";
 }
 
 // Kodkartan: paketen som noder, importerna som vägar. Samma tavla, samma panorering --
@@ -1615,6 +1661,9 @@ function renderFlow() {
   FLOW.canvas = "flow";
   FLOW.file = flow.file; FLOW.W = W; FLOW.H = H;
   flowNodeClear();
+  // Byter man flöde skall editorn stängas -- men en vanlig omladdning (var 60:e sekund)
+  // får inte rycka rutan ur händerna på den som sitter i den.
+  if (FLOW.editorFile && FLOW.editorFile !== flow.file) flowEditorClose();
   FLOW.pos = {}; FLOW.base = {};
   flow.nodes.forEach(n => {
     const key = n.key || n.name, [dx, dy] = store.move[key] || [0, 0];
@@ -1646,6 +1695,8 @@ function renderFlow() {
       `<span class="meta">${flow.source === "n8n" ? "n8n:s egen tavla (läst ur n8n:s databas)" : "flödesfilen i repot — n8n svarade inte"} · ` +
       `dra i en ruta för att flytta den · dra i bakgrunden för att panorera · ` +
       `rullhjulet zoomar</span><span class="grow"></span>` +
+      // Ändra-knappen finns bara när n8n svarade: annars pekade den på en editor som inte finns.
+      (flow.source === "n8n" ? `<button class="chip" data-act="flow-edit">✎ ändra</button>` : "") +
       `<button class="chip" data-act="flow-reset">nollställ vyn</button></div>`;
   flowBind(flow.file, { x0, y0, w: x1 - x0, h: y1 - y0 });
 }
@@ -2964,6 +3015,7 @@ document.addEventListener("click", e => {
     return tokenSave({ token: token, expires: value("tokExp").trim() });
   }
   if (e.target.closest("[data-flow]")) { flowSel = e.target.closest("[data-flow]").dataset.flow; return renderFlow(); }
+  if (e.target.closest('[data-act="flow-edit"]')) return flowEditorOpen();
   // Nollställningen kastar bara det man själv flyttat och panorerat: flödet i filen rörs inte.
   if (e.target.closest('[data-act="flow-reset"]')) {
     if (FLOW.stores) delete FLOW.stores[FLOW.file];
