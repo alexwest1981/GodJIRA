@@ -513,7 +513,8 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
     </section>
 
     <section class="view" id="v-karta">
-      <div class="panel">
+      <div class="seg" id="kartaChips"></div>
+      <div class="panel" id="codePanel">
         <h3>Kodkartan över <span class="meta" id="codeWho"></span>
           <span class="grow"></span>
           <button class="chip" data-act="code-reset">nollställ vyn</button></h3>
@@ -525,7 +526,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
         </div>
       </div>
 
-      <div class="panel">
+      <div class="panel" id="tracePanel">
         <h3>Ärendena mot filerna <span class="meta" id="mapWho"></span>
           <span class="grow"></span>
           <button class="chip" data-act="scan-run">scanna om</button></h3>
@@ -538,6 +539,19 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
           <div id="mapBody" class="meta" style="margin-top:12px">hämtar kartan …</div>
         </div>
       </div>
+
+      <!-- Hubens egna automationsflöden. Samma ruta som kodkartan, skrivskyddad med
+           flit: filen i n8n/workflows ÄR källan, n8n:s egen tavla är länken dit man
+           ändrar. Låg förut i en egen räl-post -- det var samma tavla två gånger. -->
+      <div class="panel" id="flowPanel" hidden>
+        <h3>Flödet <span class="meta" id="flowMeta"></span>
+          <span class="grow"></span><a class="chip" id="flowCanvasLink" hidden>n8n:s egen tavla</a></h3>
+        <div class="body">
+          <div class="seg" id="flowChips"></div>
+          <div class="graph" id="flowCanvas"></div>
+        </div>
+      </div>
+      <div class="empty" id="flowNote"></div>
     </section>
 
     <section class="view" id="v-board">
@@ -578,18 +592,6 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
         <h3>Skapade ärenden <span class="meta" id="impDoneMeta"></span></h3>
         <div class="body wl" id="impDone"></div>
       </div>
-    </section>
-
-    <section class="view" id="v-automatik">
-      <div class="panel">
-        <h3>Flödet <span class="meta" id="flowMeta"></span>
-          <span class="grow"></span><a class="chip" id="flowCanvasLink" hidden>n8n:s egen tavla</a></h3>
-        <div class="body">
-          <div class="seg" id="flowChips"></div>
-          <div class="graph" id="flowCanvas"></div>
-        </div>
-      </div>
-      <div class="empty" id="flowNote"></div>
     </section>
 
     <section class="view" id="v-repos">
@@ -668,8 +670,11 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
 <script>
 const TEXT = {
   views: { overview: ["Översikt", "◫"], insights: ["Projekt", "◎"], karta: ["Karta", "◈"], board: ["Tavlan", "▤"], items: ["Uppgifter", "☰"], repos: ["Repon", "⌥"],
-           automatik: ["Automatik", "⦿"], import: ["Importera", "⇪"], setup: ["Kom igång", "★"],
+           import: ["Importera", "⇪"], setup: ["Kom igång", "★"],
            admin: ["Admin", "⚑"], settings: ["Inställningar", "⚙"] },
+  // Flödenas namn i Karta-vyns källväljare. Låg förut i views-listan, då flödena hade en
+  // egen räl-post; strängen står kvar här så översättningarna inte tappas.
+  flowView: "Automatik",
   next: "nästa", empty: "Inga ärenden", never: "aldrig", nothing: "inget",
   someoneElses: "är någon annans — tas från panelens andra tryck",
   runnersUp: "därefter", noSprint: "ingen aktiv sprint — det som är kvar står i backloggen och ligger i To Do här",
@@ -1001,7 +1006,6 @@ function renderCrumbs() {
       ? ["Jira", "Backlog", backlog().length + " i backloggen"]
       : ["GodJIRA", TEXT.allTasks, boardItems().length + ghItems().length + " st"],
     repos: ["GitHub", g.login || "GitHub", g.repos.length + " " + TEXT.repos],
-    automatik: ["Godjira", "Automatik", "n8n:s egen tavla"],
     import: ["GodJIRA", "Importera", "underlag in, ärenden ut"],
   }[view] || ["GodJIRA", (TEXT.views[view] || ["?"])[0], ""];   // en ny vy får aldrig fälla hela ritningen
   document.getElementById("crumbs").innerHTML =
@@ -1357,6 +1361,33 @@ function flowBoxes(nodes, W, H, order = {}, tip = null) {
         `font-size="11.5" text-anchor="end">${step}</text>` : "") +
       `</g>`;
   }).join("");
+}
+
+// Kartan visar två sorters tavlor: repots kodkarta och hubens egna automationsflöden.
+// De låg i var sin räl-post förut, men det är samma ruta, samma panorering och samma
+// fråga -- hur hänger det ihop -- så de bor här med en källa i taget. Flödet är
+// skrivskyddat med flit (server.py: panelen är en dörr, inte en andra åsikt om flödet).
+let kartaKalla = "kod";
+
+function kartaShow(kalla) {
+  kartaKalla = kalla === "flow" ? "flow" : "kod";
+  F.karta = kartaKalla;
+  const kod = kartaKalla === "kod";
+  document.getElementById("codePanel").hidden = !kod;
+  document.getElementById("tracePanel").hidden = !kod;
+  document.getElementById("flowPanel").hidden = kod;
+  renderKartaChips();
+  if (kod) { mapLoad(); renderCodeMap(); } else { renderFlow(); }
+}
+
+function renderKartaChips() {
+  const host = document.getElementById("kartaChips");
+  if (!host) return;
+  // Etiketterna är de redan översatta vy-namnen: "Karta" för kodkartan (som förut) och
+  // "Automatik" för flödena, som är vad de hette när de hade en egen post i rälen.
+  host.innerHTML = [["kod", TEXT.views.karta[0]], ["flow", TEXT.flowView]]
+    .map(([nyckel, namn]) => `<button data-act="karta-${nyckel}"` +
+      `${nyckel === kartaKalla ? ' class="on"' : ""}>${esc(namn)}</button>`).join("");
 }
 
 // Kodkartan: paketen som noder, importerna som vägar. Samma tavla, samma panorering --
@@ -2616,7 +2647,7 @@ function render() {
   renderRail(); renderSide(); renderCrumbs(); renderFilters(); renderItemProject();
   renderTokenAlert(); renderSettings(); renderTheme();
   if (view === "insights") renderInsights();
-  if (view === "karta" && document.getElementById("codeCanvas")) renderCodeMap();
+  if (view === "karta") renderKartaChips();
   // Tillåtlista, inte blocklista: en ny vy skall aldrig ärva filterrader den inte
   // använder. Repon har sin egen sökning i sidofältet.
   document.getElementById("filtersRow").hidden = !["board", "items"].includes(view);
@@ -2637,7 +2668,7 @@ function render() {
     }
     renderRepos();
   }
-  if (view === "automatik") renderFlow();
+  if (view === "karta") kartaShow(F.karta || kartaKalla);
   if (view === "import") renderImport();
 }
 
@@ -2722,6 +2753,7 @@ function readHash() {
   F.prio = new Set((p.get("prio") || "").split(",").filter(Boolean));
   F.pool = p.get("pool") === "backlog" ? "backlog" : "";
   F.project = (p.get("project") || "").toUpperCase();
+  F.karta = p.get("kalla") === "flow" ? "flow" : "kod";
   return TEXT.views[v] ? v : "board";
 }
 function writeHash() {
@@ -2730,6 +2762,7 @@ function writeHash() {
   if (F.prio.size) q.set("prio", [...F.prio].join(","));
   if (F.pool) q.set("pool", F.pool);
   if (F.project) q.set("project", F.project);
+  if (F.karta === "flow") q.set("kalla", "flow");
   location.hash = view + (q.toString() ? "?" + q : "");
 }
 function show(v) {
@@ -2743,7 +2776,6 @@ function show(v) {
   if (view === "settings") { renderRights(); renderLanguage(); }
   if (view === "admin") adminLoad();
   if (view === "insights") insightLoad();
-  if (view === "karta") { mapLoad(); renderCodeMap(); }
 }
 // Dra raderna i ändra-läget. Under draget flyttas noden förbi den rad man är över --
 // över mitten hamnar man efter den, annars före -- så man ser var den landar. På släpp
@@ -2821,6 +2853,8 @@ document.addEventListener("click", e => {
     return renderFlow();
   }
   // Kodkartan har sin egen nollställning, och "läs om" hämtar om den ur filerna.
+  if (e.target.closest('[data-act="karta-kod"]')) { writeHash(); return kartaShow("kod"); }
+  if (e.target.closest('[data-act="karta-flow"]')) { writeHash(); return kartaShow("flow"); }
   if (e.target.closest('[data-act="code-reset"]')) {
     if (FLOW.stores) delete FLOW.stores[CODE.key];
     try { localStorage.removeItem("godjira.flow." + CODE.key); } catch { /* utan lagring */ }

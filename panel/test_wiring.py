@@ -126,7 +126,12 @@ def main() -> int:
               "every edge lands on a node: " + path.name)
     check("STATE.flows" in html and "flowSel" in html, "the view draws the state's own graph")
     check("EveryHour" not in html, "no flow is drawn by hand in the page")
-    check("renderFlow" in html and "v-automatik" in html, "the Automatik view exists")
+    # Flödet ritades förr i en egen vy ("Automatik", en egen räl-post). Den låg sida vid
+    # sida med kodkartan, samma ruta två gånger, så den bor nu som en källa i Karta.
+    check("renderFlow" in html and "kartaShow" in html and 'id="flowCanvas"' in html,
+          "the flow is drawn in the Karta view")
+    check("v-automatik" not in html and 'automatik: ["Automatik"' not in html,
+          "no separate Automatik view is left")
     # Ritningen skall gå att se och att flytta i: noderna bär data-node, vägarna
     # data-from/data-to (så de kan ritas om för hand vid ett drag), och verktygen
     # (dra, panorera, zooma, nollställ) finns.
