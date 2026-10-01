@@ -1175,10 +1175,28 @@ function renderLayoutPrefs() {
 // för filen är källan och instansen i n8n är en kopia (n8n/README.md).
 let flowSel = "";
 
-function flowGlyphOf(type) {
-  const map = { scheduleTrigger: "◷", manualTrigger: "▶", set: "≡", executeCommand: "$",
-                code: "ƒ", httpRequest: "⇅", if: "⋔", switch: "⋔", noOp: "○", stickyNote: "✎" };
-  return map[type] || "▪";
+// En rad per sort: glyf och färg i samma tabell, så de inte kan glida isär. Flödet bär
+// sorten i n.type (n8n:s nodtyp), kodkartan i namnets första led -- där är n.type bara
+// filantalet ("3 filer"), och det var därför varje ruta i kodkartan blev samma grå
+// klump: tabellen kände bara n8n:s typer. Lagren är mätta ur repona (gui 16 paket,
+// ui 12, service, repository, model, data, theme, ...), inte gissade. Färgerna är
+// palettens egna, och test_palette.py vaktar både dem och tabellens form.
+const FLOW_KINDS = {
+  scheduleTrigger: ["◷", "var(--green)"], manualTrigger: ["▶", "var(--green)"],
+  if: ["⋔", "var(--amber)"], switch: ["⋔", "var(--amber)"],
+  code: ["ƒ", "var(--navy)"], httpRequest: ["⇅", "var(--navy)"],
+  executeCommand: ["$", "var(--navy)"], set: ["≡", "var(--navy)"],
+  noOp: ["○", "var(--muted)"], stickyNote: ["✎", "var(--muted)"],
+  ui: ["◫", "var(--accent)"], gui: ["◫", "var(--accent)"], theme: ["◎", "var(--green)"],
+  config: ["⌥", "var(--green)"], data: ["▤", "var(--amber)"], model: ["▤", "var(--amber)"],
+  dto: ["▤", "var(--amber)"], service: ["⚙", "var(--navy)"], controller: ["⚙", "var(--navy)"],
+  repository: ["⚙", "var(--navy)"], test: ["☰", "var(--muted)"], seed: ["☰", "var(--muted)"],
+};
+const FLOW_FALLBACK = ["▪", "var(--muted)"];
+
+function flowKindOf(n) {
+  const type = (n && n.type) || "", lead = ((n && n.name) || "").split(".")[0];
+  return FLOW_KINDS[type] || FLOW_KINDS[lead] || FLOW_FALLBACK;
 }
 
 // Ritningens egna delar: var noderna står just nu, vad man flyttat, och hur vyn är
@@ -1319,14 +1337,20 @@ function flowBind(file, box) {
 function flowBoxes(nodes, W, H, order = {}, tip = null) {
   return nodes.map(n => {
     const key = n.key || n.name, step = order[key], lines = flowWrap(n.name);
+    const [glyf, fam] = flowKindOf(n);
     const spot = FLOW.pos[key];
     return `<g class="fnode" data-node="${esc(key)}" ` +
       `transform="translate(${spot.x - n.x} ${spot.y - n.y})">` +
       `<title>${esc(tip ? tip(n) : `${n.name} — ${n.type}${step ? " · steg " + step : ""}`)}</title>` +
       `<rect x="${n.x}" y="${n.y}" width="${W}" height="${H}" rx="10" fill="var(--card)" ` +
-        `stroke="var(--line-2)"/>` +
+        `stroke="${fam}" stroke-opacity="0.5"/>` +
+      // n8n:s läsning: ett färgband i kanten visar sorten, och pricken är ingången.
+      // Bandet gör också att korten släpper från kanvasen -- det var kontrasten.
+      `<rect x="${n.x}" y="${n.y}" width="4" height="${H}" rx="2" fill="${fam}"/>` +
+      `<circle cx="${n.x}" cy="${n.y + H / 2}" r="4" fill="${fam}"/>` +
       lines.map((line, i) => `<text x="${n.x + 15}" y="${n.y + 26 + i * 16}" fill="var(--text)" ` +
-        `font-size="13.5">${i === 0 ? esc(flowGlyphOf(n.type)) + "  " : ""}${esc(line)}</text>`).join("") +
+        `font-size="13.5">${i === 0 ? `<tspan fill="${fam}" font-size="15">` +
+        `${esc(glyf)}</tspan>  ` : ""}${esc(line)}</text>`).join("") +
       `<text x="${n.x + 15}" y="${n.y + H - 12}" fill="var(--text)" opacity="0.62" ` +
         `font-size="11.5">${esc(n.type)}</text>` +
       (step ? `<text x="${n.x + W - 13}" y="${n.y + 22}" fill="var(--text)" opacity="0.55" ` +

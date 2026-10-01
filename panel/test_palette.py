@@ -103,6 +103,33 @@ def main():
         if val not in HTML:
             fel.append("logotypen saknar filterregel: " + val)
 
+    # Tavlan: varje nodtyp som får en glyf måste också få en färg, och färgerna måste
+    # finnas i paletten. Tappar någon färgen blir rutorna i kodkartan grå klumpar igen --
+    # där är n.type bara filantalet ("3 filer") och lagret ligger i namnet, så en ny
+    # nodtyp utan färg märks inte förrän man tittar på tavlan.
+    tab = re.search(r"const FLOW_KINDS = \{(.*?)\n\};", HTML, re.S)
+    if not tab:
+        fel.append("hittar inte FLOW_KINDS i index.html")
+    else:
+        # Rader med BÅDE glyf och färg. En halv rad fångas: det var felet som gjorde
+        # varje ruta i kodkartan till samma grå klump.
+        rader = re.findall(r'([A-Za-z]+): \["(.)", "(var\(--[a-z0-9-]+\))"\]', tab.group(1))
+        antal = len(re.findall(r"[A-Za-z]+: \[", tab.group(1)))
+        if len(rader) != antal:
+            fel.append("FLOW_KINDS: %d rader, bara %d med både glyf och färg" % (antal, len(rader)))
+        farger = set()
+        for _, _, farg in rader:
+            tok = re.search(r"var\(--([a-z0-9-]+)\)", farg).group(1)
+            farger.add(tok)
+            if tok not in TOKENS:
+                fel.append("FLOW_KINDS pekar på --%s som inte finns i :root" % tok)
+        fall = re.search(r'const FLOW_FALLBACK = \["(.)", "(var\(--([a-z0-9-]+)\))"\]', HTML)
+        if not fall:
+            fel.append("FLOW_FALLBACK saknas i index.html")
+        elif fall.group(3) not in TOKENS:
+            fel.append("FLOW_FALLBACK pekar på --%s som inte finns i :root" % fall.group(3))
+        print("tavlan: %d sorter i %d färger" % (len(rader), len(farger)))
+
     if fel:
         print("\n".join("FEL: " + f for f in fel))
         return 1
