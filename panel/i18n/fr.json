@@ -365,5 +365,16 @@
  "ärenden som nämner": "tickets qui le mentionnent",
  "filer som nämns": "fichiers mentionnés",
  "visa alla": "tout afficher",
- "visa färre": "afficher moins"
+ "visa färre": "afficher moins",
+ "Filerna": "Fichiers",
+ "Ändringarna": "Modifications",
+ "hämtar filerna …": "chargement des fichiers …",
+ "kunde inte läsa filerna": "impossible de lire les fichiers",
+ "hämtar filen …": "chargement du fichier …",
+ "filens historik": "historique du fichier",
+ "inga ändringar": "aucune modification",
+ "rader": "lignes",
+ "binär fil — visas inte": "fichier binaire — non affiché",
+ "filen är kapad": "le fichier est tronqué",
+ "visar": "affiche"
 }

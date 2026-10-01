@@ -265,6 +265,16 @@ console.log(fel.length ? "FEL " + fel.join(" | ") : "OK");
               "en enhet får sina egna grannar -- och bara sina egna",
               (graph_run.stdout + graph_run.stderr).strip()[:160])
 
+    # Filhanteringen är en flik som de andra: nyckeln i TABS, panen i markupen, och en
+    # laddningsväg i show(). En flik utan pane är ett klick som inte gör något.
+    check('["filer", "Filerna"]' in html and 'id="pane-repos-filer"' in html,
+          "filhanteringen har en egen flik")
+    check('tabState.repos === "filer"' in html, "fliken laddar sitt innehåll när den öppnas")
+    check('filUrl("files"' in html and 'filUrl("file"' in html and 'filUrl("commits"' in html,
+          "fliken läser filerna, filen och historiken")
+    check('data-file=' in html and 'function openFile(' in html,
+          "en filrad öppnar filen")
+
     # Vad som syns: valet ligger i webbläsaren som en lista av det som är AV. Skräp i
     # lagringen skall ge inga val (allt syns), inte ett halvt trasigt gränssnitt.
     fn = re.search(r"function hiddenPrefs\(raw\) \{.*?\n\}", html, re.S)

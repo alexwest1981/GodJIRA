@@ -365,5 +365,16 @@
  "ärenden som nämner": "ärenden som nämner",
  "filer som nämns": "filer som nämns",
  "visa alla": "visa alla",
- "visa färre": "visa färre"
+ "visa färre": "visa färre",
+ "Filerna": "Filerna",
+ "Ändringarna": "Ändringarna",
+ "hämtar filerna …": "hämtar filerna …",
+ "kunde inte läsa filerna": "kunde inte läsa filerna",
+ "hämtar filen …": "hämtar filen …",
+ "filens historik": "filens historik",
+ "inga ändringar": "inga ändringar",
+ "rader": "rader",
+ "binär fil — visas inte": "binär fil — visas inte",
+ "filen är kapad": "filen är kapad",
+ "visar": "visar"
 }

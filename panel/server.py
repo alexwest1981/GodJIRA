@@ -1143,10 +1143,7 @@ def codemap_read(repo: str) -> dict:
     och panelen ritar. Samma arbetsdelning som kartan över ärendena: vyn väntar aldrig
     på att något skall räknas i webbläsaren.
     """
-    name = (repo or "").strip()
-    if not name:
-        links = (links_state().get("links") or [])
-        name = str((links[0] or {}).get("repo") or "") if len(links) == 1 else ""
+    name = repo_name_of(repo)
     if not name:
         return {"ok": False, "error": "no repo to map"}
     env = seam("flow", "codemap", "--repo-name", name, "--json", timeout=120)
@@ -1157,6 +1154,59 @@ def codemap_read(repo: str) -> dict:
     return data
 
 
+def repo_name_of(repo: str) -> str:
+    """Repot en förfrågan gäller: namnet, eller den enda länken. Tomt = inget att läsa.
+
+    Låg som fyra kopior av samma sex rader (karta, graf, scan, kodkarta): en fråga utan
+    repo skall ge länkens repo, och är länkarna flera är svaret tomt i stället för ett
+    gissat repo.
+    """
+    name = (repo or "").strip()
+    if name:
+        return name
+    links = (links_state().get("links") or [])
+    return str((links[0] or {}).get("repo") or "") if len(links) == 1 else ""
+
+
+def files_read(repo: str) -> dict:
+    """Filerna i repot, som git känner dem. Skrivskyddat: panelen är en dörr, ingen editor."""
+    name = repo_name_of(repo)
+    if not name:
+        return {"ok": False, "error": "no repo to list files from"}
+    env = seam("flow", "files", "--repo-name", name, "--json", timeout=120)
+    data = env.get("payload") if isinstance(env.get("payload"), dict) else None
+    return data or {"ok": False, "error": first_line(env) or "the files could not be listed"}
+
+
+def file_read(repo: str, rel: str) -> dict:
+    """En fil ur repot.
+
+    Sökvägen går som ett argument -- aldrig genom ett skal -- och motorn nekar varje väg som
+    pekar utanför repot. Panelen är en dörr mot koden, inte ett sätt att läsa /etc/passwd.
+    """
+    name = repo_name_of(repo)
+    if not name:
+        return {"ok": False, "error": "no repo to read from"}
+    if not (rel or "").strip():
+        return {"ok": False, "error": "no file to read"}
+    env = seam("flow", "file", "--repo-name", name, "--path", rel, "--json", timeout=120)
+    data = env.get("payload") if isinstance(env.get("payload"), dict) else None
+    return data or {"ok": False, "error": first_line(env) or "the file could not be read"}
+
+
+def commits_read(repo: str, rel: str = "", limit: int = 30) -> dict:
+    """Commitnoterna: hela repots, eller en fils. Historiken är per fil i GitHub också."""
+    name = repo_name_of(repo)
+    if not name:
+        return {"ok": False, "error": "no repo to read the history of"}
+    argv = ["flow", "commits", "--repo-name", name, "--limit", str(limit), "--json"]
+    if (rel or "").strip():
+        argv += ["--path", rel]
+    env = seam(*argv, timeout=120)
+    data = env.get("payload") if isinstance(env.get("payload"), dict) else None
+    return data or {"ok": False, "error": first_line(env) or "the history could not be read"}
+
+
 def graph_read(repo: str) -> dict:
     """Kunskapsgrafen för repot: paket, filer och ärenden med sina relationer.
 
@@ -1164,10 +1214,7 @@ def graph_read(repo: str) -> dict:
     sekund, och kan läsas av en agent så ofta den vill. Ärendena kommer ur scanningen;
     finns ingen sådan säger svaret det i stället för att visa en halv graf.
     """
-    name = (repo or "").strip()
-    if not name:
-        links = (links_state().get("links") or [])
-        name = str((links[0] or {}).get("repo") or "") if len(links) == 1 else ""
+    name = repo_name_of(repo)
     if not name:
         return {"ok": False, "error": "no repo to graph"}
     env = seam("flow", "graph", "--repo-name", name, "--json", timeout=120)
@@ -1719,6 +1766,28 @@ class Handler(BaseHTTPRequestHandler):
             # förut i två minuter efter ett tryck.
             self._json(200, codemap_read(name) if (query.get("refresh") or [""])[0]
                        else cached("codemap:" + name, lambda: codemap_read(name), ttl=120))
+            return
+        if path == "/api/files":
+            query = parse_qs(urlparse(self.path).query)
+            name = (query.get("repo") or [""])[0]
+            self._json(200, cached("files:" + name, lambda: files_read(name), ttl=120))
+            return
+        if path == "/api/file":
+            query = parse_qs(urlparse(self.path).query)
+            # Ingen cache här: ett klick skall visa filen som den är nu.
+            self._json(200, file_read((query.get("repo") or [""])[0],
+                                      (query.get("path") or [""])[0]))
+            return
+        if path == "/api/commits":
+            query = parse_qs(urlparse(self.path).query)
+            name = (query.get("repo") or [""])[0]
+            rel = (query.get("path") or [""])[0]
+            # limit kommer ur en adressrad: ett tal, annars 30 -- aldrig ett kast.
+            raw = (query.get("limit") or [""])[0]
+            limit = int(raw) if raw.isdigit() else 30
+            limit = max(1, min(200, limit))
+            self._json(200, cached("commits:{}:{}:{}".format(name, rel, limit),
+                                   lambda: commits_read(name, rel, limit), ttl=120))
             return
         if path == "/api/graph":
             query = parse_qs(urlparse(self.path).query)

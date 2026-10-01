@@ -365,5 +365,16 @@
  "ärenden som nämner": "taken die het noemen",
  "filer som nämns": "genoemde bestanden",
  "visa alla": "alles tonen",
- "visa färre": "minder tonen"
+ "visa färre": "minder tonen",
+ "Filerna": "Bestanden",
+ "Ändringarna": "Wijzigingen",
+ "hämtar filerna …": "bestanden worden geladen …",
+ "kunde inte läsa filerna": "kon de bestanden niet lezen",
+ "hämtar filen …": "bestand wordt geladen …",
+ "filens historik": "geschiedenis van het bestand",
+ "inga ändringar": "geen wijzigingen",
+ "rader": "regels",
+ "binär fil — visas inte": "binair bestand — niet getoond",
+ "filen är kapad": "het bestand is afgekapt",
+ "visar": "toont"
 }

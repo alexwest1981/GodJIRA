@@ -232,6 +232,14 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px !important; }
   a.chip { text-decoration: none; }
   .mono { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px; }
+  /* Filen läsbar: kod får skrollas i sidled, för en ombruten rad är inte samma rad. */
+  pre.kod { margin: 10px 0 0; padding: 12px; max-height: min(56vh, 620px); overflow: auto;
+            background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+            font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px;
+            line-height: 1.45; white-space: pre; }
+  .cm summary { display: flex; align-items: center; gap: 9px; padding: 7px 2px;
+                border-bottom: 1px solid var(--line); cursor: pointer; }
+  .cm summary .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* --------------------------------------------------------- import ---- */
   .impfile { cursor: pointer; }
@@ -671,6 +679,32 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
 
       <!-- Flödet är en egen flik nu: det var en växel inuti kartan förut, men det är
            n8n:s sak, inte kartans. Här pekar panelen till n8n -- ändrar gör man där. -->
+      <div class="pane" id="pane-repos-filer">
+      <!-- Filhanteringen: samma sak som GitHubs filtavla, men ur den lokala kopian --
+           fillistan, filen, och ändringarna. Skrivskyddat med flit: panelen är en dörr
+           mot repot, inte en editor, och motorn nekar varje väg ut ur repot. -->
+      <div class="panel" id="filesPanel">
+        <h3>Filerna <span class="meta" id="filesWho"></span>
+          <span class="grow"></span>
+          <button class="chip" data-act="files-fresh">läs om</button></h3>
+        <div class="body">
+          <div class="meta">Katalogen bär sökvägen en gång, raden bara namnet — klicka på
+            en fil för att läsa den och se vad som ändrats i den.</div>
+          <div id="filesBody" class="meta" style="margin-top:12px">hämtar filerna …</div>
+        </div>
+      </div>
+      <div class="panel" id="filePanel" hidden></div>
+      <div class="panel" id="commitsPanel">
+        <h3>Ändringarna <span class="meta" id="commitsWho"></span></h3>
+        <div class="body">
+          <div class="meta">Commitnoterna, senaste först — hela meddelandet och filerna
+            den rörde. Klicka på en rad för att fälla ut den.</div>
+          <div id="commitsBody" class="meta" style="margin-top:12px">hämtar historiken …</div>
+        </div>
+      </div>
+
+      </div>
+
       <div class="pane" id="pane-repos-automatik">
       <!-- Hubens egna automationsflöden. Samma ruta som kodkartan, skrivskyddad med
            flit: filen i n8n/workflows ÄR källan, n8n:s egen tavla är länken dit man
@@ -805,6 +839,9 @@ const TEXT = {
   graphFailed: "kunde inte läsa grafen", graphUsedBy: "används av", graphFiles: "filer",
   graphNoIssues: "ingen uppgift nämner filerna i paketet",
   graphMentions: "ärenden som nämner", graphFilesMentioned: "filer som nämns",
+  filesFailed: "kunde inte läsa filerna", fileLoading: "hämtar filen …",
+  fileHistory: "filens historik", noCommits: "inga ändringar", lines: "rader",
+  binaryFile: "binär fil — visas inte", cutOff: "filen är kapad", showing: "visar",
   paketet: "paketet", visaAlla: "visa alla", visaFärre: "visa färre", stäng: "stäng",
   n8nCanvas: "n8n:s egen tavla", under: "under", readCode: "läst ur repot",
   none: "utan",
@@ -812,7 +849,8 @@ const TEXT = {
 // Flikarna: nycklarna här, markupen i vyn. Deklarationerna måste ligga före allt som
 // körs vid start -- parseHash läser dem, och en const längre ner är en krasch vid start
 // (mätt: hela rälen blev tom på #karta?kalla=flow).
-const TABS = { repos: [["repot", "Repot"], ["kartan", "Kartan"], ["automatik", TEXT.flowView]] };
+const TABS = { repos: [["repot", "Repot"], ["kartan", "Kartan"], ["filer", "Filerna"],
+                       ["automatik", TEXT.flowView]] };
 const tabState = {};
 
 let STATE = null, view = "board";
@@ -2798,6 +2836,118 @@ function renderRepoLink() {
 // Katalogen bär sökvägen, raden bär bara namnet. 74 filer ur samma paket gick inte att
 // läsa när varje rad började likadant (mätt: 60 rader med samma rot). Filer utan
 // katalog hamnar först -- de ligger i roten, och det är där de hör hemma.
+// Filhanteringen: repot som en filväg, en fil i taget, och ändringarna. Skrivskyddat --
+// panelen är en dörr mot repot, inte en editor, och motorn nekar varje väg ut ur repot.
+const FILER = { repo: null, files: null, commits: null, error: "" };
+
+// Repot är nyckeln: byter man repo får ingenting från det förra ligga kvar i rutan.
+function filReset(repo) {
+  if (FILER.repo === repo) return;
+  FILER.repo = repo; FILER.files = null; FILER.commits = null; FILER.error = "";
+  const p = document.getElementById("filePanel");
+  if (p) { p.hidden = true; p.innerHTML = ""; }
+}
+
+const filUrl = (vad, extra) =>
+  "/api/" + vad + "?repo=" + encodeURIComponent(scanRepo()) + (extra || "");
+
+async function renderFiles(force) {
+  const kropp = document.getElementById("filesBody");
+  if (!kropp) return;
+  filReset(scanRepo());
+  if (force || !FILER.files) {
+    try {
+      const a = await (await fetch(filUrl("files"))).json();
+      if (!a.ok) throw new Error(a.error || a.note || "inget svar");
+      FILER.files = a;
+    } catch (e) { FILER.files = null; FILER.error = e.message; }
+  }
+  const who = document.getElementById("filesWho");
+  if (!FILER.files) {
+    kropp.innerHTML = `<div class="meta err">${esc(TEXT.filesFailed)}: ${esc(FILER.error)}</div>`;
+    return;
+  }
+  if (who) who.textContent = FILER.files.repo + " · " + FILER.files.count + " " + TEXT.graphFiles;
+  // Samma gruppering som kartan: katalogen bär sökvägen en gång, raden bara namnet.
+  kropp.innerHTML = dirGroups(FILER.files.files || []).map(([dir, namn]) =>
+    `<div class="dir"><div class="mono">${esc(dir || ".")}</div>` +
+    namn.map(n => `<div class="r" data-file="${esc(dir + n)}"><span class="t">${esc(n)}</span></div>`)
+        .join("") + `</div>`).join("");
+}
+
+// En commit-rad: utfälld visar den hela meddelandet och filerna den rörde. Filerna går att
+// klicka på -- historiken leder tillbaka till koden.
+function commitRows(poster) {
+  if (!(poster || []).length) return `<div class="meta">${esc(TEXT.noCommits)}</div>`;
+  return poster.map(c =>
+    `<details class="cm"><summary><span class="mono">${esc(c.sha)}</span>` +
+      `<span class="t">${esc(c.subject)}</span>` +
+      `<span class="tside meta">${esc(c.author)} · ${esc(c.date)}</span></summary>` +
+      (c.body ? `<pre class="pval">${esc(c.body)}</pre>` : "") +
+      `<div class="meta" style="margin:8px 2px">${c.filesTotal} ${esc(TEXT.graphFiles)}` +
+        (c.filesTotal > c.files.length ? ` (${esc(TEXT.showing)} ${c.files.length})` : "") + `</div>` +
+      `<div class="wl">` + c.files.map(f =>
+        `<div class="r" data-file="${esc(f)}"><span class="t mono">${esc(f)}</span></div>`).join("") +
+      `</div></details>`).join("");
+}
+
+async function renderCommits(force) {
+  const kropp = document.getElementById("commitsBody");
+  if (!kropp) return;
+  filReset(scanRepo());
+  if (force || !FILER.commits) {
+    try {
+      const a = await (await fetch(filUrl("commits", "&limit=20"))).json();
+      if (!a.ok) throw new Error(a.error || a.note || "inget svar");
+      FILER.commits = a;
+    } catch (e) { FILER.commits = null; FILER.error = e.message; }
+  }
+  const who = document.getElementById("commitsWho");
+  if (FILER.commits && who) who.textContent = FILER.commits.repo + " · " + FILER.commits.count;
+  kropp.innerHTML = FILER.commits ? commitRows(FILER.commits.commits)
+    : `<div class="meta err">${esc(TEXT.filesFailed)}: ${esc(FILER.error)}</div>`;
+}
+
+async function openFile(rel) {
+  const panel = document.getElementById("filePanel");
+  if (!panel || !rel) return;
+  panel.hidden = false;
+  panel.innerHTML = `<h3>${esc(rel.split("/").pop())} <span class="grow"></span>` +
+    `<span class="meta"><a data-fclose="1">${esc(TEXT.stäng)}</a></span></h3>
+    <div class="body">
+      <div class="meta mono">${esc(rel)}</div>
+      <div id="fileText" class="meta">${esc(TEXT.fileLoading)}</div>
+      <div class="phead">${esc(TEXT.fileHistory)}</div>
+      <div id="fileLog" class="meta">…</div>
+    </div>`;
+  panel.scrollIntoView({block: "nearest"});
+  const [fil, log] = await Promise.all([
+    fetch(filUrl("file", "&path=" + encodeURIComponent(rel))).then(r => r.json())
+      .catch(e => ({ok: false, error: e.message})),
+    fetch(filUrl("commits", "&path=" + encodeURIComponent(rel) + "&limit=12")).then(r => r.json())
+      .catch(e => ({ok: false, error: e.message})),
+  ]);
+  const t = document.getElementById("fileText");
+  if (t) {
+    if (!fil.ok) t.innerHTML = `<div class="err">${esc(fil.error || "?")}</div>`;
+    else {
+      const rader = `${fil.lines} ${TEXT.lines}` + (fil.bytes ? ` · ${fil.bytes} B` : "");
+      t.innerHTML = `<div class="meta">${esc(rader)}` +
+        (fil.truncated ? ` · ${esc(TEXT.cutOff)}` : "") + `</div>` +
+        (fil.binary ? `<div class="meta">${esc(TEXT.binaryFile)}</div>`
+                    : `<pre class="kod">${esc(fil.text || "")}</pre>`);
+    }
+  }
+  const l = document.getElementById("fileLog");
+  if (l) l.innerHTML = log.ok ? commitRows(log.commits)
+                              : `<div class="meta err">${esc(log.error || "?")}</div>`;
+}
+
+function filClose() {
+  const p = document.getElementById("filePanel");
+  if (p) { p.hidden = true; p.innerHTML = ""; }
+}
+
 function dirGroups(list) {
   const groups = new Map();
   for (const f of (list || [])) {
@@ -3357,6 +3507,11 @@ function render() {
     mapLoad();
     if (document.getElementById("codeCanvas")) renderCodeMap();
   }
+  if (view === "repos" && tabState.repos === "filer") {
+    renderKartaProject();
+    renderFiles();
+    renderCommits();
+  }
   if (view === "repos" && tabState.repos === "automatik") {
     renderKartaProject();
     renderFlow();
@@ -3539,6 +3694,15 @@ document.addEventListener("click", e => {
     if (e.target.closest("[data-gall]")) { GRAF.expand = !GRAF.expand; return grafRita(); }
     if (e.target.closest("[data-gback]")) return codeNodeShow(null, true);
     if (e.target.closest("[data-gclose]")) return flowNodeClear();
+  }
+  // Filhanteringen: en filrad öppnar filen, historikens filnamn likaså.
+  if (!e.target.closest("a[href]")) {
+    const fil = e.target.closest("[data-file]");
+    if (fil) return openFile(fil.dataset.file);
+    if (e.target.closest("[data-fclose]")) return filClose();
+    if (e.target.closest('[data-act="files-fresh"]')) {
+      renderFiles(true); renderCommits(true); return;
+    }
   }
   if (e.target.closest('[data-act="refresh"]')) return load(true);
   const lay = e.target.closest('[data-act="lay"]');

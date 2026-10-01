@@ -365,5 +365,16 @@
  "ärenden som nämner": "attività che lo menzionano",
  "filer som nämns": "file menzionati",
  "visa alla": "mostra tutto",
- "visa färre": "mostra meno"
+ "visa färre": "mostra meno",
+ "Filerna": "File",
+ "Ändringarna": "Modifiche",
+ "hämtar filerna …": "carico dei file …",
+ "kunde inte läsa filerna": "impossibile leggere i file",
+ "hämtar filen …": "carico del file …",
+ "filens historik": "cronologia del file",
+ "inga ändringar": "nessuna modifica",
+ "rader": "righe",
+ "binär fil — visas inte": "file binario — non mostrato",
+ "filen är kapad": "il file è tagliato",
+ "visar": "mostra"
 }

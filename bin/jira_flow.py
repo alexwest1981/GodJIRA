@@ -1213,6 +1213,146 @@ def cmd_codemap(args) -> int:
     return 0 if graph["nodes"] else 2
 
 
+# --------------------------------------------------- filhanteringen: repot i panelen
+# Panelen är en dörr mot repot, inte en editor: allt här är skrivskyddat. En sökväg ur en
+# förfrågan är en GRÄNS -- den skall peka på en fil inuti repot, annars läser panelen vad
+# som helst på maskinen.
+
+FILE_MAX_BYTES = 400_000      # källkod, inte en datadump: mer än så är inte en fil man läser
+FILES_MAX = 3000
+COMMITS_MAX = 200
+COMMIT_FILES_MAX = 40
+
+
+def repo_dir_or_say(args, verb: str):
+    """Samma grind som kodkartan: ett okänt repo får ett besked om sig självt."""
+    root = chosen_repo_dir(args)
+    if not root or not Path(root).is_dir():
+        name = (getattr(args, "repo_name", "") or "the repo").strip()
+        say(args, {"ok": False, "error": "no local copy of {} to {}".format(name, verb)},
+            ["no local copy of {} to {} — link it, or give --repo <dir>".format(name, verb)])
+        return None
+    return Path(root)
+
+
+def safe_repo_path(root: Path, raw: str):
+    """(path, "") eller (None, skäl). Absolute vägar och .. nekas, och resolve() följer
+    symlänkar -- en länk ut ur repot är samma hål som en ..-väg."""
+    text = (raw or "").strip().lstrip("/")
+    if not text:
+        return None, "no path given"
+    try:
+        bas = Path(root).resolve()
+        target = (bas / text).resolve()
+    except OSError as exc:
+        return None, "the path could not be resolved ({})".format(type(exc).__name__)
+    if target != bas and bas not in target.parents:
+        return None, "the path points outside the repo"
+    if not target.is_file():
+        return None, "no such file in the repo"
+    return target, ""
+
+
+def repo_files(root: Path) -> list:
+    """Filerna git känner till. Utan git läses katalogen i stället, med byggskräp
+    bortskalat -- ett projekt behöver inte vara ett git-repo (skolans inlämning är en zip)."""
+    listed = [line.strip() for line in git_out(root, "ls-files").splitlines() if line.strip()]
+    if listed:
+        return listed
+    skip = set(SKIP_DIRS) | {".git", "node_modules", ".venv", "__pycache__"}
+    return sorted(p.relative_to(root).as_posix() for p in root.rglob("*")
+                  if p.is_file() and not (skip & set(p.relative_to(root).parts)))
+
+
+def repo_commit_log(root: Path, limit: int, rel: str = "") -> list:
+    """Commitnoterna: en post per commit med författare, datum, ämne, hela meddelandet och
+    filerna den rörde. Ett anrop, inte ett per commit."""
+    fmt = "%x1e%h%x1f%an%x1f%ad%x1f%s%x1f%b%x1f"
+    argv = ["log", "-n", str(limit), "--date=short", "--pretty=format:" + fmt, "--name-only"]
+    if rel:
+        argv += ["--", rel]
+    out = git_out(root, *argv, timeout=60)
+    poster = []
+    for chunk in out.split("\x1e"):
+        if not chunk.strip():
+            continue
+        fields = chunk.split("\x1f")
+        if len(fields) < 5:
+            continue
+        # Mätt med od: sista fältet är "\n<filnamn>\n\n" -- namnen kommer FÖRST i det, och
+        # filnamnens egen tomrad ligger efter. Att leta efter en tomrad före namnen gav
+        # tom filnamnslista och filnamnen inbakade i meddelandet. Kroppen är allt mellan
+        # ämnet och sista fältet, så ett meddelande med egen tomrad klarar sig.
+        body = "\n".join(fields[4:-1]).strip()
+        navn = [line.strip() for line in fields[-1].splitlines() if line.strip()]
+        poster.append({"sha": fields[0].strip(), "author": fields[1], "date": fields[2],
+                       "subject": fields[3], "body": body,
+                       "files": navn[:COMMIT_FILES_MAX], "filesTotal": len(navn)})
+    return poster
+
+
+def cmd_files(args) -> int:
+    """Filerna i repot: vad git känner till, i sorterad ordning."""
+    root = repo_dir_or_say(args, "list files in")
+    if not root:
+        return 1
+    filer = repo_files(root)
+    limit = max(1, getattr(args, "limit", 0) or FILES_MAX)
+    say(args, {"ok": True, "repo": repo_slug_of_dir(root) or str(root), "root": str(root),
+               "count": len(filer), "files": filer[:limit]},
+        ["{} files in {}".format(len(filer), root)])
+    return 0
+
+
+def cmd_file(args) -> int:
+    """En fil ur repot: innehållet, med ärliga tak."""
+    root = repo_dir_or_say(args, "read a file in")
+    if not root:
+        return 1
+    begart = (getattr(args, "path", "") or "").strip()
+    target, fel = safe_repo_path(root, begart)
+    if not target:
+        say(args, {"ok": False, "error": fel, "path": begart}, ["{}: {}".format(begart, fel)])
+        return 1
+    rel = target.relative_to(root.resolve()).as_posix()
+    with open(target, "rb") as fh:
+        raw = fh.read(FILE_MAX_BYTES + 1)
+    klippt = len(raw) > FILE_MAX_BYTES
+    raw = raw[:FILE_MAX_BYTES]
+    # En binärfil är ingen förfrågan -- den är ett faktum. Panelen säger det i stället för
+    # att visa skräp, och "ok" är sant: svaret är att filen inte är text.
+    binart = b"\0" in raw
+    text_ = "" if binart else raw.decode("utf-8", errors="replace")
+    svar = {"ok": True, "repo": repo_slug_of_dir(root) or str(root), "path": rel,
+            "bytes": target.stat().st_size, "binary": binart, "truncated": klippt,
+            "lines": 0 if binart else text_.count("\n") + 1, "text": text_}
+    say(args, svar, ["{}: {} bytes{}".format(rel, svar["bytes"],
+                                             " (visar de första {} kB)".format(
+                                                 FILE_MAX_BYTES // 1000) if klippt else "")])
+    return 0
+
+
+def cmd_commits(args) -> int:
+    """Commitnoterna för repot -- eller för en fil: historiken är per fil i GitHub också."""
+    root = repo_dir_or_say(args, "read the history of")
+    if not root:
+        return 1
+    rel = (getattr(args, "path", "") or "").strip()
+    if rel:
+        target, fel = safe_repo_path(root, rel)     # samma grind: sökvägen är en gräns
+        if not target:
+            say(args, {"ok": False, "error": fel, "path": rel}, ["{}: {}".format(rel, fel)])
+            return 1
+        rel = target.relative_to(root.resolve()).as_posix()
+    limit = max(1, min(COMMITS_MAX, getattr(args, "limit", 0) or 30))
+    poster = repo_commit_log(root, limit, rel)
+    say(args, {"ok": True, "repo": repo_slug_of_dir(root) or str(root), "path": rel,
+               "count": len(poster), "commits": poster},
+        ["{} commits{}{}".format(len(poster), " in " + rel if rel else "",
+                                 "" if not poster else ": " + poster[0]["sha"] + " " + poster[0]["subject"])])
+    return 0 if poster else 2
+
+
 def cmd_graph(args) -> int:
     """Kunskapsgrafen för ett repo: allt vi vet, med sina relationer, i en fil.
 
@@ -3928,6 +4068,53 @@ def selftest() -> int:
         shutil.rmtree(tmp, ignore_errors=True)
     checks += 1
 
+    # Filhanteringen: en sökväg ur en förfrågan är en GRÄNS, och commitnoterna läses i ett
+    # anrop -- en flerradig commit-text får inte klyvas av tomluckan före filnamnen.
+    tmp = tempfile.mkdtemp(prefix="godjira-files-")
+    ickegit = tempfile.mkdtemp(prefix="godjira-ickegit-")
+    try:
+        root = Path(tmp)
+        (root / "gui").mkdir()
+        (root / "gui" / "View.java").write_text("class View {}\n")
+        (root / "hemlig.txt").write_text("inte repots\n")
+
+        def git(*argv):
+            return subprocess.run(["git"] + list(argv), cwd=tmp, check=True, capture_output=True)
+
+        git("init", "-q")
+        git("config", "user.email", "prov@example.invalid")
+        git("config", "user.name", "Prov")
+        git("add", "-A")
+        git("commit", "-q", "-m", "första: lägg in vyn")
+        (root / "gui" / "View.java").write_text("class View { int x; }\n")
+        git("add", "-A")
+        git("commit", "-q", "-m", "andra: fält i vyn\n\nEn rad till.\n\nOch en tredje.")
+
+        assert safe_repo_path(root, "gui/View.java")[0] is not None
+        assert safe_repo_path(root, "../hemlig.txt")[0] is None, "en ..-väg skall nekas"
+        assert safe_repo_path(root, "/etc/passwd")[0] is None, "en absolut väg skall nekas"
+        assert safe_repo_path(root, "")[0] is None, "tom sökväg skall nekas"
+        assert safe_repo_path(root, "gui")[0] is None, "en katalog är ingen fil"
+        assert "gui/View.java" in repo_files(root), repo_files(root)
+
+        log = repo_commit_log(root, 5)
+        assert len(log) == 2, log
+        assert log[0]["subject"] == "andra: fält i vyn", log[0]
+        assert "Och en tredje." in log[0]["body"], log[0]
+        assert log[0]["files"] == ["gui/View.java"] and log[0]["filesTotal"] == 1, log[0]
+        assert log[1]["subject"] == "första: lägg in vyn", log[1]
+        assert len(repo_commit_log(root, 5, "hemlig.txt")) == 1, "historiken är per fil"
+
+        ickegit_path = Path(ickegit)
+        (ickegit_path / "node_modules").mkdir()
+        (ickegit_path / "node_modules" / "skrap.js").write_text("x")
+        (ickegit_path / "Kod.java").write_text("x")
+        assert repo_files(ickegit_path) == ["Kod.java"], repo_files(ickegit_path)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+        shutil.rmtree(ickegit, ignore_errors=True)
+    checks += 1
+
     print("jira_flow self-check: {} checks, 0 failed".format(checks))
     return 0
 
@@ -4008,6 +4195,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_graph.add_argument("--project", default="", help="Jira key (default: the link)")
     p_graph.add_argument("--json", action="store_true", help="the whole graph as JSON")
 
+    p_files = sub.add_parser("files", help="the files of a repo, as git knows them")
+    p_files.add_argument("--repo-name", default="", help="the linked repo (default: the only link)")
+    p_files.add_argument("--repo", default="", help="a directory instead of the local copy")
+    p_files.add_argument("--limit", type=int, default=0, help="how many files to return")
+    p_files.add_argument("--json", action="store_true")
+    p_file = sub.add_parser("file", help="one file out of the repo, read-only")
+    p_file.add_argument("--repo-name", default="", help="the linked repo (default: the only link)")
+    p_file.add_argument("--repo", default="", help="a directory instead of the local copy")
+    p_file.add_argument("--path", required=True, help="the file's path inside the repo")
+    p_file.add_argument("--json", action="store_true")
+    p_commits = sub.add_parser("commits", help="the commit notes of a repo, or of one file")
+    p_commits.add_argument("--repo-name", default="", help="the linked repo (default: the only link)")
+    p_commits.add_argument("--repo", default="", help="a directory instead of the local copy")
+    p_commits.add_argument("--path", default="", help="one file's history instead of the repo's")
+    p_commits.add_argument("--limit", type=int, default=30, help="how many commits")
+    p_commits.add_argument("--json", action="store_true")
+
     p_flowmap = sub.add_parser("flowmap", help="the flow drawn as an artifact (Archify)")
     p_flowmap.add_argument("--workflow", required=True, help="n8n's workflow id")
     p_flowmap.add_argument("--lang", default="", help="the panel's language; missing rows fall back to English")
@@ -4071,6 +4275,12 @@ def main(argv) -> int:
         return cmd_graph(args)
     if args.cmd == "codemap":
         return cmd_codemap(args)
+    if args.cmd == "files":
+        return cmd_files(args)
+    if args.cmd == "file":
+        return cmd_file(args)
+    if args.cmd == "commits":
+        return cmd_commits(args)
     if args.cmd == "flowmap":
         return cmd_flowmap(args)
     if args.cmd == "admin":

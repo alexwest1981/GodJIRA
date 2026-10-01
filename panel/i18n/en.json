@@ -365,5 +365,16 @@
  "ärenden som nämner": "issues mentioning it",
  "filer som nämns": "files mentioned",
  "visa alla": "show all",
- "visa färre": "show fewer"
+ "visa färre": "show fewer",
+ "Filerna": "Files",
+ "Ändringarna": "Changes",
+ "hämtar filerna …": "fetching the files …",
+ "kunde inte läsa filerna": "could not read the files",
+ "hämtar filen …": "fetching the file …",
+ "filens historik": "the file's history",
+ "inga ändringar": "no changes",
+ "rader": "lines",
+ "binär fil — visas inte": "binary file — not shown",
+ "filen är kapad": "the file is cut off",
+ "visar": "showing"
 }
