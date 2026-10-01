@@ -95,7 +95,7 @@
  "filtrera": "filteren",
  "flytta ärenden": "issues verplaatsen",
  "flödesfilen går inte att läsa": "het workflowbestand kan niet worden gelezen",
- "flödesfilen i repot — n8n svarade inte": "het workflowbestand in de repo — n8n antwoordde niet",
+ "flödesfilen i repot — läst ur filen, inte ur n8n": "het workflowbestand in de repo — gelezen uit het bestand, niet uit n8n",
  "flödet": "de workflow",
  "flödets nästa": "volgende van de workflow",
  "fyra anrop: Jira, GitHub, flödets nästa och journalen": "vier aanroepen: Jira, GitHub, volgende van de workflow en het journaal",

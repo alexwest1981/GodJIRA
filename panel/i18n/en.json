@@ -95,7 +95,7 @@
  "filtrera": "filter",
  "flytta ärenden": "move issues",
  "flödesfilen går inte att läsa": "the flow file cannot be read",
- "flödesfilen i repot — n8n svarade inte": "the flow file in the repo — n8n did not answer",
+ "flödesfilen i repot — läst ur filen, inte ur n8n": "the flow file in the repo — read from the file, not from n8n",
  "flödet": "the flow",
  "flödets nästa": "the flow's next",
  "fyra anrop: Jira, GitHub, flödets nästa och journalen": "four calls: Jira, GitHub, the flow's next and the journal",

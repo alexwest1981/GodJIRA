@@ -95,7 +95,7 @@
  "filtrera": "filtrar",
  "flytta ärenden": "mover chamados",
  "flödesfilen går inte att läsa": "não foi possível ler o arquivo do fluxo",
- "flödesfilen i repot — n8n svarade inte": "o arquivo do fluxo no repo — o n8n não respondeu",
+ "flödesfilen i repot — läst ur filen, inte ur n8n": "o arquivo do fluxo no repo — lido do arquivo, não do n8n",
  "flödet": "o fluxo",
  "flödets nästa": "o próximo do fluxo",
  "fyra anrop: Jira, GitHub, flödets nästa och journalen": "quatro chamadas: Jira, GitHub, o próximo do fluxo e o diário",
