@@ -324,6 +324,100 @@ def t_version_create(args):
     return run_bridge(["version-create", args["project"], args["name"]], WRITE_TIMEOUT)
 
 
+GRAPH_LIMIT = 12
+GRAPH_TIMEOUT = 180
+
+
+def graph_view(graph, node="", limit=GRAPH_LIMIT):
+    """Grafen som ett svar en agent kan läsa: översikten först, en nod i taget sedan.
+
+    Hela grafen är ~120 kB för AutoCore, så verktyget svarar med ingången i stället för
+    filen: vad repot består av, vad allt lutar sig mot, och vad som ligger utanför kartan.
+    Listor kapas men **talen är alltid de sanna** -- ett tak som inte syns är samma sak som
+    ingen information. Ren funktion: den rör ingen fil, så selftestet kan prova den.
+    """
+    entities = list(graph.get("entities") or [])
+    relations = list(graph.get("relations") or [])
+    by_id = {e.get("id"): e for e in entities}
+    if not entities:
+        return {"ok": False, "error": "the graph is empty -- run `jira_flow scan` first"}
+
+    if node:
+        want = str(node).strip()
+        hit = by_id.get(want)
+        if hit is None:
+            # Ett namn räcker om det är entydigt: en agent känner sällan till id-formen.
+            same = [e for e in entities if want in (e.get("name"), e.get("full"))]
+            if len(same) > 1:
+                return {"ok": False, "error": "{} matches {} entities in the graph".format(
+                    want, len(same)),
+                    "candidates": [e.get("id") for e in sorted(same, key=lambda e: e.get("id"))[:limit]]}
+            hit = same[0] if same else None
+        if hit is None:
+            return {"ok": False, "error": "no entity {!r} in the graph".format(want),
+                    "hint": "call without node for the overview; ids look like fil:src/Foo.java"}
+
+        def side(rows, key, other):
+            groups = {}
+            for row in rows:
+                groups.setdefault(row.get("kind") or "?", []).append(
+                    by_id.get(row.get(other), {}).get("name") or row.get(other))
+            return {kind: {"count": len(names), "names": sorted(names)[:limit]}
+                    for kind, names in sorted(groups.items())}
+
+        entity = {k: hit.get(k) for k in ("id", "type", "name", "full", "package", "path",
+                                          "summary", "status", "pool", "unclear")
+                  if hit.get(k) is not None}
+        entity["pointsAt"] = side([r for r in relations if r.get("from") == hit.get("id")], "from", "to")
+        entity["pointedAtBy"] = side([r for r in relations if r.get("to") == hit.get("id")], "to", "from")
+        return {"ok": True, "repo": graph.get("repo"), "project": graph.get("project"),
+                "at": graph.get("at"), "entity": entity}
+
+    files_in = {}
+    for row in relations:
+        if row.get("kind") == "ligger-i":
+            files_in[row.get("to")] = files_in.get(row.get("to"), 0) + 1
+    packages = sorted(({"id": e.get("id"), "name": e.get("name"),
+                        "files": files_in.get(e.get("id"), 0)}
+                       for e in entities if e.get("type") == "package"),
+                      key=lambda p: (-p["files"], p["name"]))
+    # Motorn svarar med TAL här ("74 filer ingen uppgift nämner"), inte med listor: namnen
+    # bor i scanningen och panelens Karta-vy visar dem. Tål båda formerna -- grafen har bytt
+    # form förut, och ett antagande om typen kastade det här verktyget första gången.
+    def tally(value):
+        return value if isinstance(value, int) else len(value or [])
+
+    return {"ok": True, "repo": graph.get("repo"), "project": graph.get("project"),
+            "at": graph.get("at"), "counts": graph.get("counts") or {},
+            "hubs": (graph.get("hubs") or [])[:limit],
+            "packages": packages[:limit], "packagesTotal": len(packages),
+            "filesWithoutIssue": tally(graph.get("filesWithoutIssue")),
+            "issuesWithoutFile": tally(graph.get("issuesWithoutFile")),
+            "hint": "call again with node=<id> for one entity: fil:src/Foo.java, "
+                    "paket:com.x.y, or the name of an issue"}
+
+
+def t_graph(args):
+    """Kodbasen som en graf: paket, filer och ärenden med sina relationer.
+
+    Frågan går till motorn (samma token, samma länk, samma scanning som resten): `graph`
+    bygger ur repot + scan-filen på ~0,4 s och skriver filen panelen läser.
+    """
+    argv = [FLOW, "graph", "--json"]
+    if (args.get("repo") or "").strip():
+        argv += ["--repo-name", str(args["repo"]).strip()]
+    ok, data = run_json(argv, GRAPH_TIMEOUT)
+    if not ok:
+        return False, data
+    shaped = graph_view(data, args.get("node") or "", int(args.get("limit") or GRAPH_LIMIT))
+    if shaped.get("ok"):
+        shaped["root"] = data.get("root")
+        shaped["savedTo"] = data.get("savedTo")
+    # Samma regel som run_json: motorns eget svar går före. Ett okänt nodnamn är ett nej
+    # med kandidater -- inte ett tyst ja med en tom kropp.
+    return bool(shaped.get("ok")), shaped
+
+
 def tool(name, description, properties=None, required=(), run=None):
     schema = {"type": "object", "properties": properties or {}, "additionalProperties": False}
     if required:
@@ -423,6 +517,19 @@ TOOLS = [
     tool("jira_journal", "Pluginens egen journal: varje skrivning med tid, nyckel och utfall. "
                          "Här ser du vad agenten (eller panelen) gjort.",
          {"limit": {"type": "integer"}}, run=t_journal),
+    tool("code_graph", "Kodbasen som en graf: paket, filer och ärenden med sina relationer. "
+                       "Utan node: översikten -- vad repot består av, vad allt lutar sig mot "
+                       "(hubs), och vad som ligger utanför kartan (filer ingen uppgift nämner, "
+                       "uppgifter som inte nämner någon fil). Med node: en enhet i taget och "
+                       "vad den pekar på respektive pekas på av. Byggd ur repot + scanningen, "
+                       "ingen Jira-trafik: använd den för att förstå koden innan du ändrar den.",
+         {"repo": {"type": "string",
+                   "description": "Repots namn (t.ex. alexwest1981/AutoCore). Tomt = länkens repo."},
+          "node": {"type": "string",
+                   "description": "En enhet: fil:src/Foo.java, paket:com.x.y, eller namnet på "
+                                  "en fil/en uppgift. Tomt = översikten."},
+          "limit": {"type": "integer", "description": "Hur många namn per lista (12)."}},
+         run=t_graph),
 ]
 
 
@@ -520,6 +627,7 @@ def selftest():
                   "jira_worklogs", "jira_worklog_add", "jira_sprints", "jira_sprint",
                   "jira_versions", "jira_version_create"):
         assert added in names, "{} saknas".format(added)
+    assert "code_graph" in names, names
     peek = rpc({"jsonrpc": "2.0", "id": 5, "method": "tools/call",
                 "params": {"name": "jira_next", "arguments": {"dryRun": True}}})["result"]
     assert peek["isError"] is False, peek
@@ -537,6 +645,58 @@ def selftest():
         assert board["sprints"] and board["sprints"][0]["state"], board
     else:
         print("mock-läge: sprint-provet hoppas över")
+
+    # Kodgrafen: dörren agenten går genom. Översikten får kosta ett riktigt anrop, men
+    # den skall svara med siffror -- eller med motorns eget skäl (ingen scanning än).
+    cg = rpc({"jsonrpc": "2.0", "id": 9, "method": "tools/call",
+              "params": {"name": "code_graph", "arguments": {}}})["result"]
+    assert cg["isError"] is False, cg
+    seen = json.loads(cg["content"][0]["text"])
+    assert seen.get("ok") is True or seen.get("error"), seen
+    if seen.get("ok"):
+        assert seen["counts"] and seen["packages"], seen
+    else:
+        print("kodgrafen: {}".format(seen["error"]))
+
+    # Formningen prövas ren, på en handgjord graf: det är logiken som skall hålla, och
+    # den får inte hänga på att maskinen råkar ha en scanning för tillfället.
+    liten = {
+        "repo": "x/y", "project": "P", "counts": {"paket": 2, "filer": 2, "ärenden": 1},
+        "hubs": [{"package": "b", "usedBy": 1}],
+        "filesWithoutIssue": 1,
+        "issuesWithoutFile": 1,
+        "entities": [
+            {"id": "paket:b", "type": "package", "name": "b"},
+            {"id": "paket:a", "type": "package", "name": "a"},
+            {"id": "fil:a/Foo.java", "type": "file", "name": "Foo.java", "package": "a"},
+            {"id": "fil:a/Enslig.java", "type": "file", "name": "Enslig.java", "package": "a"},
+            {"id": "fil:b/Foo.java", "type": "file", "name": "Foo.java", "package": "b"},
+            {"id": "ärende:P-1", "type": "issue", "name": "P-1", "summary": "något"},
+        ],
+        "relations": [
+            {"from": "fil:a/Foo.java", "to": "paket:a", "kind": "ligger-i"},
+            {"from": "fil:a/Enslig.java", "to": "paket:a", "kind": "ligger-i"},
+            {"from": "ärende:P-1", "to": "fil:a/Foo.java", "kind": "nämner"},
+            {"from": "paket:a", "to": "paket:b", "kind": "använder"},
+        ],
+    }
+    over = graph_view(liten)
+    assert over["ok"] and over["packagesTotal"] == 2, over
+    assert over["packages"][0] == {"id": "paket:a", "name": "a", "files": 2}, over["packages"]
+    assert over["filesWithoutIssue"] == 1 and over["issuesWithoutFile"] == 1, over
+    # Tål den gamla formen (lista) också -- det var den som kastade verktyget.
+    assert graph_view(dict(liten, filesWithoutIssue=["a/Enslig.java"]))["filesWithoutIssue"] == 1
+    en = graph_view(liten, "fil:a/Foo.java")
+    assert en["entity"]["pointsAt"]["ligger-i"]["names"] == ["a"], en
+    assert en["entity"]["pointedAtBy"]["nämner"]["names"] == ["P-1"], en
+    # Ett namn räcker om det är entydigt, och två träffar ger kandidater i stället för ett val.
+    assert graph_view(liten, "Enslig.java")["entity"]["id"] == "fil:a/Enslig.java"
+    # Två filer med samma namn är vanligt: namnet räcker inte, kandidaterna skall med.
+    dubbel = graph_view(liten, "Foo.java")
+    assert dubbel["ok"] is False and sorted(dubbel["candidates"]) == [
+        "fil:a/Foo.java", "fil:b/Foo.java"], dubbel
+    assert graph_view(liten, "finns-inte")["ok"] is False
+    assert graph_view({"entities": [], "relations": []})["ok"] is False
 
     err = rpc({"jsonrpc": "2.0", "id": 3, "method": "does/not/exist"})
     assert err["error"]["code"] == -32601, err
