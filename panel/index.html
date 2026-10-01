@@ -331,6 +331,19 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   .graph svg.grabbing { cursor: grabbing; }
   .graph .empty { padding: 10px 2px; }
   .flowtools { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+  /* Flödesvyn: rutan och nodens inspektör sida vid sida, som i n8n. Inspektören tar
+     plats först när en nod är vald -- annars står rutan själv kvar i full bredd. */
+  .flowsplit { display: grid; gap: 16px; align-items: start; }
+  .flowsplit:has(#flowNode:not([hidden])) { grid-template-columns: minmax(0, 1fr) 330px; }
+  .fnode.sel > rect:first-of-type { stroke-opacity: 1; stroke-width: 2; }
+  .phead { margin: 14px 0 6px; color: var(--muted); font-size: 12px;
+           text-transform: uppercase; letter-spacing: .04em; }
+  .prow { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 8px;
+          padding: 3px 0; align-items: start; }
+  .pkey { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+  .pval { color: var(--text); font-size: 12.5px; overflow-wrap: anywhere; }
+  pre.pval { margin: 0; white-space: pre-wrap; font-family: inherit; }
+  .plist { border-left: 1px solid var(--line-2); padding-left: 8px; }
   .filters { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
   .chip {
     border: 1px solid var(--line-2); background: transparent; color: var(--text-2);
@@ -513,7 +526,10 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
     </section>
 
     <section class="view" id="v-karta">
-      <div class="seg" id="kartaChips"></div>
+      <div class="linkbar">
+        <div class="seg" id="kartaChips"></div>
+        <select class="inp" id="kartaProject" hidden></select>
+      </div>
       <div class="panel" id="codePanel">
         <h3>Kodkartan över <span class="meta" id="codeWho"></span>
           <span class="grow"></span>
@@ -548,7 +564,12 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
           <span class="grow"></span><a class="chip" id="flowCanvasLink" hidden>n8n:s egen tavla</a></h3>
         <div class="body">
           <div class="seg" id="flowChips"></div>
-          <div class="graph" id="flowCanvas"></div>
+          <div class="flowsplit">
+            <div class="graph" id="flowCanvas"></div>
+            <!-- Nodens inspektör. Klicket är hela poängen: vad noden är och vad den
+                 gör, med de parametrar den faktiskt körs med. -->
+            <div class="panel" id="flowNode" hidden></div>
+          </div>
         </div>
       </div>
       <div class="empty" id="flowNote"></div>
@@ -674,7 +695,8 @@ const TEXT = {
            admin: ["Admin", "⚑"], settings: ["Inställningar", "⚙"] },
   // Flödenas namn i Karta-vyns källväljare. Låg förut i views-listan, då flödena hade en
   // egen räl-post; strängen står kvar här så översättningarna inte tappas.
-  flowView: "Automatik",
+  flowView: "Automatik", params: "Parametrar", detailInN8n: "detaljerna står i n8n",
+  lastRun: "senaste körningen", ranOk: "lyckades", ranBad: "misslyckades", stalled: "avstängd",
   next: "nästa", empty: "Inga ärenden", never: "aldrig", nothing: "inget",
   someoneElses: "är någon annans — tas från panelens andra tryck",
   runnersUp: "därefter", noSprint: "ingen aktiv sprint — det som är kvar står i backloggen och ligger i To Do här",
@@ -1316,6 +1338,8 @@ function flowBind(file, box) {
       }
       flowPersist(file);
     }
+    // Ett klick är ett drag som inte flyttade sig: samma handtag, ingen rörelse.
+    if (!drag.moved && drag.key) flowNodeShow(drag.key);
     svg.classList.remove("grabbing", "panning");
     drag = null;
   };
@@ -1377,6 +1401,7 @@ function kartaShow(kalla) {
   document.getElementById("tracePanel").hidden = !kod;
   document.getElementById("flowPanel").hidden = kod;
   renderKartaChips();
+  renderKartaProject();
   if (kod) { mapLoad(); renderCodeMap(); } else { renderFlow(); }
 }
 
@@ -1386,8 +1411,89 @@ function renderKartaChips() {
   // Etiketterna är de redan översatta vy-namnen: "Karta" för kodkartan (som förut) och
   // "Automatik" för flödena, som är vad de hette när de hade en egen post i rälen.
   host.innerHTML = [["kod", TEXT.views.karta[0]], ["flow", TEXT.flowView]]
-    .map(([nyckel, namn]) => `<button data-act="karta-${nyckel}"` +
+    .map(([nyckel, namn]) => `<button data-act="map-${nyckel}"` +
       `${nyckel === kartaKalla ? ' class="on"' : ""}>${esc(namn)}</button>`).join("");
+}
+
+// Projektväljaren i Karta: de projekt som är kopplade till både Jira och GitHub, alltså
+// de länkar registret känner (samma lista sidofältet bygger på). Att välja ett projekt
+// väljer dess repo, och då följer kodkartan, ärendena mot filerna och flödet med.
+function renderKartaProject() {
+  const host = document.getElementById("kartaProject");
+  if (!host) return;
+  const par = links().filter(l => l && l.project && l.repo);
+  host.hidden = !par.length;
+  if (!par.length) return;
+  const valt = REPO.name || ((STATE || {}).project || {}).repo || "";
+  host.innerHTML = par.map(l => `<option value="${esc(l.project)}"` +
+    `${l.repo === valt ? " selected" : ""}>${esc(l.project)} — ${esc(l.repo)}</option>`).join("");
+}
+
+// Nodens inspektör: vad noden är och vad den gör, med de parametrar den körs med. Det är
+// n8n:s ruta i miniatyr. Flödet är fortfarande skrivskyddat -- panelen visar, n8n ändrar
+// -- men ett klick skall svara på frågan "vad gör den här noden?".
+function flowNodeShow(key) {
+  const host = document.getElementById("flowNode");
+  if (!host) return;
+  const flow = (STATE.flows || []).find(f => f.file === FLOW.file) || {};
+  const node = (flow.nodes || []).find(n => (n.key || n.name) === key) || null;
+  const svg = document.getElementById(`${FLOW.canvas || "flow"}Svg`);
+  if (svg) [...svg.querySelectorAll(".fnode")].forEach(g =>
+    g.classList.toggle("sel", g.dataset.node === key));
+  if (!node) { host.hidden = true; return; }
+  const params = node.parameters || {};
+  const keys = Object.keys(params).sort((a, b) => a.localeCompare(b));
+  host.hidden = false;
+  host.innerHTML = `<h3>${esc(node.name || key)}</h3>
+    <div class="body">
+      <div class="meta mono">${esc(node.typeFull || node.type || "")}` +
+        `${node.version ? " · v" + esc(node.version) : ""}</div>
+      ${node.disabled ? `<div class="meta">${esc(TEXT.stalled)}</div>` : ""}
+      <div class="phead">${esc(TEXT.params)}</div>
+      ${keys.length
+        ? keys.map(k => `<div class="prow"><span class="pkey">${esc(k)}</span>` +
+            `${flowVal(params[k])}</div>`).join("")
+        : `<div class="meta">${esc(TEXT.detailInN8n)}</div>`}
+    </div>`;
+}
+
+function flowNodeClear() {
+  const host = document.getElementById("flowNode");
+  if (host) { host.hidden = true; host.innerHTML = ""; }
+  const svg = document.getElementById(`${FLOW.canvas || "flow"}Svg`);
+  if (svg) [...svg.querySelectorAll(".fnode.sel")].forEach(g => g.classList.remove("sel"));
+}
+
+// Parametrar är JSON om vartannat: skalor, listor och objekt. Korta läses som en rad,
+// långa texter (n8n:s anteckningar) som block, och djupet klipps vid tre -- annars ritas
+// hela kördata ut och rutan blir en vägg.
+function flowVal(v, djup = 0) {
+  if (v === null || v === undefined || v === "") return `<span class="pval muted">—</span>`;
+  if (typeof v === "string") {
+    const t = v.trim();
+    return t.includes("\n") ? `<pre class="pval">${esc(t)}</pre>`
+                            : `<span class="pval">${esc(t.slice(0, 300))}</span>`;
+  }
+  if (typeof v === "number" || typeof v === "boolean") return `<span class="pval">${esc(String(v))}</span>`;
+  if (djup >= 3) return `<span class="pval muted">…</span>`;
+  const par = Array.isArray(v) ? v.map((x, i) => [String(i + 1), x]) : Object.entries(v);
+  if (!par.length) return `<span class="pval muted">—</span>`;
+  return `<div class="plist">` + par.map(([k, x]) =>
+    `<div class="prow"><span class="pkey">${esc(k)}</span>${flowVal(x, djup + 1)}</div>`).join("") + `</div>`;
+}
+
+// Senaste körningen, som en svans på flödets rubrik: status, när och hur länge.
+function flowRun(flows) {
+  // Anropas från flödets huvudrad, alltså innan valet är utpekat -- den letar upp det
+  // själv, precis som rutan nedan gör. (Att läsa `flow` där small: temporal dead zone.)
+  const flow = ((flows || []).find(f => f.file === FLOW.file)) || (flows || [])[0] || {};
+  const r = (flow && flow.run) || {};
+  if (!r.status) return "";
+  const ms = Date.parse((r.startedAt || "").replace(" ", "T"));
+  const slut = Date.parse((r.stoppedAt || "").replace(" ", "T"));
+  const hur = (ms && slut && slut > ms) ? " · " + Math.round((slut - ms) / 1000) + " s" : "";
+  return " · " + TEXT.lastRun + " " + (r.status === "success" ? TEXT.ranOk : TEXT.ranBad) +
+         (r.stoppedAt ? " " + r.stoppedAt.slice(11, 16) : "") + hur;
 }
 
 // Kodkartan: paketen som noder, importerna som vägar. Samma tavla, samma panorering --
@@ -1466,11 +1572,15 @@ function renderFlow() {
   const canvas = document.getElementById("flowCanvas");
   const note = document.getElementById("flowNote");
   const link = document.getElementById("flowCanvasLink");
-  const flows = (STATE.flows || []).filter(f => f && f.file);
+  // STATE är tom ända till första hämtningen svarar, och Karta ritar sin källa redan vid
+  // start (djup länk). Utan vakten kastade den, och då avbröts hela laddningen -- mätt:
+  // skärmen stod kvar på splash medan panelen svarade 200.
+  const flows = ((STATE || {}).flows || []).filter(f => f && f.file);
   const p = STATE.project || {};
+  // Senaste körningen hör till flödet, inte till noden: det är svaret på om det lever.
   document.getElementById("flowMeta").textContent =
     (p.key ? `${p.key} · ${p.repo || "inget repo kopplat"} · ` : "") +
-    `flödet ${flows.some(f => f.active) ? TEXT.flowRuns : TEXT.flowIdle}`;
+    `flödet ${flows.some(f => f.active) ? TEXT.flowRuns : TEXT.flowIdle}` + flowRun(flows);
   if (!flows.length) {
     chips.innerHTML = ""; canvas.innerHTML = ""; link.hidden = true;
     note.textContent = TEXT.flowNone;
@@ -1504,6 +1614,7 @@ function renderFlow() {
   const order = flowOrder(flow);
   FLOW.canvas = "flow";
   FLOW.file = flow.file; FLOW.W = W; FLOW.H = H;
+  flowNodeClear();
   FLOW.pos = {}; FLOW.base = {};
   flow.nodes.forEach(n => {
     const key = n.key || n.name, [dx, dy] = store.move[key] || [0, 0];
@@ -2647,7 +2758,14 @@ function render() {
   renderRail(); renderSide(); renderCrumbs(); renderFilters(); renderItemProject();
   renderTokenAlert(); renderSettings(); renderTheme();
   if (view === "insights") renderInsights();
-  if (view === "karta") renderKartaChips();
+  // Kartan ritar sin aktiva källa även när staten kommer in efter en omladdning --
+  // annars står en djup länk (#karta?kalla=flow) med tom yta tills man byter vy (mätt).
+  if (view === "karta") {
+    renderKartaChips();
+    renderKartaProject();
+    if (kartaKalla === "flow") renderFlow();
+    else if (document.getElementById("codeCanvas")) renderCodeMap();
+  }
   // Tillåtlista, inte blocklista: en ny vy skall aldrig ärva filterrader den inte
   // använder. Repon har sin egen sökning i sidofältet.
   document.getElementById("filtersRow").hidden = !["board", "items"].includes(view);
@@ -2853,8 +2971,8 @@ document.addEventListener("click", e => {
     return renderFlow();
   }
   // Kodkartan har sin egen nollställning, och "läs om" hämtar om den ur filerna.
-  if (e.target.closest('[data-act="karta-kod"]')) { writeHash(); return kartaShow("kod"); }
-  if (e.target.closest('[data-act="karta-flow"]')) { writeHash(); return kartaShow("flow"); }
+  if (e.target.closest('[data-act="map-kod"]')) { writeHash(); return kartaShow("kod"); }
+  if (e.target.closest('[data-act="map-flow"]')) { writeHash(); return kartaShow("flow"); }
   if (e.target.closest('[data-act="code-reset"]')) {
     if (FLOW.stores) delete FLOW.stores[CODE.key];
     try { localStorage.removeItem("godjira.flow." + CODE.key); } catch { /* utan lagring */ }
@@ -2893,6 +3011,10 @@ document.getElementById("itemProject").addEventListener("change", e => {
 // Automatik: väljaren i stället för en rad knappar.
 document.addEventListener("change", e => {
   if (e.target && e.target.id === "flowPickSel") { flowSel = e.target.value; renderFlow(); }
+  if (e.target && e.target.id === "kartaProject") {
+    const valt = (links().find(l => l.project === e.target.value) || {}).repo || "";
+    if (valt) return repoOpen(valt).then(() => kartaShow(kartaKalla));
+  }
   if (e.target && e.target.id === "langSel") languageSave(e.target.value);
 });
 

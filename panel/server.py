@@ -474,8 +474,16 @@ def n8n_workflows() -> dict:
             continue
         out[wid] = {
             "id": wid or "", "name": name or "", "active": bool(active),
+            # Parametrarna följer med: de ÄR vad noden gör, och utan dem blir ett klick
+            # på en nod i panelen ett klick i tomma luften (n8n visar dem i sin ruta).
+            # Nycklar och hemligheter stannar i n8n -- autentiseringsuppgifter pekas
+            # bara ut med namn, aldrig med innehåll.
             "nodes": [{"key": n.get("name") or "", "name": n.get("name") or "",
                        "type": (n.get("type") or "").split(".")[-1],
+                       "typeFull": n.get("type") or "",
+                       "version": n.get("typeVersion"),
+                       "disabled": bool(n.get("disabled")),
+                       "parameters": n.get("parameters") or {},
                        "x": int((n.get("position") or [0, 0])[0]),
                        "y": int((n.get("position") or [0, 0])[1])}
                       for n in (nodes or [])],
@@ -488,10 +496,39 @@ def n8n_workflows() -> dict:
     return out
 
 
+def n8n_runs() -> dict:
+    """Senaste körningen per flöde, ur n8n:s egen databas.
+
+    Status, start och slut -- det n8n visar i sin körningslista, och det som svarar på
+    om flödet lever. Skrivskyddat och utan nyckel, samma väg som positionerna.
+
+    ponytail: bara senaste körningen per flöde, en fråga. Per-nodstatus ligger i
+    execution_data, men den är chunkad och versionsbunden (mätt: runData låg i en
+    delpost med ett annat skal, och en delpost hade bara en nod). Historik och
+    nodstatus läggs på när någon saknar dem -- inte innan.
+    """
+    try:
+        con = sqlite3.connect("file:{}?mode=ro".format(N8N_DB), uri=True, timeout=5)
+        try:
+            rows = con.execute(
+                "select e.workflowId, e.status, e.startedAt, e.stoppedAt, e.id "
+                "from execution_entity e "
+                "join (select workflowId, max(id) as id from execution_entity "
+                "      group by workflowId) s on s.id = e.id").fetchall()
+        finally:
+            con.close()
+    except Exception:                                  # noqa: BLE001 -- n8n är frivilligt
+        return {}
+    return {wid: {"status": status or "", "startedAt": started or "",
+                  "stoppedAt": stopped or "", "id": eid or 0}
+            for wid, status, started, stopped, eid in rows}
+
+
 def flow_graphs() -> list:
     """Varje flöde i repot. En fil som inte går att läsa namnges i stället för att
     sänka hela vyn -- samma hållning som jira_state() har mot ett tyst svar."""
     live = n8n_workflows()
+    runs = n8n_runs()
     out = []
     for path in sorted(FLOW_DIR.glob("*.workflow.ts")):
         try:
@@ -505,6 +542,9 @@ def flow_graphs() -> list:
                         "source": "n8n"}
             else:
                 flow["source"] = "file"
+            # Körningen hör till flödets id, som filen bär -- så den syns även när n8n
+            # inte svarar och noderna kommer ur filen.
+            flow["run"] = runs.get(flow.get("id") or "") or {}
             out.append(flow)
         except Exception as exc:  # noqa: BLE001 -- vilket fel som helst är samma svar
             out.append({"file": path.name, "nodes": [], "edges": [],

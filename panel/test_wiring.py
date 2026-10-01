@@ -145,6 +145,18 @@ def main() -> int:
     # En färsk ritning måste sätta den sparade förskjutningen: gjorde den inte det
     # stod rutorna kvar på filens plats medan vägarna pekade någon helt annanstans.
     check("n8n:s egen tavla" in html, "the view says whether the drawing is n8n's own")
+    # Klicket är hela poängen med inspektören: noden berättar vad den är och vad den
+    # gör, med de parametrar den faktiskt körs med (mätt: "Report to the panel", 10 rader).
+    check('id="flowNode"' in html and "flowNodeShow(drag.key)" in html,
+          "a node opens in an inspector when clicked")
+    check("flowVal" in html and "pkey" in html, "the inspector draws the node's settings")
+    # Projektväljaren i Karta hämtar sina val ur länkregistret -- bara de projekt som är
+    # kopplade till både Jira och GitHub, samma lista sidofältet bygger på.
+    check('id="kartaProject"' in html and "renderKartaProject" in html and "links()" in html,
+          "the map has a project picker fed by the link registry")
+    # Ritningen får inte läsa STATE innan den finns: en djup länk (#karta?kalla=flow)
+    # ritade vid start och kastade, och då avbröts hela laddningen -- splash stod kvar.
+    check("((STATE || {}).flows || [])" in html, "the drawing tolerates an empty state at boot")
     # Nytt projekt kräver "Administer Jira", som är en annan behörighet än
     # "Administer Projects". Utan den skall raden säga varför -- inte vara en knapp.
     # Vyerna: show() slaepper bara igenom det som star i TEXT.views, sa en vy-sektion

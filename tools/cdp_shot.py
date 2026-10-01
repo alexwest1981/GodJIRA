@@ -151,11 +151,13 @@ while time.time() < deadline:
     if ready.get("result", {}).get("value") is True:
         break
 if os.environ.get("EVAL"):
+    # awaitPromise: kroken skall kunna vänta på något -- panelen är en SPA och ritar
+    # efter att ha hämtat sitt data, så ett prov utan väntan mäter bara tomma ytor.
     answer = call("Runtime.evaluate", expression=os.environ["EVAL"], returnByValue=True,
-                  awaitPromise=False)
+                  awaitPromise=True)
+    # Kroken skriver sin rad och lämnar över till skärmdumpen: ett prov som hunnit
+    # klicka något skall kunna fotas, inte bara citeras.
     print(json.dumps(answer.get("result", {}).get("value"), ensure_ascii=False)[:1500])
-    chrome.terminate()
-    raise SystemExit(0)
 shot = call("Page.captureScreenshot", format="png")
 with open(out, "wb") as handle:
     handle.write(base64.b64decode(shot["data"]))
