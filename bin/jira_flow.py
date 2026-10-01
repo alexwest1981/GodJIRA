@@ -637,6 +637,8 @@ FLOWMAP_STRINGS = {
                         "pl": "Wyzwalacz ręczny", "pt": "Gatilho manual"},
     "Schema": {"en": "Schedule", "de": "Zeitplan", "es": "Horario", "fr": "Horaire",
                "it": "Orario", "nl": "Schema", "pl": "Harmonogram", "pt": "Horário"},
+    "Projekt": {"en": "Project", "de": "Projekt", "es": "Proyecto", "fr": "Projet",
+                "it": "Progetto", "nl": "Project", "pl": "Projekt", "pt": "Projeto"},
     "Varifrån": {"en": "Where this comes from", "de": "Woher das kommt",
                  "es": "De dónde viene", "fr": "D'où cela vient",
                  "it": "Da dove viene", "nl": "Waar dit vandaan komt",
@@ -845,10 +847,14 @@ def flowmap_build(wid: str, lang: str = "en") -> dict:
             cards.append({"dot": "cyan", "title": name,
                           "items": ["%s %s" % (params.get("method") or "GET", params.get("url") or ""),
                                     "jsonBody " + str(params.get("jsonBody") or "")[:120]]})
+    # Länken avgör vilket projekt stegen läser; den hör därför i "varifrån" och inte
+    # som en gissning i varje stegkommando.
+    linked = ["%s %s → %s" % (flowmap_text("Projekt", lang), name, (link or {}).get("project"))
+              for name, link in sorted(load_links().items()) if (link or {}).get("project")]
     cards.append({"dot": "cyan", "title": flowmap_text("Varifrån", lang), "items": [
         "n8n /api %s" % wid,
         "%s: %d · %s: %d" % (flowmap_text("noder", lang), len(chain),
-                             flowmap_text("kopplingar", lang), len(edges))]})
+                             flowmap_text("kopplingar", lang), len(edges))] + linked})
 
     return {
         "schema_version": 2,
@@ -2292,6 +2298,9 @@ def cmd_repo(args) -> int:
 def cmd_current(client_, args) -> int:
     found = find(client_, current_jql(args.project), limit=5)
     if not found:
+        # Never leave the caller guessing: an exit code with no words is what makes
+        # a working step look like a broken one.
+        print("{}: nothing of mine is in progress".format(args.project), file=sys.stderr)
         return 1
     if len(found) > 1:
         print("# {} in progress; the most recently updated is {}".format(len(found), found[0]["key"]),
@@ -2523,7 +2532,8 @@ def selftest() -> int:
     assert flowmap_text("Stegen", "sv") == "Stegen", "svenska är källraden"
     assert flowmap_text("Stegen", "tlh") == "The steps", "okänt språk får engelska"
     assert flowmap_text("bara svensk rad", "en") == "bara svensk rad", "rad utan översättning får källraden"
-    assert flowmap_locale("sv") == "sv" and flowmap_locale("de") == "en", "ramen: vår katalog, annars engelska"
+    assert all(flowmap_locale(tag) == tag for tag in FLOWMAP_CHROME), "ramen: varje språk med katalog"
+    assert flowmap_locale("sv") == "sv" and flowmap_locale("fi") == "en", "ramen: vår katalog, annars engelska"
     assert "legend.title" in FLOWMAP_CHROME["sv"], "ramens nycklar är Archifys egna"
     checks += 1
     jql = pick_jql("SCRUM")
