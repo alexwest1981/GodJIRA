@@ -512,48 +512,153 @@ def scan_map(bridge, project: str, root: Path, limit: int = 250) -> dict:
             "issuesTotal": len(rows)}
 
 
-def code_map(root: Path) -> dict:
-    """Kodkartan: paketen som noder, importerna som vägar, lagda i lager.
+# Kodkartans språk: en rad per ändelse, för raden är svaret på "vilka språk läser kartan?".
+# Den som vill ha ett språk till lägger till en rad -- inte en parser.
+SOURCE_LANGS = {
+    ".java": "Java", ".kt": "Kotlin", ".kts": "Kotlin", ".scala": "Scala", ".groovy": "Groovy",
+    ".cs": "C#", ".py": "Python", ".rb": "Ruby", ".php": "PHP", ".swift": "Swift",
+    ".ts": "TypeScript", ".tsx": "TypeScript", ".js": "JavaScript", ".jsx": "JavaScript",
+    ".mjs": "JavaScript", ".cjs": "JavaScript", ".vue": "Vue", ".svelte": "Svelte",
+    ".rs": "Rust", ".go": "Go", ".c": "C", ".h": "C", ".cc": "C++", ".cpp": "C++",
+    ".hpp": "C++", ".hh": "C++", ".m": "Objective-C", ".mm": "Objective-C",
+    ".gd": "GDScript", ".lua": "Lua", ".ex": "Elixir", ".exs": "Elixir", ".erl": "Erlang",
+    ".hs": "Haskell", ".dart": "Dart", ".r": "R", ".jl": "Julia", ".pl": "Perl",
+}
+# Kataloger som aldrig är någons kod: beroenden, byggutdata, cachar. `bin` är INTE med --
+# det heter en mapp i både Python- och C#-projekt, och GodJIRAs egen motor bor i en.
+SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", "vendor", "target", "build", "dist",
+             "out", ".venv", "venv", "__pycache__", ".mypy_cache", ".pytest_cache",
+             ".gradle", "obj", ".next", ".nuxt", "coverage", "Pods", "deps", "_build",
+             ".tox", ".idea", ".vscode", "site-packages", ".dart_tool", "tmp"}
+# Ett mönster per språkfamilj, inte en parser per språk: alla importer ser ut som något av
+# de här. Fångstgruppen är det som pekas på -- ett paket, en modul eller en filsökväg.
+IMPORT_PATTERNS = (
+    r"^\s*(?:import|from)\s+(?:static\s+)?([\w.]+)",                 # Java, Python, Kotlin, Scala
+    r"^\s*import\s+(?:type\s+)?\{[^}]*\}\s*from\s*['\"]([^'\"]+)['\"]",
+    r"^\s*(?:import|export)\s+[^;\n]*?from\s*['\"]([^'\"]+)['\"]",   # TS, JS (Vue/Svelte också)
+    r"require\(\s*['\"]([^'\"]+)['\"]\s*\)",                    # JS, TS, PHP, Ruby
+    r"^\s*using\s+([\w.]+)\s*;",                                    # C#
+    r"^\s*use\s+([\w:]+)",                                          # Rust
+    r"^\s*use\s+([\w\\]+)\s*;",                                    # PHP-namnrymder
+    r"^\s*import\s+(?:\w+\s+)?['\"]([^'\"]+)['\"]",               # Go (en rad)
+    r"^\s*(?:require|require_relative|load)\s+\(?\s*['\"]([^'\"]+)['\"]",  # Ruby
+    r"^\s*#include\s*[<\"]([^>\"]+)[>\"]",                         # C, C++
+    r"(?:^|[^\w.])(?:extends|preload|load)\s*\(?\s*['\"]([^'\"]+)['\"]",  # GDScript
+)
+# \ufeff: en del filer har bytemarkeringsmärket före första raden, och då matchar inte
+# ^\s* -- filen hamnade i sin mapp i stället för i sitt paket (mätt: tre vägar i AutoCore).
+DECLARED_MODULE = (r"^\ufeff?\s*package\s+([\w.]+)\s*;",
+                   r"^\ufeff?\s*namespace\s+([\w.]+)\s*[{;]")
 
-    Frågan den svarar på är Alex egen: hur hänger koden ihop? Importerna läses ur
-    källfilerna och slås upp mot paketen i samma repo, så noderna blir paket och vägarna
-    det ena paketet använder hos det andra. Lagret (x) är hur djupt paketet ligger i
-    beroendekedjan: en väg går alltid åt höger, som i en ritning över ett flöde.
 
-    ponytail: bara Java-importer läses (import a.b.c;). Andra språk får en rad som säger
-    det i stället för en tom ruta -- lägg till fler parsers när ett repo behöver det.
+def module_of_path(path: Path, root: Path) -> str:
+    """Modulen en fil hör till: det deklarerade paketet om filen har ett, annars katalogen.
+
+    Java och C# namnger sina moduler i filen, och då är det namnet sanningen. Alla andra
+    språk låter katalogen vara modul, och då är katalogen svaret. Filen i roten blir
+    "(utan paket)" -- samma ord som förut, för det är samma sak.
     """
-    files = sorted(p for p in Path(root).rglob("*.java"))
+    here = path.parent.relative_to(root)
+    return str(here).replace("\\", "/") if here.parts else "(utan paket)"
+
+
+def code_map(root: Path) -> dict:
+    """Kodkartan: modulerna som noder, importerna som vägar, lagda i lager.
+
+    Frågan den svarar på är Alex egen: hur hänger koden ihop? Noden är en modul -- det
+    deklarerade paketet i Java och C#, annars katalogen -- och vägen är att en modul
+    nämner en annan. Lagret (x) är hur djupt modulen ligger i beroendekedjan: en väg går
+    alltid åt höger, som i en ritning över ett flöde.
+
+    ponytail: importerna läses med en rad mönster per språkfamilj i stället för med en
+    parser per språk, och en nämnd modul slås upp mot det som finns i repot. Det räcker
+    för "hur hänger koden ihop"; räcker det inte i något språk (fel vägar där) är steget
+    upp en riktig parser för just det språket -- inte fler mönster här.
+    """
+    root = Path(root)
+    files, by_lang = [], {}
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        lang = SOURCE_LANGS.get(path.suffix.lower())
+        if not lang:
+            continue
+        if any(part in SKIP_DIRS for part in path.relative_to(root).parts[:-1]):
+            continue
+        files.append(path)
+        by_lang[lang] = by_lang.get(lang, 0) + 1
     if not files:
         return {"root": str(root), "nodes": [], "edges": [], "layers": 0, "files": 0,
-                "note": "kodkartan läser Java-importer, och repot har inga .java-filer"}
-    package_of, imports_of, classes_of = {}, {}, {}
+                "note": "kodkartan hittade inga källfiler i repot ({})".format(
+                    ", ".join(sorted(SOURCE_LANGS.values())))}
+    package_of, classes_of, imports_of = {}, {}, {}
     for path in files:
         try:
             source = path.read_text(errors="replace")
         except OSError:
             continue
-        hit = re.search(r"^\s*package\s+([\w.]+)\s*;", source, re.M)
-        package = hit.group(1) if hit else "(utan paket)"
+        declared = ""
+        for pattern in DECLARED_MODULE:
+            hit = re.search(pattern, source, re.M)
+            if hit:
+                declared = hit.group(1)
+                break
+        package = declared or module_of_path(path, root)
         package_of[path] = package
         classes_of.setdefault(package, []).append(path.stem)
-        imports_of[path] = re.findall(r"^\s*import\s+(?:static\s+)?([\w.]+)\s*;", source, re.M)
-    by_class = {name: package for package, names in classes_of.items() for name in names}
+        found = []
+        for pattern in IMPORT_PATTERNS:
+            found += re.findall(pattern, source, re.M)
+        imports_of[path] = found
+    # Uppslagning: nodnamn, och filnamn -> dess modul. Ett filnamn kan finnas i flera
+    # moduler; då vinner den sista, och det är samma eftergift som förut (där klassen
+    # avgjorde). Utan den här tabellen hade Java-importen "import a.b.Db;" inte hittat
+    # något alls, för den namnger typen och inte modulen.
+    modules = set(classes_of)
+    by_stem = {}
+    for path, package in package_of.items():
+        by_stem[path.stem.lower()] = package
+
+    def resolve(name: str):
+        """Det nämnda namnet -> en modul i repot, eller inget alls."""
+        clean = name.strip().strip("'\"").replace("::", ".").replace("\\", "/")
+        clean = re.sub(r"^(crate|self|super|crate::)\.", "", clean)
+        clean = clean.split("://")[-1]                     # res:// (Godot), http:// o.s.v.
+        # Filen pekas på med sin ändelse: preload("res://main.gd"), import x from "./db.ts".
+        # Utan det här blir sista biten "gd" och inte "main", och ingen modul hittas.
+        clean = re.sub(r"\.(" + "|".join(e.lstrip(".") for e in SOURCE_LANGS) + r")$", "",
+                       clean, flags=re.I)
+        clean = clean.lstrip(".").strip("/")
+        if not clean:
+            return None
+        if clean in modules:                       # hela namnet är modulen
+            return clean
+        stem = re.split(r"[./]", clean)[-1].lower()
+        if stem in by_stem:                        # typen/klassen/filen, som i Java
+            return by_stem[stem]
+        # Längsta modul som namnet börjar med: "com.wac.autocore.data.Db" -> paketet.
+        head = [m for m in modules if clean == m or re.match(re.escape(m) + r"[./]", clean)]
+        if head:
+            return max(head, key=len)
+        # Sista biten av en sökväg, för moduler som nämns med sitt paketnamn (Go, TS).
+        tail = [m for m in modules if m.endswith("/" + clean) or m.endswith("." + clean)]
+        if tail:
+            return max(tail, key=len)
+        deepest = [m for m in modules if m.split("/")[-1] == stem or m.split(".")[-1] == stem]
+        return max(deepest, key=len) if deepest else None
+
     weight = {}
     for path, package in package_of.items():
         for target in imports_of.get(path, []):
-            other = by_class.get(target.split(".")[-1])
+            other = resolve(target)
             if other and other != package:
                 weight[(package, other)] = weight.get((package, other), 0) + 1
     edges = [{"from": a, "to": b, "weight": n} for (a, b), n in sorted(weight.items())]
-    # Lagret: en kant går alltid åt höger. Paket beroende av varandra i en slinga finns
-    # i riktig kod, och en utjämning ("mottagaren ett steg längre fram") växer då utan
-    # gräns -- mätt: 71 lager och x = 21800. Här plockas i stället de paket som ingen
-    # pekar på ut först, varv för varv; det som bara är en slinga hamnar på samma lager.
+    # Lagret: en kant går alltid åt höger. Moduler som beroende av varandra i en slinga
+    # finns i riktig kod, och en utjämning ("mottagaren ett steg längre fram") växer då
+    # utan gräns -- mätt: 71 lager och x = 21800. Här plockas i stället de moduler som
+    # ingen pekar på ut först, varv för varv; det som bara är en slinga hamnar på samma.
     pairs = {(edge["from"], edge["to"]) for edge in edges}
-    # Slingor bryts först. Utan det hamnar allt som hänger samman i en ring i samma
-    # kolumn -- mätt: 16 av 22 paket i en hög. En kant som pekar tillbaka på en nod vi
-    # redan är inne i räknas inte när lagren läggs (den ritas ändå, den bara styr inte).
     order, visited = [], set()
 
     def visit(node):
@@ -574,16 +679,19 @@ def code_map(root: Path) -> dict:
             if a == node:
                 depth[b] = max(depth[b], depth[node] + 1)
     # Etiketten: det gemensamma ledet bort ("com.wac.autocore."), kvar blir "ui.views".
-    # Minst ett led lämnas kvar, annars blir etiketten tom.
+    # Både punkt och snedstreck är led, för Java namnger med punkter och katalognamn gör
+    # det inte. Minst ett led lämnas kvar, annars blir etiketten tom.
     shared: list = []
     names = sorted(classes_of)
-    # Bara namn med punkter är med: ett paket utan namn har inga led att jämföra.
-    parts = [name.split(".") for name in names if "." in name]
+    parts = [re.split(r"[./]", name) for name in names if re.search(r"[./]", name)]
     if len(parts) > 1:
         while (all(len(p) > len(shared) for p in parts)
                and len({p[len(shared)] for p in parts}) == 1):
             shared.append(parts[0][len(shared)])
-    short = lambda package: ".".join(package.split(".")[len(shared):]) or package
+    def short(package: str) -> str:
+        if not shared:
+            return package
+        return "/".join(re.split(r"[./]", package)[len(shared):]) or package
     nodes, seen = [], {}
     for package in names:
         slot = seen.get(depth[package], 0)
@@ -594,6 +702,8 @@ def code_map(root: Path) -> dict:
                       "examples": sorted(classes_of[package])[:6]})
     return {"root": str(root), "nodes": nodes, "edges": edges, "layers": max(depth.values()) + 1,
             "files": len(files), "packages": len(classes_of), "edgesCount": len(edges),
+            "languages": [{"name": name, "files": n} for name, n in sorted(by_lang.items(),
+                                                                          key=lambda kv: -kv[1])],
             "prefix": ".".join(shared)}
 
 

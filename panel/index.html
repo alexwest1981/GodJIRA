@@ -1682,8 +1682,12 @@ async function renderCodeMap(force, fresh) {
       CODE.graph = null; CODE.error = "kunde inte läsa kodkartan: " + e.message;
     }
   }
+  // Språken står med, för det är svaret på vad kartan läste: "Java 88" säger mer än
+  // "88 filer" när man undrar varför ett repo fick en karta och ett annat inte.
+  const sprak = (CODE.graph && CODE.graph.languages || [])
+    .map(l => `${l.name} ${l.files}`).join(" · ");
   if (who) who.textContent = CODE.graph ? (CODE.graph.repo || "") + " · " +
-    `${CODE.graph.packages} paket · ${CODE.graph.edgesCount} vägar` : "";
+    `${CODE.graph.packages} paket · ${CODE.graph.edgesCount} vägar` + (sprak ? " · " + sprak : "") : "";
   if (CODE.error) { canvas.innerHTML = `<div class="empty err">${esc(CODE.error)}</div>`; return; }
   const graph = CODE.graph;
   if (!graph || !(graph.nodes || []).length) {
