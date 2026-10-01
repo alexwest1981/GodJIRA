@@ -551,6 +551,10 @@ DECLARED_MODULE = (r"^\ufeff?\s*package\s+([\w.]+)\s*;",
                    r"^\ufeff?\s*namespace\s+([\w.]+)\s*[{;]")
 
 
+# Ordnad lista över vad ett ord är, för referensläsningen: språk importerar inte alltid.
+WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]{2,}")
+
+
 def module_of_path(path: Path, root: Path) -> str:
     """Modulen en fil hör till: det deklarerade paketet om filen har ett, annars katalogen.
 
@@ -591,7 +595,7 @@ def code_map(root: Path) -> dict:
         return {"root": str(root), "nodes": [], "edges": [], "layers": 0, "files": 0,
                 "note": "kodkartan hittade inga källfiler i repot ({})".format(
                     ", ".join(sorted(SOURCE_LANGS.values())))}
-    package_of, classes_of, imports_of = {}, {}, {}
+    package_of, classes_of, imports_of, words_of = {}, {}, {}, {}
     for path in files:
         try:
             source = path.read_text(errors="replace")
@@ -610,14 +614,21 @@ def code_map(root: Path) -> dict:
         for pattern in IMPORT_PATTERNS:
             found += re.findall(pattern, source, re.M)
         imports_of[path] = found
+        # Orden sparas, inte texten: referensläsningen nedan frågar bara vilka namn filen
+        # nämner, och en mängd ord per fil är billigare att hålla än hela källkoden.
+        words_of[path] = set(WORD.findall(source))
     # Uppslagning: nodnamn, och filnamn -> dess modul. Ett filnamn kan finnas i flera
     # moduler; då vinner den sista, och det är samma eftergift som förut (där klassen
     # avgjorde). Utan den här tabellen hade Java-importen "import a.b.Db;" inte hittat
     # något alls, för den namnger typen och inte modulen.
     modules = set(classes_of)
-    by_stem = {}
+    by_stem, by_name = {}, {}
     for path, package in package_of.items():
         by_stem[path.stem.lower()] = package
+        # by_name är den versalkänsliga: en typreferens skrivs med sin versal (Db, Model,
+        # WorldMapView) medan vanliga ord står i gemener. Utan det blev ordet "app" en väg
+        # till src/ui/app -- mätt: 143 vägar mellan två moduler i sonix som inte hör ihop.
+        by_name[path.stem] = package
 
     def resolve(name: str):
         """Det nämnda namnet -> en modul i repot, eller inget alls."""
@@ -652,6 +663,17 @@ def code_map(root: Path) -> dict:
         for target in imports_of.get(path, []):
             other = resolve(target)
             if other and other != package:
+                weight[(package, other)] = weight.get((package, other), 0) + 1
+    # Referenserna: ett språk importerar inte alltid. GDScript säger "extends
+    # WorldMapView" och filen heter WorldMapView.gd -- samma namn, ingen import. Tabellen
+    # filnamn -> modul finns redan, så en fil som nämner ett annat filnamn får en väg.
+    # ponytail: ett namn som två moduler delar pekar på den sista av dem, och ett vanligt
+    # ord kan sammanfalla med ett filnamn. Räcker det inte är steget upp riktiga
+    # deklarationer per språk (class/struct/trait), inte fler ord här.
+    for path, package in package_of.items():
+        for word in words_of.get(path, ()):
+            other = by_name.get(word)
+            if other and other != package and path.stem != word:
                 weight[(package, other)] = weight.get((package, other), 0) + 1
     edges = [{"from": a, "to": b, "weight": n} for (a, b), n in sorted(weight.items())]
     # Lagret: en kant går alltid åt höger. Moduler som beroende av varandra i en slinga
@@ -3854,6 +3876,25 @@ def selftest() -> int:
         assert {edge["from"] for edge in graph["edges"]} == {"com.x.ui", "com.x.service"}
         empty = code_map(Path(tmp) / "finns-inte")
         assert empty["nodes"] == [] and "Java" in empty["note"], "utan java-filer sägs det"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    checks += 1
+
+    # Referensläsningen: ett språk importerar inte alltid. Ett nämnt typnamn är en väg även
+    # utan import, men bara med sin egen versal -- ett gemener-ord som sammanfaller med ett
+    # filnamn är ingen väg (mätt i sonix: ordet "app" band ihop två moduler med 143 vägar).
+    tmp = tempfile.mkdtemp(prefix="godjira-referens-")
+    try:
+        root = Path(tmp)
+        (root / "core").mkdir()
+        (root / "ui").mkdir()
+        (root / "core" / "World.gd").write_text("class_name World\n")
+        (root / "ui" / "Screen.gd").write_text("extends World\nvar w = World.new()\n")
+        (root / "ui" / "Other.gd").write_text("var w = world.new()\n")
+        graph = code_map(root)
+        pairs = {(edge["from"], edge["to"]) for edge in graph["edges"]}
+        assert ("ui", "core") in pairs, graph["edges"]
+        assert graph["edgesCount"] == 1, graph["edges"]
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     checks += 1
