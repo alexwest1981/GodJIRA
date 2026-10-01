@@ -250,6 +250,14 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   pre.diff .ln.del { background: color-mix(in srgb, var(--red) 15%, transparent); }
   pre.diff .ln.hunk { color: var(--muted); background: var(--line); }
   pre.diff .ln.meta { color: var(--muted); }
+  /* Sida vid sida: samma rader i två kolumner. minmax(0,1fr) är poängen -- med 1fr räknas
+     cellens innehåll in i minsta bredd och rutnätet spränger rutan. Hunk-rubriken och
+     filhuvudet spänner över båda, för de hör till filen och inte till en sida.
+     ponytail: långa rader radbryts här (pre-wrap), annars vore varje cell en egen skroll. */
+  pre.diff.sbs .row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  pre.diff.sbs .row.hel { grid-template-columns: minmax(0, 1fr); }
+  pre.diff.sbs .row .ln:nth-of-type(2) { border-left: 1px solid var(--line); }
+  pre.diff.sbs .ln { white-space: pre-wrap; overflow-wrap: anywhere; }
 
   /* --------------------------------------------------------- import ---- */
   .impfile { cursor: pointer; }
@@ -854,6 +862,7 @@ const TEXT = {
   binaryFile: "binär fil — visas inte", cutOff: "filen är kapad", showing: "visar",
   diffLoading: "hämtar ändringen …", diffFailed: "kunde inte läsa ändringen",
   diffCut: "ändringen är kapad", noDiff: "ingen ändring att visa",
+  diffSide: "sida vid sida", diffUnified: "en kolumn",
   paketet: "paketet", visaAlla: "visa alla", visaFärre: "visa färre", stäng: "stäng",
   n8nCanvas: "n8n:s egen tavla", under: "under", readCode: "läst ur repot",
   none: "utan",
@@ -2929,16 +2938,53 @@ const diffKind = r =>
   : /^(index |new file|deleted file|old mode|new mode|similarity|rename |Binary |copy )/.test(r)
     ? "meta" : "";
 
-function diffHtml(text) {
+// Sida vid sida: paret hör ihop -- en borttagen rad och den tillagda som ersätter den.
+// Klassningen kommer ur diffKind, så filhuvudena hamnar hos meta och aldrig i ett par.
+function diffRows(rader) {
+  const ut = [];
+  let i = 0;
+  while (i < rader.length) {
+    const k = diffKind(rader[i]);
+    if (k === "hunk" || k === "meta") { ut.push({l: rader[i], r: "", lk: k, rk: "", hel: 1}); i++; continue; }
+    if (k === "del") {
+      const b = [], t = [];
+      while (i < rader.length && diffKind(rader[i]) === "del") b.push(rader[i++]);
+      while (i < rader.length && diffKind(rader[i]) === "add") t.push(rader[i++]);
+      for (let n = 0; n < Math.max(b.length, t.length); n++)
+        ut.push({l: b[n] || "", r: t[n] || "", lk: b[n] ? "del" : "", rk: t[n] ? "add" : ""});
+      continue;
+    }
+    // En ensam tillagd rad hör bara till höger (den ersätter ingenting); en oförändrad rad
+    // står på båda sidorna. Att sätta den tillagda på båda var felet skärmbilden fångade.
+    ut.push({l: k === "add" ? "" : rader[i], r: rader[i], lk: k, rk: k}); i++;
+  }
+  return ut;
+}
+
+const diffCell = (r, k) => `<span class="ln${k ? " " + k : ""}">${esc(r) || " "}</span>`;
+
+function diffHtml(text, sbs) {
   const filer = diffFiles(text);
   if (!filer.length) return `<div class="meta">${esc(TEXT.noDiff)}</div>`;
   // Första filen öppen, resten fällda: en commit över tolv filer skall inte vara en vägg.
   return filer.map((f, i) => `<details class="df"${i === 0 ? " open" : ""}>` +
-    `<summary class="mono">${esc(f.vag)}</summary><pre class="diff">` +
-    f.rader.map(r => {
-      const k = diffKind(r);
-      return `<span class="ln${k ? " " + k : ""}">${esc(r) || " "}</span>`;
-    }).join("") + `</pre></details>`).join("");
+    `<summary class="mono">${esc(f.vag)}</summary><pre class="diff${sbs ? " sbs" : ""}">` +
+    (sbs
+      ? diffRows(f.rader).map(x => x.hel
+          ? `<span class="row hel">${diffCell(x.l, x.lk)}</span>`
+          : `<span class="row">${diffCell(x.l, x.lk)}${diffCell(x.r, x.rk)}</span>`).join("")
+      : f.rader.map(r => diffCell(r, diffKind(r))).join("")) +
+    `</pre></details>`).join("");
+}
+
+// Ritas om ur texten som redan är hämtad: att växla vy kostar inget anrop.
+function paintDiff(ruta) {
+  if (ruta._text === undefined) return;
+  ruta.innerHTML =
+    `<div style="margin:6px 2px"><button class="chip" data-sbs="${ruta._sbs ? "0" : "1"}">` +
+      `${esc(ruta._sbs ? TEXT.diffUnified : TEXT.diffSide)}</button>` +
+      (ruta._trunc ? ` <span class="meta">${esc(TEXT.diffCut)}</span>` : "") + `</div>` +
+    diffHtml(ruta._text, !!ruta._sbs);
 }
 
 async function loadDiff(ruta) {
@@ -2948,10 +2994,12 @@ async function loadDiff(ruta) {
     const q = filUrl("diff", "&sha=" + encodeURIComponent(ruta.dataset.sha) +
       (ruta.dataset.path ? "&path=" + encodeURIComponent(ruta.dataset.path) : ""));
     const a = await (await fetch(q)).json();
-    ruta.innerHTML = (a.ok && a.truncated ? `<div class="meta">${esc(TEXT.diffCut)}</div>` : "") +
-      (a.ok ? diffHtml(a.text) : `<div class="meta err">${esc(a.error || TEXT.diffFailed)}</div>`);
+    if (!a.ok) throw new Error(a.error || TEXT.diffFailed);
+    ruta._text = a.text;
+    ruta._trunc = !!a.truncated;
+    paintDiff(ruta);
   } catch (e) {
-    ruta.innerHTML = `<div class="meta err">${esc(TEXT.diffFailed)}</div>`;
+    ruta.innerHTML = `<div class="meta err">${esc(e.message || TEXT.diffFailed)}</div>`;
     ruta.dataset.last = "";   // ett nätfel skall gå att försöka om
   }
 }
@@ -3775,6 +3823,12 @@ document.addEventListener("click", e => {
     const fil = e.target.closest("[data-file]");
     if (fil) return openFile(fil.dataset.file);
     if (e.target.closest("[data-fclose]")) return filClose();
+    const sbs = e.target.closest("[data-sbs]");
+    if (sbs) {
+      const ruta = sbs.closest(".dif");
+      if (ruta && ruta._text !== undefined) { ruta._sbs = sbs.dataset.sbs === "1"; paintDiff(ruta); }
+      return;
+    }
     if (e.target.closest('[data-act="files-fresh"]')) {
       renderFiles(true); renderCommits(true); return;
     }

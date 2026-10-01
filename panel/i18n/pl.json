@@ -380,5 +380,7 @@
  "hämtar ändringen …": "wczytywanie zmiany …",
  "kunde inte läsa ändringen": "nie udało się odczytać zmiany",
  "ändringen är kapad": "zmiana jest ucięta",
- "ingen ändring att visa": "brak zmiany do pokazania"
+ "ingen ändring att visa": "brak zmiany do pokazania",
+ "sida vid sida": "obok siebie",
+ "en kolumn": "jedna kolumna"
 }

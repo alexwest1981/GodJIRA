@@ -214,10 +214,11 @@ console.log(JSON.stringify(got) === JSON.stringify(want) ? "OK" : "FEL " + JSON.
     # färgläggningen är hela skillnaden mellan en grön filväg och rätt svar.
     fn = re.search(r"function diffFiles\(text\) \{.*?\n\}", html, re.S)
     kind = re.search(r"const diffKind = r =>.*?;", html, re.S)
-    check(bool(fn and kind), "färgläggningen av ändringen går att läsa")
+    rader_fn = re.search(r"function diffRows\(rader\) \{.*?\n\}", html, re.S)
+    check(bool(fn and kind and rader_fn), "färgläggningen av ändringen går att läsa")
     if fn and kind:
         with _tf.NamedTemporaryFile("w", suffix=".js", delete=False, encoding="utf-8") as fh:
-            fh.write(fn.group(0) + "\n" + kind.group(0) + """
+            fh.write(fn.group(0) + "\n" + kind.group(0) + "\n" + rader_fn.group(0) + """
 const rader = ["diff --git a/x/F.java b/x/F.java", "index 1..2 100644", "--- a/x/F.java",
                "+++ b/x/F.java", "@@ -1 +1 @@", "-gammal", "+ny", " oförändrad"];
 const kind = rader.map(diffKind);
@@ -226,8 +227,17 @@ const want = ["", "meta", "meta", "meta", "hunk", "del", "add", ""];
 const tx = ["diff --git a/x/F.java b/x/F.java", "+a",
             "diff --git a/y/G.java b/y/G.java", "+b"].join(String.fromCharCode(10));
 const filer = diffFiles(tx).map(f => f.vag);
+// Sida vid sida: paret hör ihop, och en oförändrad rad står på båda sidorna.
+const p = diffRows(["@@ -1,3 +1,3 @@", "-a", "-b", "+a2", " kvar"]).map(x => [x.l, x.r, x.hel || 0]);
+const pWant = [["@@ -1,3 +1,3 @@", "", 1], ["-a", "+a2", 0], ["-b", "", 0], [" kvar", " kvar", 0]];
+// En rad som bara LÄGGS TILL ersätter ingenting: vänster cell skall vara tom.
+const ensam = diffRows(["@@ -0,0 +1 @@", "+bara ny"]).map(x => [x.l, x.r, x.hel || 0]);
+const ensamWant = [["@@ -0,0 +1 @@", "", 1], ["", "+bara ny", 0]];
 console.log(JSON.stringify(kind) === JSON.stringify(want) && filer.length === 2 &&
-            filer[0] === "x/F.java" && filer[1] === "y/G.java" ? "OK" : "FEL " + JSON.stringify([kind, filer]));
+            filer[0] === "x/F.java" && filer[1] === "y/G.java" &&
+            JSON.stringify(p) === JSON.stringify(pWant) &&
+            JSON.stringify(ensam) === JSON.stringify(ensamWant)
+            ? "OK" : "FEL " + JSON.stringify([kind, filer, p, ensam]));
 """)
             ändring_js = fh.name
         ändring_run = _sp.run(["node", ändring_js], capture_output=True, text=True)

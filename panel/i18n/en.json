@@ -380,5 +380,7 @@
  "hämtar ändringen …": "fetching the change …",
  "kunde inte läsa ändringen": "could not read the change",
  "ändringen är kapad": "the change is cut off",
- "ingen ändring att visa": "no change to show"
+ "ingen ändring att visa": "no change to show",
+ "sida vid sida": "side by side",
+ "en kolumn": "one column"
 }

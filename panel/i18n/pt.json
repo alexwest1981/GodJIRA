@@ -380,5 +380,7 @@
  "hämtar ändringen …": "carregando a alteração …",
  "kunde inte läsa ändringen": "não foi possível ler a alteração",
  "ändringen är kapad": "a alteração está cortada",
- "ingen ändring att visa": "nenhuma alteração para mostrar"
+ "ingen ändring att visa": "nenhuma alteração para mostrar",
+ "sida vid sida": "lado a lado",
+ "en kolumn": "uma coluna"
 }

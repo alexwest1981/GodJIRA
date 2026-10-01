@@ -380,5 +380,7 @@
  "hämtar ändringen …": "chargement de la modification …",
  "kunde inte läsa ändringen": "impossible de lire la modification",
  "ändringen är kapad": "la modification est tronquée",
- "ingen ändring att visa": "aucune modification à afficher"
+ "ingen ändring att visa": "aucune modification à afficher",
+ "sida vid sida": "côte à côte",
+ "en kolumn": "une colonne"
 }
