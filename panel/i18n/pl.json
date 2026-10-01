@@ -376,5 +376,9 @@
  "rader": "wierszy",
  "binär fil — visas inte": "plik binarny — nie pokazano",
  "filen är kapad": "plik jest ucięty",
- "visar": "pokazuje"
+ "visar": "pokazuje",
+ "hämtar ändringen …": "wczytywanie zmiany …",
+ "kunde inte läsa ändringen": "nie udało się odczytać zmiany",
+ "ändringen är kapad": "zmiana jest ucięta",
+ "ingen ändring att visa": "brak zmiany do pokazania"
 }

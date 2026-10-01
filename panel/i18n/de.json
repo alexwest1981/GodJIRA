@@ -376,5 +376,9 @@
  "rader": "Zeilen",
  "binär fil — visas inte": "Binärdatei — wird nicht angezeigt",
  "filen är kapad": "die Datei ist abgeschnitten",
- "visar": "zeigt"
+ "visar": "zeigt",
+ "hämtar ändringen …": "Änderung wird geladen …",
+ "kunde inte läsa ändringen": "konnte die Änderung nicht lesen",
+ "ändringen är kapad": "die Änderung ist abgeschnitten",
+ "ingen ändring att visa": "keine Änderung anzuzeigen"
 }

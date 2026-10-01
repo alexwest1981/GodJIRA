@@ -240,6 +240,16 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   .cm summary { display: flex; align-items: center; gap: 9px; padding: 7px 2px;
                 border-bottom: 1px solid var(--line); cursor: pointer; }
   .cm summary .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .df summary { padding: 7px 4px; cursor: pointer; border-bottom: 1px solid var(--line); }
+  pre.diff { margin: 0 0 8px; padding: 8px 0; max-height: min(56vh, 620px); overflow: auto;
+             background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+             font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px;
+             line-height: 1.45; white-space: pre; }
+  pre.diff .ln { display: block; padding: 0 12px; }
+  pre.diff .ln.add { background: color-mix(in srgb, var(--green) 15%, transparent); }
+  pre.diff .ln.del { background: color-mix(in srgb, var(--red) 15%, transparent); }
+  pre.diff .ln.hunk { color: var(--muted); background: var(--line); }
+  pre.diff .ln.meta { color: var(--muted); }
 
   /* --------------------------------------------------------- import ---- */
   .impfile { cursor: pointer; }
@@ -842,6 +852,8 @@ const TEXT = {
   filesFailed: "kunde inte läsa filerna", fileLoading: "hämtar filen …",
   fileHistory: "filens historik", noCommits: "inga ändringar", lines: "rader",
   binaryFile: "binär fil — visas inte", cutOff: "filen är kapad", showing: "visar",
+  diffLoading: "hämtar ändringen …", diffFailed: "kunde inte läsa ändringen",
+  diffCut: "ändringen är kapad", noDiff: "ingen ändring att visa",
   paketet: "paketet", visaAlla: "visa alla", visaFärre: "visa färre", stäng: "stäng",
   n8nCanvas: "n8n:s egen tavla", under: "under", readCode: "läst ur repot",
   none: "utan",
@@ -2877,19 +2889,82 @@ async function renderFiles(force) {
 
 // En commit-rad: utfälld visar den hela meddelandet och filerna den rörde. Filerna går att
 // klicka på -- historiken leder tillbaka till koden.
-function commitRows(poster) {
+function commitRows(poster, bara) {
   if (!(poster || []).length) return `<div class="meta">${esc(TEXT.noCommits)}</div>`;
   return poster.map(c =>
     `<details class="cm"><summary><span class="mono">${esc(c.sha)}</span>` +
       `<span class="t">${esc(c.subject)}</span>` +
       `<span class="tside meta">${esc(c.author)} · ${esc(c.date)}</span></summary>` +
       (c.body ? `<pre class="pval">${esc(c.body)}</pre>` : "") +
+      `<div class="dif" data-sha="${esc(c.sha)}"` +
+        (bara ? ` data-path="${esc(bara)}"` : "") + `>` +
+        `<div class="meta">${esc(TEXT.diffLoading)}</div></div>` +
       `<div class="meta" style="margin:8px 2px">${c.filesTotal} ${esc(TEXT.graphFiles)}` +
         (c.filesTotal > c.files.length ? ` (${esc(TEXT.showing)} ${c.files.length})` : "") + `</div>` +
       `<div class="wl">` + c.files.map(f =>
         `<div class="r" data-file="${esc(f)}"><span class="t mono">${esc(f)}</span></div>`).join("") +
       `</div></details>`).join("");
 }
+
+// Ändringen: git skriver den, vi färglägger den. En rad är +, - eller ingetdera -- det är
+// hela färgläggningen. Filhuvudena (+++ / ---) börjar också med + och - och måste kollas
+// FÖRST, annars blir en filväg grön och en annan röd.
+function diffFiles(text) {
+  const filer = [];
+  for (const rad of String(text || "").split("\n")) {
+    if (rad.startsWith("diff --git ")) {
+      const m = rad.match(/ b\/(.+)$/);
+      // Git citerar sökvägar med mellanslag: stäng citattecknet är inte en del av namnet.
+      filer.push({ vag: (m ? m[1] : rad.slice(11)).replace(/"$/, ""), rader: [] });
+    } else if (filer.length) filer[filer.length - 1].rader.push(rad);
+  }
+  return filer;
+}
+
+const diffKind = r =>
+  r.startsWith("@@") ? "hunk"
+  : (r.startsWith("+++") || r.startsWith("---")) ? "meta"
+  : r.startsWith("+") ? "add"
+  : r.startsWith("-") ? "del"
+  : /^(index |new file|deleted file|old mode|new mode|similarity|rename |Binary |copy )/.test(r)
+    ? "meta" : "";
+
+function diffHtml(text) {
+  const filer = diffFiles(text);
+  if (!filer.length) return `<div class="meta">${esc(TEXT.noDiff)}</div>`;
+  // Första filen öppen, resten fällda: en commit över tolv filer skall inte vara en vägg.
+  return filer.map((f, i) => `<details class="df"${i === 0 ? " open" : ""}>` +
+    `<summary class="mono">${esc(f.vag)}</summary><pre class="diff">` +
+    f.rader.map(r => {
+      const k = diffKind(r);
+      return `<span class="ln${k ? " " + k : ""}">${esc(r) || " "}</span>`;
+    }).join("") + `</pre></details>`).join("");
+}
+
+async function loadDiff(ruta) {
+  if (!ruta || ruta.dataset.last === "1") return;
+  ruta.dataset.last = "1";
+  try {
+    const q = filUrl("diff", "&sha=" + encodeURIComponent(ruta.dataset.sha) +
+      (ruta.dataset.path ? "&path=" + encodeURIComponent(ruta.dataset.path) : ""));
+    const a = await (await fetch(q)).json();
+    ruta.innerHTML = (a.ok && a.truncated ? `<div class="meta">${esc(TEXT.diffCut)}</div>` : "") +
+      (a.ok ? diffHtml(a.text) : `<div class="meta err">${esc(a.error || TEXT.diffFailed)}</div>`);
+  } catch (e) {
+    ruta.innerHTML = `<div class="meta err">${esc(TEXT.diffFailed)}</div>`;
+    ruta.dataset.last = "";   // ett nätfel skall gå att försöka om
+  }
+}
+
+// toggle bubblar INTE: utan capture får lyssnaren aldrig veta att en commit fälldes ut, och
+// ändringen hämtas först när någon tittar på den.
+document.addEventListener("toggle", e => {
+  const d = e.target;
+  if (d && d.tagName === "DETAILS" && d.classList.contains("cm") && d.open) {
+    const ruta = d.querySelector(".dif");
+    if (ruta) loadDiff(ruta);
+  }
+}, true);
 
 async function renderCommits(force) {
   const kropp = document.getElementById("commitsBody");
@@ -2939,7 +3014,7 @@ async function openFile(rel) {
     }
   }
   const l = document.getElementById("fileLog");
-  if (l) l.innerHTML = log.ok ? commitRows(log.commits)
+  if (l) l.innerHTML = log.ok ? commitRows(log.commits, rel)
                               : `<div class="meta err">${esc(log.error || "?")}</div>`;
 }
 

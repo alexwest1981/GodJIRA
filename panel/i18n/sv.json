@@ -376,5 +376,9 @@
  "rader": "rader",
  "binär fil — visas inte": "binär fil — visas inte",
  "filen är kapad": "filen är kapad",
- "visar": "visar"
+ "visar": "visar",
+ "hämtar ändringen …": "hämtar ändringen …",
+ "kunde inte läsa ändringen": "kunde inte läsa ändringen",
+ "ändringen är kapad": "ändringen är kapad",
+ "ingen ändring att visa": "ingen ändring att visa"
 }

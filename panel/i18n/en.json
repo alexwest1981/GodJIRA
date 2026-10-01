@@ -376,5 +376,9 @@
  "rader": "lines",
  "binär fil — visas inte": "binary file — not shown",
  "filen är kapad": "the file is cut off",
- "visar": "showing"
+ "visar": "showing",
+ "hämtar ändringen …": "fetching the change …",
+ "kunde inte läsa ändringen": "could not read the change",
+ "ändringen är kapad": "the change is cut off",
+ "ingen ändring att visa": "no change to show"
 }

@@ -376,5 +376,9 @@
  "rader": "regels",
  "binär fil — visas inte": "binair bestand — niet getoond",
  "filen är kapad": "het bestand is afgekapt",
- "visar": "toont"
+ "visar": "toont",
+ "hämtar ändringen …": "wijziging wordt geladen …",
+ "kunde inte läsa ändringen": "kon de wijziging niet lezen",
+ "ändringen är kapad": "de wijziging is afgekapt",
+ "ingen ändring att visa": "geen wijziging om te tonen"
 }

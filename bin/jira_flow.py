@@ -1353,6 +1353,60 @@ def cmd_commits(args) -> int:
     return 0 if poster else 2
 
 
+DIFF_MAX_LINES = 3000
+
+
+def safe_sha(raw: str):
+    """Ett sha ur en förfrågan: bara hex, alltså en commit och inget annat.
+
+    Argumentet går som argv (aldrig genom ett skal), men git läser ett inledande
+    bindestreck som en FLAGGA -- "--upload-pack=..." vore en commit som inte finns och ett
+    kommando till. Grinden står här, en gång, för både panelen och MCP.
+    """
+    text = (raw or "").strip()
+    return text if re.fullmatch(r"[0-9a-f]{4,40}", text) else None
+
+
+def repo_diff(root: Path, sha: str, rel: str = "") -> dict:
+    """Ändringen en commit gjorde, rad för rad, som git skriver den.
+
+    En commit kan röra hundra filer: då kapas texten och SÄGER det. En halv diff som ser
+    hel ut är värre än en som erkänner sitt tak.
+    """
+    argv = ["show", "--format=", "--patch", "--no-color", "--no-ext-diff", "--unified=3", sha]
+    if rel:
+        argv += ["--", rel]
+    rader = git_out(root, *argv, timeout=120).splitlines()
+    klippt = len(rader) > DIFF_MAX_LINES
+    if klippt:
+        rader = rader[:DIFF_MAX_LINES]
+    return {"lines": len(rader), "total": len(rader) if not klippt else None,
+            "truncated": klippt, "text": "\n".join(rader)}
+
+
+def cmd_diff(args) -> int:
+    root = repo_dir_or_say(args, "show the change in")
+    if not root:
+        return 1
+    sha = safe_sha(getattr(args, "sha", "") or "")
+    if not sha:
+        say(args, {"ok": False, "error": "not a commit"},
+            ["{}: not a commit".format(getattr(args, "sha", ""))])
+        return 1
+    rel = (getattr(args, "path", "") or "").strip()
+    if rel:
+        mål, fel = safe_repo_path(root, rel)
+        if not mål:
+            say(args, {"ok": False, "error": fel}, ["{}: {}".format(rel, fel)])
+            return 1
+        rel = mål.relative_to(root.resolve()).as_posix()
+    svar = repo_diff(root, sha, rel)
+    svar.update({"ok": True, "repo": repo_slug_of_dir(root) or str(root), "sha": sha, "path": rel})
+    say(args, svar, ["{} {}s: {} lines{}".format(sha, rel or "the commit", svar["lines"],
+                                                 " (cut)" if svar["truncated"] else "")])
+    return 0
+
+
 def cmd_graph(args) -> int:
     """Kunskapsgrafen för ett repo: allt vi vet, med sina relationer, i en fil.
 
@@ -4105,6 +4159,18 @@ def selftest() -> int:
         assert log[1]["subject"] == "första: lägg in vyn", log[1]
         assert len(repo_commit_log(root, 5, "hemlig.txt")) == 1, "historiken är per fil"
 
+        # Ändringen: git skriver den, vi färglägger den. Ett sha ur en förfrågan är hex, för
+        # git läser ett inledande bindestreck som en FLAGGA, inte som en commit.
+        ändring = repo_diff(root, log[0]["sha"])
+        assert "-class View {}" in ändring["text"], ändring["text"][:200]
+        assert "+class View { int x; }" in ändring["text"], ändring["text"][:200]
+        assert ändring["truncated"] is False, ändring
+        bara = repo_diff(root, log[0]["sha"], "gui/View.java")
+        assert 0 < bara["lines"] <= ändring["lines"], (bara["lines"], ändring["lines"])
+        assert safe_sha("--upload-pack=evil") is None, "en flagga är inte en commit"
+        assert safe_sha("HEAD~1") is None and safe_sha("") is None, "bara hex"
+        assert safe_sha(log[0]["sha"]) == log[0]["sha"], "ett riktigt sha skall släppas igenom"
+
         ickegit_path = Path(ickegit)
         (ickegit_path / "node_modules").mkdir()
         (ickegit_path / "node_modules" / "skrap.js").write_text("x")
@@ -4195,6 +4261,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_graph.add_argument("--project", default="", help="Jira key (default: the link)")
     p_graph.add_argument("--json", action="store_true", help="the whole graph as JSON")
 
+    p_diff = sub.add_parser("diff", help="the change one commit made, as git writes it")
+    p_diff.add_argument("--repo-name", default="", help="the linked repo (default: the only link)")
+    p_diff.add_argument("--repo", default="", help="a directory instead of the local copy")
+    p_diff.add_argument("--sha", required=True, help="the commit to show")
+    p_diff.add_argument("--path", default="", help="one file out of the commit")
+    p_diff.add_argument("--json", action="store_true")
     p_files = sub.add_parser("files", help="the files of a repo, as git knows them")
     p_files.add_argument("--repo-name", default="", help="the linked repo (default: the only link)")
     p_files.add_argument("--repo", default="", help="a directory instead of the local copy")
@@ -4275,6 +4347,8 @@ def main(argv) -> int:
         return cmd_graph(args)
     if args.cmd == "codemap":
         return cmd_codemap(args)
+    if args.cmd == "diff":
+        return cmd_diff(args)
     if args.cmd == "files":
         return cmd_files(args)
     if args.cmd == "file":

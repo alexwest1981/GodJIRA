@@ -210,6 +210,32 @@ console.log(JSON.stringify(got) === JSON.stringify(want) ? "OK" : "FEL " + JSON.
               "katalogen bär sökvägen, raden bara filnamnet",
               (group_run.stdout + group_run.stderr).strip()[:140])
 
+    # Ändringen: filhuvudena (+++ / ---) börjar också med + och -, så ordningen i
+    # färgläggningen är hela skillnaden mellan en grön filväg och rätt svar.
+    fn = re.search(r"function diffFiles\(text\) \{.*?\n\}", html, re.S)
+    kind = re.search(r"const diffKind = r =>.*?;", html, re.S)
+    check(bool(fn and kind), "färgläggningen av ändringen går att läsa")
+    if fn and kind:
+        with _tf.NamedTemporaryFile("w", suffix=".js", delete=False, encoding="utf-8") as fh:
+            fh.write(fn.group(0) + "\n" + kind.group(0) + """
+const rader = ["diff --git a/x/F.java b/x/F.java", "index 1..2 100644", "--- a/x/F.java",
+               "+++ b/x/F.java", "@@ -1 +1 @@", "-gammal", "+ny", " oförändrad"];
+const kind = rader.map(diffKind);
+const want = ["", "meta", "meta", "meta", "hunk", "del", "add", ""];
+// Radbrytningen byggs med fromCharCode: en escape i provet blir två lager fel.
+const tx = ["diff --git a/x/F.java b/x/F.java", "+a",
+            "diff --git a/y/G.java b/y/G.java", "+b"].join(String.fromCharCode(10));
+const filer = diffFiles(tx).map(f => f.vag);
+console.log(JSON.stringify(kind) === JSON.stringify(want) && filer.length === 2 &&
+            filer[0] === "x/F.java" && filer[1] === "y/G.java" ? "OK" : "FEL " + JSON.stringify([kind, filer]));
+""")
+            ändring_js = fh.name
+        ändring_run = _sp.run(["node", ändring_js], capture_output=True, text=True)
+        _os.unlink(ändring_js)
+        check(ändring_run.stdout.strip() == "OK",
+              "en filväg blir inte grön och en borttagen rad inte röd",
+              (ändring_run.stdout + ändring_run.stderr).strip()[:140])
+
     # Kunskapsgrafen går att GÅ I: en enhets grannar räknas ur relationerna, ett paket får
     # sina egna filer och sina egna ärenden (ingenting läckt från grannpaketet), och filens
     # ärenden är de som nämner just den. Rena funktioner mot en handgjord graf -- de skall

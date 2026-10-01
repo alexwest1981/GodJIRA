@@ -376,5 +376,9 @@
  "rader": "righe",
  "binär fil — visas inte": "file binario — non mostrato",
  "filen är kapad": "il file è tagliato",
- "visar": "mostra"
+ "visar": "mostra",
+ "hämtar ändringen …": "carico della modifica …",
+ "kunde inte läsa ändringen": "impossibile leggere la modifica",
+ "ändringen är kapad": "la modifica è tagliata",
+ "ingen ändring att visa": "nessuna modifica da mostrare"
 }

@@ -376,5 +376,9 @@
  "rader": "lignes",
  "binär fil — visas inte": "fichier binaire — non affiché",
  "filen är kapad": "le fichier est tronqué",
- "visar": "affiche"
+ "visar": "affiche",
+ "hämtar ändringen …": "chargement de la modification …",
+ "kunde inte läsa ändringen": "impossible de lire la modification",
+ "ändringen är kapad": "la modification est tronquée",
+ "ingen ändring att visa": "aucune modification à afficher"
 }

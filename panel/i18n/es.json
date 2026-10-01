@@ -376,5 +376,9 @@
  "rader": "líneas",
  "binär fil — visas inte": "archivo binario — no se muestra",
  "filen är kapad": "el archivo está cortado",
- "visar": "mostrando"
+ "visar": "mostrando",
+ "hämtar ändringen …": "cargando el cambio …",
+ "kunde inte läsa ändringen": "no se pudo leer el cambio",
+ "ändringen är kapad": "el cambio está cortado",
+ "ingen ändring att visa": "no hay cambios que mostrar"
 }

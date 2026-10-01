@@ -1207,6 +1207,25 @@ def commits_read(repo: str, rel: str = "", limit: int = 30) -> dict:
     return data or {"ok": False, "error": first_line(env) or "the history could not be read"}
 
 
+def diff_read(repo: str, sha: str, rel: str = "") -> dict:
+    """Ändringen en commit gjorde.
+
+    Sha:t lämnas vidare orört som ett argv-element -- aldrig genom ett skal -- och hex-grinden
+    står i motorn (safe_sha): git läser ett inledande bindestreck som en flagga.
+    """
+    name = repo_name_of(repo)
+    if not name:
+        return {"ok": False, "error": "no repo to read the change from"}
+    if not (sha or "").strip():
+        return {"ok": False, "error": "no commit given"}
+    argv = ["flow", "diff", "--repo-name", name, "--sha", sha, "--json"]
+    if (rel or "").strip():
+        argv += ["--path", rel]
+    env = seam(*argv, timeout=120)
+    data = env.get("payload") if isinstance(env.get("payload"), dict) else None
+    return data or {"ok": False, "error": first_line(env) or "the change could not be read"}
+
+
 def graph_read(repo: str) -> dict:
     """Kunskapsgrafen för repot: paket, filer och ärenden med sina relationer.
 
@@ -1766,6 +1785,13 @@ class Handler(BaseHTTPRequestHandler):
             # förut i två minuter efter ett tryck.
             self._json(200, codemap_read(name) if (query.get("refresh") or [""])[0]
                        else cached("codemap:" + name, lambda: codemap_read(name), ttl=120))
+            return
+        if path == "/api/diff":
+            query = parse_qs(urlparse(self.path).query)
+            # Ingen cache: en ändring hämtas när man fäller ut den, en gång.
+            self._json(200, diff_read((query.get("repo") or [""])[0],
+                                      (query.get("sha") or [""])[0],
+                                      (query.get("path") or [""])[0]))
             return
         if path == "/api/files":
             query = parse_qs(urlparse(self.path).query)
