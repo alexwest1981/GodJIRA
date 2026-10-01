@@ -561,8 +561,13 @@ def flow_graphs() -> list:
             flow["run"] = runs.get(flow.get("id") or "") or {}
             # Flödeskartan: artefakten visas i stället för ritytan när Archify finns.
             # Språket är panelens, och en rad som saknar det faller till engelska.
+            # Bara ett flöde som n8n själv har går att rita med Archify: artefakten byggs ur
+            # n8n:s databas. Ett id som bara står i filen (flödet är inte pushat än) gav en
+            # dörr till en 404, och panelen visade felsidan i stället för att rita själv --
+            # alltså tvärtemot vad reserven finns till.
             flow["map"] = ("/api/flowmap?flow={}&lang={}".format(flow["id"], panel_language(""))
-                           if (flow.get("id") and flowmap_available()) else "")
+                           if (flow.get("id") and flow.get("source") == "n8n"
+                               and flowmap_available()) else "")
             out.append(flow)
         except Exception as exc:  # noqa: BLE001 -- vilket fel som helst är samma svar
             out.append({"file": path.name, "nodes": [], "edges": [],

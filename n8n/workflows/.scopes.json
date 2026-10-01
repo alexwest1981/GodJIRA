@@ -1,5 +1,6 @@
 {
  "godjira-flow-insight.workflow.ts": "GodJIRA",
  "godjira-flow-take-next.workflow.ts": "GodJIRA",
- "github-what-needs-me.workflow.ts": "GodJIRA"
+ "github-what-needs-me.workflow.ts": "GodJIRA",
+ "autocore-flow-code-leftovers.workflow.ts": "AutoCore"
 }
