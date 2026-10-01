@@ -350,5 +350,8 @@
  "agenten": "the agent",
  "fel": "error",
  "här finns inget flöde att rita — det här repot har inget eget än": "nothing to draw here — this repo has no flow of its own yet",
- "uppdatera kartan med färsk data": "refresh the map with fresh data"
+ "uppdatera kartan med färsk data": "refresh the map with fresh data",
+ "publicera till n8n": "publish to n8n",
+ "publicerat och påslaget": "published and switched on",
+ "kunde inte publicera": "could not publish"
 }

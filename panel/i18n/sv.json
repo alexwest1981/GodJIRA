@@ -350,5 +350,8 @@
  "agenten": "agenten",
  "fel": "fel",
  "här finns inget flöde att rita — det här repot har inget eget än": "här finns inget flöde att rita — det här repot har inget eget än",
- "uppdatera kartan med färsk data": "uppdatera kartan med färsk data"
+ "uppdatera kartan med färsk data": "uppdatera kartan med färsk data",
+ "publicera till n8n": "publicera till n8n",
+ "publicerat och påslaget": "publicerat och påslaget",
+ "kunde inte publicera": "kunde inte publicera"
 }

@@ -33,13 +33,13 @@ import { workflow, node, links } from '@n8n-as-code/transformer';
 // =====================================================================
 
 @workflow({
-    id: 'bed4ab1e-396c-4493-892a-640ea2512b31',
+    id: 'Dv5T1dBjhb1gmiV6',
     name: "AutoCore — the flow: the code's leftovers",
-    active: false,
+    active: true,
     isArchived: false,
-    settings: { executionOrder: 'v1', binaryMode: 'separate' },
+    settings: { executionOrder: 'v1' },
 })
-export class AutocoreTheCodesLeftoversWorkflow {
+export class AutocoreTheFlowTheCodeSLeftoversWorkflow {
     // =====================================================================
     // CONFIGURATION DES NOEUDS
     // =====================================================================

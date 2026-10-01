@@ -61,8 +61,9 @@ port = httpd.server_address[1]
 threading.Thread(target=httpd.serve_forever, daemon=True).start()
 
 
-def ask(path: str, host: str, origin: str | None = None, method: str = "GET") -> tuple[int, str]:
-    data = json.dumps({}).encode("utf-8") if method == "POST" else None
+def ask(path: str, host: str, origin: str | None = None, method: str = "GET",
+        body: dict | None = None) -> tuple[int, str]:
+    data = json.dumps(body if body is not None else {}).encode("utf-8") if method == "POST" else None
     request = urllib.request.Request("http://127.0.0.1:{}{}".format(port, path), data=data, method=method)
     request.add_header("Host", host)
     if origin:
@@ -84,6 +85,17 @@ code, _ = ask("/api/nonsense", good, origin="https://evil.example", method="POST
 check(code == 403, "en POST från en främmande sida nekas (CSRF)", str(code))
 code, _ = ask("/api/nonsense", good, method="POST")
 check(code == 404, "en POST utan ursprung (curl) når fram och får 404", str(code))
+
+# Publicera-knappen är panelens enda väg att ÄNDRA i n8n, så filnamnet är en gräns: ett
+# namn ur repots flödesmapp, aldrig en väg. Ett fel namn skall nekas innan något körs --
+# och det syns på svaret, utan att något skickas till n8n.
+egen = "http://127.0.0.1:{}".format(port)
+for fult, vad in (("../../../etc/passwd", "en väg ut ur mappen"), ("../server.py", "en fil i panelen"),
+                  ("hittepa.workflow.ts", "en flödesfil som inte finns")):
+    code, text = ask("/api/publish", good, origin=egen, method="POST", body={"flow": fult})
+    check(code == 400 and "no such flow file" in text, "publicering nekar " + vad, "{} {}".format(code, text[:60]))
+# Utan ursprung (curl, n8n) når en POST fram med flit -- det är därför raden ovan mäter
+# den främmande sidan i stället. Att kräva ett ursprung hade stängt ute båda.
 
 httpd.shutdown()
 print("väktaren: {} kontroller, allt grönt".format(checks))

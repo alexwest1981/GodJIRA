@@ -350,5 +350,8 @@
  "agenten": "l'agent",
  "fel": "erreur",
  "här finns inget flöde att rita — det här repot har inget eget än": "rien à dessiner ici — ce dépôt n'a pas encore de flux à lui",
- "uppdatera kartan med färsk data": "actualiser la carte avec des données fraîches"
+ "uppdatera kartan med färsk data": "actualiser la carte avec des données fraîches",
+ "publicera till n8n": "publier dans n8n",
+ "publicerat och påslaget": "publié et activé",
+ "kunde inte publicera": "impossible de publier"
 }

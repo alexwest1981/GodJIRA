@@ -350,5 +350,8 @@
  "agenten": "el agente",
  "fel": "error",
  "här finns inget flöde att rita — det här repot har inget eget än": "aquí no hay nada que dibujar — este repositorio aún no tiene flujo propio",
- "uppdatera kartan med färsk data": "actualizar el mapa con datos recientes"
+ "uppdatera kartan med färsk data": "actualizar el mapa con datos recientes",
+ "publicera till n8n": "publicar en n8n",
+ "publicerat och påslaget": "publicado y activado",
+ "kunde inte publicera": "no se pudo publicar"
 }

@@ -670,7 +670,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
            ändrar. Låg förut i en egen räl-post -- det var samma tavla två gånger. -->
       <div class="panel" id="flowPanel">
         <h3>Flödet <span class="meta" id="flowMeta"></span>
-          <span class="grow"></span><button class="chip" id="flowEdit" data-act="flow-edit" hidden>✎ ändra</button><a class="chip" id="flowCanvasLink" hidden>n8n:s egen tavla</a></h3>
+          <span class="grow"></span><button class="chip" id="flowPublish" data-act="flow-publish" hidden>publicera till n8n</button><button class="chip" id="flowEdit" data-act="flow-edit" hidden>✎ ändra</button><a class="chip" id="flowCanvasLink" hidden>n8n:s egen tavla</a></h3>
         <div class="body">
           <div class="seg" id="flowChips"></div>
           <div class="flowsplit" id="flowSplit">
@@ -790,6 +790,9 @@ const TEXT = {
   flows: "Flöden", flowRuns: "går av sig själv", flowIdle: "trycks bara på",
   flowNone: "här finns inget flöde att rita — det här repot har inget eget än",
   mapFresh: "uppdatera kartan med färsk data",
+  flowPublish: "publicera till n8n",
+  flowPublished: "publicerat och påslaget",
+  flowPublishFailed: "kunde inte publicera",
   flowUnreadable: "flödesfilen går inte att läsa", flowNodes: "noder", flowEdges: "vägar",
   n8nCanvas: "n8n:s egen tavla", under: "under", readCode: "läst ur repot",
   none: "utan",
@@ -1631,6 +1634,37 @@ function flowMapShow(flow) {
   return true;
 }
 
+// Publicera: flödet finns i repot men inte i n8n. Ett tryck skickar filen dit och slår på
+// det -- ett flöde som ligger i n8n men är avstängt gör ingenting, så stegen hör ihop.
+// Panelen gör ingen synk själv: n8nac äger den, och svaret bär dess eget kvitto.
+async function flowPublish(button) {
+  const flow = ((STATE || {}).flows || []).find(f => f.file === flowSel);
+  if (!flow) return;
+  const note = document.getElementById("flowNote");
+  const forra = button.textContent;
+  button.disabled = true;
+  button.textContent = "publicerar …";
+  try {
+    const svar = await (await fetch("/api/publish", {method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({flow: flow.file})})).json();
+    const sista = (svar.log || []).slice(-1)[0] || "";
+    const kvitto = svar.ok ? (TEXT.flowPublished + (sista ? " — " + sista : ""))
+                           : (TEXT.flowPublishFailed + ": " + (svar.error || "?"));
+    // Kvittot sätts EFTER omladdningen: renderFlow rensar raden, och den som just tryckt
+    // skall få veta att det gick vägen -- inte mötas av tystnad och en annan tavla.
+    if (svar.ok) await load(true);
+    note.textContent = kvitto;
+    if (svar.ok) return;
+  } catch (e) {
+    note.textContent = TEXT.flowPublishFailed + ": " + e.message;
+  } finally {
+    button.disabled = false;
+    button.textContent = forra;
+  }
+}
+
+
 function flowEditorOpen() {
   const flows = ((STATE || {}).flows || []).filter(f => f && f.file);
   const flow = flows.find(f => f.file === FLOW.file) || flows[0] || {};
@@ -1791,6 +1825,10 @@ function renderFlow() {
   // gäller både artefakten och ritytan. Bara n8n:s egna flöden kan ändras här.
   const edit = document.getElementById("flowEdit");
   if (edit) edit.hidden = flow.source !== "n8n";
+  // Var sitt håll av samma gräns: ett flöde som bara finns i repot kan publiceras (och slås
+  // på), ett som n8n redan har kan ändras -- i n8n, som äger det.
+  const pub = document.getElementById("flowPublish");
+  if (pub) pub.hidden = flow.source === "n8n";
   if (FLOW.map && flowMapShow(flow)) return;
   if (flow.error || !(flow.nodes || []).length) {
     canvas.innerHTML = `<div class="empty">${esc(TEXT.flowUnreadable)}: ${esc(flow.file)}` +
@@ -3367,6 +3405,7 @@ document.addEventListener("click", e => {
   }
   if (e.target.closest("[data-flow]")) { flowSel = e.target.closest("[data-flow]").dataset.flow; return renderFlow(); }
   if (e.target.closest('[data-act="flow-edit"]')) return flowEditorOpen();
+  if (e.target.closest('[data-act="flow-publish"]')) return flowPublish(e.target.closest('[data-act="flow-publish"]'));
   // Nollställningen kastar bara det man själv flyttat och panorerat: flödet i filen rörs inte.
   if (e.target.closest('[data-act="flow-reset"]')) {
     if (FLOW.stores) delete FLOW.stores[FLOW.file];

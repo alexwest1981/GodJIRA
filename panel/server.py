@@ -759,6 +759,39 @@ def automation_state() -> dict:
     return data if isinstance(data, dict) else {}
 
 
+FLOW_FILE = re.compile(r"[A-Za-z0-9_.-]+\.workflow\.ts\Z")
+
+
+def publish_flow(payload: dict) -> tuple[int, dict]:
+    """Skicka ett flöde till n8n och slå på det.
+
+    Panelen äger inte synken -- n8nac gör -- utan startar den och visar kvittot. Filen
+    måste vara en av repots egna flödesfiler och namnet ett namn, aldrig en väg: panelen
+    är en dörr mot n8n, inte ett sätt att köra vad som helst. Stegen (push, activate) hör
+    ihop i skriptet, för ett flöde som ligger i n8n men är avstängt gör ingenting.
+    """
+    name = str(payload.get("flow") or "").strip()
+    folder = ROOT / "n8n" / "workflows"
+    if not FLOW_FILE.fullmatch(name) or not (folder / name).is_file():
+        return 400, {"ok": False, "error": "no such flow file"}
+    script = ROOT / "n8n" / "bin" / "publish.sh"
+    if not script.is_file():
+        return 500, {"ok": False, "error": "n8n/bin/publish.sh is missing"}
+    try:
+        done = subprocess.run([str(script), name], capture_output=True, text=True, timeout=240)
+    except Exception as exc:  # noqa: BLE001 -- ett svar, inte en stacktrace
+        return 500, {"ok": False, "error": "{}: {}".format(type(exc).__name__, exc)}
+    lines = [row.strip() for row in (done.stdout or "").splitlines() if row.strip()]
+    ok = done.returncode == 0
+    if ok:
+        with _lock:
+            _cache.clear()          # flödet är nu ett annat: nästa läsning ska se det
+    return (200 if ok else 500), {
+        "ok": ok, "flow": name, "code": done.returncode, "log": lines[-4:],
+        "error": "" if ok else (lines[-1] if lines else (done.stderr or "").strip() or "publish failed")[:300],
+    }
+
+
 def automation_report(payload: dict) -> tuple[int, dict]:
     """n8n:s flöde lämnar sin sammanfattning här, så panelen kan visa den.
 
@@ -1719,6 +1752,7 @@ class Handler(BaseHTTPRequestHandler):
                    "/api/scan": scan_start, "/api/token": token_save,
                    "/api/github": github_save, "/api/language": language_save,
                    "/api/admin/people": admin_people, "/api/chat": chat_ask,
+                   "/api/publish": publish_flow,
                    "/api/agent": agent_state}.get(self.path.split("?")[0])
         if not handler:
             self._send(404, b"not found", "text/plain")
