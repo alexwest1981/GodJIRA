@@ -856,19 +856,21 @@ def agent_state(payload: dict = None) -> tuple[int, dict]:
     return agent_state()
 
 
-def chat_ask(payload: dict) -> tuple[int, dict]:
-    """En tur med agenten, för det som krånglar.
+def chat_argv(payload: dict):
+    """Frågan, samtalet och panelens fel -- eller felet i förfrågan, plus filerna.
 
-    Frågan går som argument -- den är användarens egen text, ingen hemlighet, och
-    seam skickar en lista till subprocess (ingen shell). Samtalet och panelens egna
-    fel kan bli långa, så de skrivs till 0600-filer som raderas efter: samma väg som
-    nyckeln går, av samma skäl.
+    En dörr för både den buffrade turen och strömmen: samma kontroller, samma tempfiler
+    (0600, raderade efter -- samma väg som nyckeln går) och samma städning. Två kopior av
+    den här logiken är två ställen att glömma en gräns på. Anroparen stänger filerna.
     """
+    def no(code: int, why: str):
+        return (code, {"ok": False, "error": why}), [], []
+
     question = str(payload.get("question") or "").strip()
     if not question:
-        return 400, {"ok": False, "error": "ingen fråga"}
+        return no(400, "ingen fråga")
     if len(question) > CHAT_ASKED:
-        return 400, {"ok": False, "error": "frågan är för lång ({} tecken)".format(CHAT_ASKED)}
+        return no(400, "frågan är för lång ({} tecken)".format(CHAT_ASKED))
     history = payload.get("history") if isinstance(payload.get("history"), list) else []
     turns = [{"role": "user" if str(t.get("role")) == "user" else "agent",
               "text": str(t.get("text") or "")[:CHAT_ASKED]}
@@ -878,32 +880,73 @@ def chat_ask(payload: dict) -> tuple[int, dict]:
                for e in errors[:8] if isinstance(e, dict)]
     repo = str(payload.get("repo") or "").strip()
     if repo and not re.fullmatch(r"[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)?", repo):
-        return 400, {"ok": False, "error": "det såg inte ut som ett repo"}
+        return no(400, "det såg inte ut som ett repo")
 
     made = []
+    for name, blob in (("--history", turns), ("--context", context)):
+        handle, path = tempfile.mkstemp(prefix="godjira-chat-")
+        with os.fdopen(handle, "w", encoding="utf-8") as fh:
+            json.dump(blob, fh, ensure_ascii=False)
+        os.chmod(path, 0o600)
+        made += [(name, path)]
+    args = ["chat", question, "--history", made[0][1], "--context", made[1][1]]
+    if repo:
+        args += ["--repo-name", repo]
+    return None, args, made
+
+
+def chat_done(made: list) -> None:
+    for _, path in made:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+def chat_ask(payload: dict) -> tuple[int, dict]:
+    """En tur med agenten, för det som krånglar -- svaret när det är färdigt."""
+    problem, args, made = chat_argv(payload)
     try:
-        for name, blob in (("--history", turns), ("--context", context)):
-            handle, path = tempfile.mkstemp(prefix="godjira-chat-")
-            with os.fdopen(handle, "w", encoding="utf-8") as fh:
-                json.dump(blob, fh, ensure_ascii=False)
-            os.chmod(path, 0o600)
-            made += [(name, path)]
-        args = ["flow", "chat", question, "--json",
-                "--history", made[0][1], "--context", made[1][1]]
-        if repo:
-            args += ["--repo-name", repo]
-        env = seam(*args, timeout=CHAT_TIMEOUT)
+        if problem:
+            return problem
+        env = seam("flow", *args, "--json", timeout=CHAT_TIMEOUT)
     finally:
-        for _, path in made:
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
+        chat_done(made)
     data = env.get("payload") if isinstance(env.get("payload"), dict) else None
     if not data or not data.get("ok"):
         return 502, {"ok": False, "error": (data or {}).get("error") or first_line(env)
                      or "agenten svarade inte"}
     return 200, data
+
+
+def chat_stream(payload: dict):
+    """Samma tur, men raderna vidare ut medan agenten skriver dem.
+
+    Inget buffras: motorn skriver NDJSON (--stream), och den här generatorn lämnar varje
+    rad vidare så fort den kommer. Det är samma kontroller och samma filer som chat_ask --
+    bara en annan väg ut. Panelen ritar texten och verktygsanropen medan de händer.
+    """
+    problem, args, made = chat_argv(payload)
+    try:
+        if problem:
+            yield json.dumps({"type": "error", "error": problem[1].get("error")},
+                             ensure_ascii=False) + "\n"
+            return
+        proc = subprocess.Popen([sys.executable, str(ENGINE), *args, "--stream"],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        for line in proc.stdout:
+            if line.strip():
+                yield line if line.endswith("\n") else line + "\n"
+        try:
+            proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        if proc.returncode != 0:
+            why = (proc.stderr.read() or "").strip().splitlines()
+            yield json.dumps({"type": "error", "error": why[-1] if why else "agenten föll"},
+                             ensure_ascii=False) + "\n"
+    finally:
+        chat_done(made)
 
 
 def token_save(payload: dict) -> tuple[int, dict]:
@@ -1592,11 +1635,35 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:  # noqa: BLE001 -- malformed body is malformed
             self._json(400, {"ok": False, "error": "kroppen var inte ett JSON-objekt"})
             return
+        if handler is chat_ask and payload.get("stream"):
+            self._chat_stream(payload)
+            return
         try:
             code, answer = handler(payload)
         except Exception as exc:  # noqa: BLE001 -- a crash must not look like a dead panel
             code, answer = 500, {"ok": False, "error": "{}: {}".format(type(exc).__name__, exc)}
         self._json(code, answer)
+
+    def _chat_stream(self, payload: dict) -> None:
+        """Chatten som den kommer: motorns rader vidare ut medan de skrivs.
+
+        HTTP/1.0 utan Content-Length: anslutningen stängs när motorn är klar, och det är
+        ramen. Panelen läser med en reader och får varje rad för sig -- den behöver inte
+        vänta på ett helt svar för att visa att något händer.
+        """
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+        try:
+            for line in chat_stream(payload):
+                self.wfile.write(line.encode("utf-8"))
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return          # någon gick iväg: inget att skriva till, inget att städa
 
     def log_message(self, format: str, *args) -> None:  # noqa: A002 -- the base class names it
         print("[panel] " + format % args, flush=True)

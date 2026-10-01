@@ -104,6 +104,8 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
     letter-spacing: .04em; text-transform: uppercase; margin-bottom: 3px; }
   .say.me { align-self: flex-end; background: var(--card-hi); }
   .say.err { border-color: var(--red); }
+  .say .used { margin-top: 6px; font-size: 11px; color: var(--muted);
+    font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, monospace; }
   .muted { color: var(--muted); }
   .key { font-family: ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
   a { color: inherit; text-decoration: none; }
@@ -2932,15 +2934,34 @@ function linkProject() {
 }
 
 
+// En turs kropp: texten, och verktygen den använde. Verktygsnamnen är identifierare
+// (jira_status), inte prosa -- de översätts inte, de står som de heter.
+function sayBody(turn) {
+  const text = esc(turn.text || "").replace(/\n/g, "<br>");
+  const tools = (turn.tools || []).filter(Boolean);
+  return text + (tools.length ? `<div class="used">⚙ ${esc(tools.join(" · "))}</div>` : "");
+}
+
+
+// Medan agenten skriver: rita om bara den bubblan, inte hela loggen. Ett svar kommer i
+// hundra bitar, och hundra ommålningar av en växande lista är hundra gånger för mycket.
+function chatPaint(index) {
+  const turn = CHAT[index];
+  const cell = document.querySelector(`#chatLog .say[data-turn="${index}"] div`);
+  if (turn && cell) cell.innerHTML = sayBody(turn);
+}
+
+
 function renderChat() {
   const log = document.getElementById("chatLog");
   if (!log) return;
   const where = document.getElementById("chatWhere");
   if (where) where.textContent = linkProject() || t("inget projekt kopplat");
-  log.innerHTML = CHAT.length ? CHAT.map(turn => {
+  log.innerHTML = CHAT.length ? CHAT.map((turn, index) => {
     const who = turn.role === "user" ? t("du") : (turn.role === "fel" ? t("fel") : t("agenten"));
     const cls = turn.role === "user" ? "me" : (turn.role === "fel" ? "err" : "agent");
-    return `<div class="say ${cls}"><b>${esc(who)}</b><div>${esc(turn.text).replace(/\n/g, "<br>")}</div></div>`;
+    return `<div class="say ${cls}" data-turn="${index}"><b>${esc(who)}</b>` +
+      `<div>${sayBody(turn)}</div></div>`;
   }).join("") : `<div class="meta">${esc(t("Inga frågor än"))}</div>`;
   const state = document.getElementById("chatState");
   if (state) state.textContent = CHAT_BUSY ? CHAT_NOTE : "";
@@ -2979,20 +3000,64 @@ async function chatSend() {
                               ["flödet", (STATE || {}).flow]]) {
     if (part && part.ok === false && part.error) context.push({ what, why: part.error });
   }
+  // Bubblan läggs dit tom, och fylls av strömmen: texten ritas medan agenten skriver,
+  // och varje verktygsanrop den gör syns på vägen. Därför --stream i förfrågan.
+  CHAT.push({ role: "agent", text: "", tools: [] });
+  const bubble = CHAT[CHAT.length - 1];
+  const at = CHAT.length - 1;
   try {
     const done = await fetch("/api/chat", { method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ question: text, repo: (links()[0] || {}).repo || "",
-                             history: CHAT.slice(0, -1), context }) });
-    const data = await done.json().catch(() => ({}));
-    if (!data.ok) throw new Error(data.error || t("Frågan gick inte fram"));
-    CHAT.push({ role: "agent", text: data.answer || "", agent: data.agent || "" });
+                             history: CHAT.slice(0, -1), context, stream: true }) });
+    if (!done.ok || !done.body) throw new Error(t("Frågan gick inte fram"));
+    const reader = done.body.getReader();
+    const decoder = new TextDecoder();
+    let rest = "";
+    for (;;) {
+      const step = await reader.read();
+      if (step.done) break;
+      rest += decoder.decode(step.value, { stream: true });
+      const lines = rest.split("\n");
+      rest = lines.pop();
+      lines.forEach(line => chatEvent(at, line));
+    }
+    if (rest.trim()) chatEvent(at, rest);
   } catch (err) {
-    CHAT.push({ role: "fel", text: String((err && err.message) || err) });
+    bubble.role = "fel";
+    bubble.text = String((err && err.message) || err);
   }
+  if (!bubble.text) bubble.text = t("inget svar");
   CHAT_BUSY = false;
   CHAT_NOTE = "";
   renderChat();
+}
+
+
+// En rad ur strömmen. Motorn skickar agentens egna händelser vidare som de är
+// (text, tool_use, tool_result, result) och avslutar med sin egen done.
+function chatEvent(at, line) {
+  const text = (line || "").trim();
+  if (!text) return;
+  let event = null;
+  try {
+    event = JSON.parse(text);
+  } catch (err) {
+    return;                      // en rad som inte är JSON är inget att visa
+  }
+  const turn = CHAT[at];
+  if (!turn) return;
+  if (event.type === "text") turn.text = (turn.text || "") + (event.text || "");
+  else if (event.type === "tool_use") turn.tools = (turn.tools || []).concat([event.name || ""]);
+  else if (event.type === "result" && event.text) turn.text = event.text;
+  else if (event.type === "done") {
+    if (event.answer) turn.text = event.answer;
+    turn.agent = event.agent || "";
+  } else if (event.type === "error") {
+    turn.role = "fel";
+    turn.text = event.error || t("Frågan gick inte fram");
+  }
+  chatPaint(at);
 }
 
 

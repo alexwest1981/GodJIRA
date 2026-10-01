@@ -115,6 +115,13 @@ AGENT_TIMEOUT = int(os.environ.get("JIRA_FLOW_AGENT_TIMEOUT", "600"))
 # Ett agent-svar som inte gick att tolka hamnar här (0600). Annars finns ingenting
 # kvar att titta på när flödet säger att svaret var obrukbart.
 ANSWER_LOG = os.path.expanduser("~/.local/state/omarchy/jira-flow-answer.log")
+# Minnet: vad agenten svarat, en rad per tur, inom en vecka. Samma state-katalog som
+# flödets egen logg -- inget nytt ställe för sanningen att bo på. Gallringen sker när
+# filen läses (varje chattur läser den), så den töms successivt utan ett eget jobb.
+MEMORY_FILE = Path.home() / ".local/state/jira-flow/memory.jsonl"
+MEMORY_DAYS = int(os.environ.get("JIRA_FLOW_MEMORY_DAYS", "7"))
+MEMORY_TURNS = 20       # turer som får plats i prompten
+MEMORY_CHARS = 4000     # och hur mycket de får kosta, sammanlagt
 PLAN_EPICS = int(os.environ.get("JIRA_FLOW_PLAN_EPICS", "3"))
 PLAN_MAX = int(os.environ.get("JIRA_FLOW_PLAN_MAX", "10"))
 
@@ -1949,6 +1956,92 @@ def agent_argv(prompt: str):
         ", ".join(shlex.split(c)[0] for c in commands if shlex.split(c))))
 
 
+def memory_recent(project: str = "", days: int = None, now: float = None) -> list:
+    """Turens minne: det som svarades inom horisonten, äldst först.
+
+    Filen är JSONL och läses i sin helhet -- en veckas chatt är några hundra rader, och
+    en databas för det vore mer kod än den ersätter. Allt äldre än horisonten skrivs
+    bort när filen läses: minnet tömmer sig självt, ingen städning behöver kommas ihåg.
+    """
+    if not MEMORY_FILE.exists():
+        return []
+    window = days if days is not None else MEMORY_DAYS
+    edge = (now if now is not None else time.time()) - window * 86400
+    kept, dropped, rows = [], 0, []
+    for line in MEMORY_FILE.read_text(errors="replace").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            dropped += 1
+            continue
+        when = float(entry.get("at") or 0)
+        if when < edge:
+            dropped += 1
+            continue
+        rows.append(entry)
+        if not project or str(entry.get("project") or "").upper() == project.upper():
+            kept.append(entry)
+    if dropped:
+        memory_rewrite(rows)
+    return kept
+
+
+def memory_rewrite(rows: list) -> None:
+    try:
+        MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        MEMORY_FILE.parent.chmod(0o700)
+        with MEMORY_FILE.open("w", encoding="utf-8") as fh:
+            for entry in rows:
+                fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        MEMORY_FILE.chmod(0o600)
+    except OSError:
+        pass          # ett minne som inte går att skriva är inte värt att fälla en tur för
+
+
+def memory_remember(entry: dict) -> None:
+    """En tur till i minnet. Anropas efter svaret, aldrig innan: ett minne utan svar
+    vore ett minne av en fråga ingen besvarade."""
+    entry = dict(entry)
+    entry.setdefault("at", time.time())
+    try:
+        MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        MEMORY_FILE.parent.chmod(0o700)
+        with MEMORY_FILE.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        MEMORY_FILE.chmod(0o600)
+    except OSError:
+        pass
+
+
+def memory_lines(rows: list, limit: int = MEMORY_TURNS, budget: int = MEMORY_CHARS):
+    """Minnet som text åt agenten, och vad som blev kvar av det.
+
+    Kortat med besked: står det att raden är kapad är den det, och står det att fler
+    turer finns är de kvar i filen. Ett minne som ser fullständigt ut men inte är det
+    är värre än inget minne.
+    """
+    if not rows:
+        return [], 0
+    picked, used, cut = [], 0, 0
+    for entry in reversed(rows[-limit:]):
+        stamp = time.strftime("%a %H:%M", time.localtime(float(entry.get("at") or 0)))
+        question = " ".join(str(entry.get("question") or "").split())[:240]
+        answer = " ".join(str(entry.get("answer") or "").split())
+        if len(answer) > 400:
+            answer = answer[:400] + " …"
+        line = "{} | {} | {} -> {}".format(stamp, entry.get("project") or "?", question, answer)
+        if used + len(line) > budget:
+            cut = len(rows) - len(picked)
+            break
+        picked.append(line)
+        used += len(line)
+    picked.reverse()
+    return picked, len(rows) - len(picked) + cut
+
+
 def read_agent_reply(out: str) -> str:
     """Svaret ur det CLI:t skrev -- inte dekoren runt det.
 
@@ -1981,6 +2074,54 @@ def read_agent_reply(out: str) -> str:
     return "" if stream else out.strip()
 
 
+def ask_agent_stream(prompt: str, env: dict = None, on_event=None) -> str:
+    """Samma anrop som ask_agent, men varje händelse får passera medan den kommer.
+
+    CLI:t skriver NDJSON (--format stream-json): texten i bitar, varje verktygsanrop och
+    dess resultat, och sist hela svaret. on_event får varje rad som den är -- den som
+    visar den behöver inte vänta på att agenten ska bli klar, och behöver inte gissa vad
+    som hände under tiden. Svaret läses ur samma ström, av samma funktion som förut.
+    """
+    argv, stdin_text = agent_argv(prompt)
+    where = dict(os.environ)
+    where.update(env or {})
+    if not env:
+        where.pop("GODJIRA_MCP_PROJECT", None)
+    # Mätt mot hermes-CLI:t: verktygsanropen kommer ut medan de händer, men hela
+    # svarstexten släpps i ett svep när turens modellsvar är färdigt (89 bitar inom 0,1 s
+    # -- samma med tty och med PYTHONUNBUFFERED). Det sitter i CLI:t, inte i röret här, så
+    # texten ritas när den kommer och verktygen ritas medan de händer. Ett annat CLI som
+    # skriver bitarna i sin egen takt får sin text strömmad utan ändring här.
+    try:
+        proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True, env=where)
+    except FileNotFoundError:
+        raise RuntimeError("{} is not installed".format(argv[0]))
+    printed = []
+    try:
+        if stdin_text:
+            proc.stdin.write(stdin_text)
+        proc.stdin.close()
+    except (BrokenPipeError, ValueError):
+        pass
+    for line in proc.stdout:
+        printed.append(line)
+        if on_event and line.strip().startswith("{"):
+            try:
+                on_event(json.loads(line))
+            except ValueError:
+                pass
+    try:
+        proc.wait(timeout=AGENT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        raise RuntimeError("{} gave no answer in {}s".format(argv[0], AGENT_TIMEOUT))
+    if proc.returncode != 0:
+        raise RuntimeError("{} exited {}: {}".format(
+            argv[0], proc.returncode, (proc.stderr.read() or "").strip()[:200]))
+    return read_agent_reply("".join(printed))
+
+
 def ask_agent(prompt: str, env: dict = None) -> str:
     """Prompten in, svaret ut. Hermes i grunden, sedan Antigravity; JIRA_FLOW_AGENT
     pekar på vilken CLI som helst som pratar stdin/stdout.
@@ -1989,29 +2130,14 @@ def ask_agent(prompt: str, env: dict = None) -> str:
     agenten startar sin MCP-koppling mot GodJIRA som underprocess och ärver variabeln,
     så kopplingen är låst till projektet utan att någon config behöver röras.
     """
-    argv, stdin_text = agent_argv(prompt)
-    where = dict(os.environ)
-    where.update(env or {})
-    if not env:
-        where.pop("GODJIRA_MCP_PROJECT", None)
-    try:
-        done = subprocess.run(argv, input=stdin_text, capture_output=True, text=True,
-                              timeout=AGENT_TIMEOUT, env=where)
-    except FileNotFoundError:
-        raise RuntimeError("{} is not installed".format(argv[0]))
-    except subprocess.TimeoutExpired:
-        raise RuntimeError("{} gave no answer in {}s".format(argv[0], AGENT_TIMEOUT))
-    if done.returncode != 0:
-        raise RuntimeError("{} exited {}: {}".format(
-            argv[0], done.returncode, (done.stderr or "").strip()[:200]))
-    return read_agent_reply(done.stdout)
+    return ask_agent_stream(prompt, env)
 
 
 CHAT_CHARS = 12000      # sammanhanget agenten får. Mer än så slutar den läsa och börjar gissa.
 
 
 def chat_prompt(project: str, repo: str, question: str, history=None, errors=None,
-                graph=None) -> str:
+                graph=None, memory=None) -> str:
     """Vad agenten får: frågan, sammanhanget den behöver, och gränsen för uppdraget.
 
     Samtalet följer med varje tur. Det är hela skillnaden mot att hålla en session:
@@ -2038,6 +2164,13 @@ def chat_prompt(project: str, repo: str, question: str, history=None, errors=Non
                 counts.get("relationer", "?")),
             "Packages the rest leans on: {}".format(hubs or "(no imports read yet)"),
         ]
+    if memory:
+        recent, left = memory_lines(memory)
+        if recent:
+            lines += ["", "What you answered earlier in this project, newest last:"]
+            lines += recent
+            if left:
+                lines += ["({} earlier turns are in the memory file but did not fit here)".format(left)]
     if errors:
         lines += ["", "What the panel itself cannot answer right now:"]
         lines += ["- {}: {}".format(str(e.get("what") or "?"), str(e.get("why") or "")) for e in errors[:8]]
@@ -2080,6 +2213,7 @@ def cmd_chat(args) -> int:
             graph = json.loads(wherever.read_text())
         except (OSError, ValueError):
             graph = {}
+    memory = memory_recent(project)
     history, errors = [], []
     for path, into in ((args.history, history), (args.context, errors)):
         if not path:
@@ -2091,15 +2225,32 @@ def cmd_chat(args) -> int:
                 ["could not read {}: {}".format(path, exc)])
             return 2
         into.extend(loaded if isinstance(loaded, list) else [])
-    prompt = chat_prompt(project, str(root or ""), question, history, errors, graph)
+    prompt = chat_prompt(project, str(root or ""), question, history, errors, graph, memory)
     if args.dry_run:
         print(prompt)
         return 0
+    tools = []
+
+    def emit(event):
+        """En händelse från agenten, vidare ut som den är. Panelen ritar den medan den
+        kommer; att hålla den tillbaka vore att göra om samma väntan som förut."""
+        if event.get("type") == "tool_use":
+            tools.append(str(event.get("name") or ""))
+        if args.stream:
+            sys.stdout.write(json.dumps(event, ensure_ascii=False) + "\n")
+            sys.stdout.flush()
+
     try:
-        answer = ask_agent(prompt, {"GODJIRA_MCP_PROJECT": project})
+        if args.stream:
+            answer = ask_agent_stream(prompt, {"GODJIRA_MCP_PROJECT": project}, emit)
+        else:
+            answer = ask_agent(prompt, {"GODJIRA_MCP_PROJECT": project})
     except RuntimeError as exc:
+        if args.stream:
+            sys.stdout.write(json.dumps({"type": "error", "error": str(exc)}, ensure_ascii=False) + "\n")
+            sys.stdout.flush()
         say(args, {"ok": False, "error": str(exc), "project": project},
-            ["the agent could not answer: {}".format(exc)])
+            ["the agent could not answer: {}".format(exc)] if not args.stream else [])
         return 2
     answer = answer.strip()
     who = ""
@@ -2107,10 +2258,43 @@ def cmd_chat(args) -> int:
         who = Path(agent_argv("")[0][0]).name
     except RuntimeError:
         who = ""
-    say(args, {"ok": True, "project": project, "agent": who, "source": source,
-               "answer": answer, "promptChars": len(prompt)},
-        [answer] if answer else ["(the agent answered nothing)"])
+    memory_remember({"project": project, "repo": str(root or ""), "agent": who,
+                     "question": question, "answer": answer, "tools": len(tools)})
+    payload = {"ok": True, "project": project, "agent": who, "source": source,
+               "answer": answer, "promptChars": len(prompt), "tools": tools,
+               "remembered": len(memory) + 1}
+    if args.stream:
+        sys.stdout.write(json.dumps(dict(payload, type="done"), ensure_ascii=False) + "\n")
+        sys.stdout.flush()
+        return 0 if answer else 1
+    say(args, payload, [answer] if answer else ["(the agent answered nothing)"])
     return 0 if answer else 1
+
+
+def cmd_memory(args) -> int:
+    """Vad agenten minns: turerna inom horisonten -- och hur man tömmer dem."""
+    rows = memory_recent(args.project or "", days=args.days)
+    if args.clear:
+        memory_rewrite([])
+        say(args, {"ok": True, "cleared": len(rows), "file": str(MEMORY_FILE)},
+            ["minnet är tömt ({} turer togs bort)".format(len(rows))])
+        return 0
+    payload = {"ok": True, "days": args.days, "turns": len(rows), "file": str(MEMORY_FILE),
+               "entries": [{"at": time.strftime("%Y-%m-%d %H:%M", time.localtime(float(r.get("at") or 0))),
+                            "project": r.get("project"), "question": r.get("question"),
+                            "answer": r.get("answer"), "tools": r.get("tools")}
+                           for r in rows]}
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False))
+        return 0
+    if not rows:
+        print("minnet är tomt — inget svarat inom {} dagar ({})".format(args.days, MEMORY_FILE))
+        return 0
+    print("{} turer inom {} dagar ({})".format(len(rows), MEMORY_DAYS, MEMORY_FILE))
+    for entry in payload["entries"][-MEMORY_TURNS:]:
+        print("  {} {} | {}".format(entry["at"], entry["project"],
+                                    " ".join(str(entry["question"] or "").split())[:90]))
+    return 0
 
 
 def cmd_agent(args) -> int:
@@ -2831,6 +3015,51 @@ def selftest() -> int:
     assert flowmap_text("bara svensk rad", "en") == "bara svensk rad", "rad utan översättning får källraden"
     assert all(flowmap_locale(tag) == tag for tag in FLOWMAP_CHROME), "ramen: varje språk med katalog"
     assert flowmap_locale("sv") == "sv" and flowmap_locale("fi") == "en", "ramen: vår katalog, annars engelska"
+    # Minnet: en tur skrivs, allt äldre än horisonten faller bort när filen läses, och
+    # prompten bär det som är kvar. Filen är JSONL i state-katalogen -- ingen databas för
+    # en veckas chatt.
+    global MEMORY_FILE, CONFIG_FILE
+    scratch = Path(tempfile.mkdtemp(prefix="jira-flow-memory-"))
+    kept_memory, kept_config = MEMORY_FILE, CONFIG_FILE
+    MEMORY_FILE, CONFIG_FILE = scratch / "memory.jsonl", scratch / "config.json"
+    try:
+        now = time.time()
+        memory_remember({"at": now - 30 * 86400, "project": "SCRUM", "question": "gammal", "answer": "gammalt"})
+        memory_remember({"at": now - 3600, "project": "SCRUM", "question": "färsk", "answer": "färskt"})
+        memory_remember({"at": now - 3600, "project": "WEB", "question": "annat", "answer": "annat"})
+        assert [r["question"] for r in memory_recent("SCRUM")] == ["färsk"], memory_recent("SCRUM")
+        assert memory_recent("WEB")[0]["question"] == "annat", "minnet är per projekt"
+        assert "gammal" not in MEMORY_FILE.read_text(), \
+            "en tur äldre än horisonten skall vara borta ur filen, inte bara ur svaret"
+        assert oct(MEMORY_FILE.stat().st_mode & 0o777) == "0o600", "minnet skrivs 0600"
+        kept_lines, left = memory_lines(memory_recent(""))
+        assert len(kept_lines) == 2 and left == 0, (kept_lines, left)
+        asked = chat_prompt("SCRUM", "", "vad sa du nyss?", memory=memory_recent("SCRUM"))
+        assert "What you answered earlier" in asked and "färsk" in asked, asked
+        assert "annat" not in asked, "en annan projekttur hör inte hit"
+
+        # Strömmen: en låtsas-agent som skriver NDJSON. Provet mäter kanalen -- att
+        # raderna kommer ut en och en och att svaret läses ur dem -- utan en modell.
+        fake = scratch / "fake-agent.py"
+        fake.write_text(
+            "import json, sys\n"
+            "sys.stdin.read()\n"
+            "print(json.dumps({'type': 'text', 'text': 'hal'}), flush=True)\n"
+            "print(json.dumps({'type': 'tool_use', 'name': 'jira_status'}), flush=True)\n"
+            "print(json.dumps({'type': 'result', 'text': 'halvt'}), flush=True)\n",
+            encoding="utf-8")
+        CONFIG_FILE.write_text(json.dumps({"agents": ["{} {}".format(sys.executable, fake)]}),
+                               encoding="utf-8")
+        seen = []
+        streamed = ask_agent_stream("x", {}, seen.append)
+        assert streamed == "halvt", streamed
+        assert [e.get("type") for e in seen] == ["text", "tool_use", "result"], seen
+        assert agent_argv("")[0][0] == sys.executable, agent_argv("")[0]
+    finally:
+        MEMORY_FILE, CONFIG_FILE = kept_memory, kept_config
+        shutil.rmtree(scratch, ignore_errors=True)
+    checks += 1
+
     # Agentens svar: strömmen ger texten, dekoren runt den kastas. Provet är på
     # formen, inte på en verklig körning -- den kostar minuter och en modell.
     stream = ("{\"type\": \"system\", \"subtype\": \"init\", \"session_id\": \"abc\"}\n"
@@ -3574,7 +3803,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_chat.add_argument("--context", metavar="FILE", default="",
                         help="what the panel cannot answer: JSON [{what, why}, ...]")
     p_chat.add_argument("--dry-run", action="store_true", help="print what the agent would be asked")
+    p_chat.add_argument("--stream", action="store_true",
+                        help="print the agent's events as they arrive (NDJSON, one per line)")
     p_chat.add_argument("--json", action="store_true", help="machine-readable result")
+    p_memory = sub.add_parser("memory", help="what the agent remembers, and for how long")
+    p_memory.add_argument("--project", default="", help="only this project's turns")
+    p_memory.add_argument("--days", type=int, default=MEMORY_DAYS, help="the horizon in days")
+    p_memory.add_argument("--clear", action="store_true", help="empty the memory file")
+    p_memory.add_argument("--json", action="store_true", help="machine-readable")
     p_agent = sub.add_parser("agent", help="your own agent list: list, add, set, rm")
     p_agent.add_argument("action", nargs="?", default="list",
                          choices=["list", "add", "set", "rm"])
@@ -3656,6 +3892,8 @@ def main(argv) -> int:
         return cmd_logout(args)
     if args.cmd == "chat":
         return cmd_chat(args)
+    if args.cmd == "memory":
+        return cmd_memory(args)
     if args.cmd == "agent":
         return cmd_agent(args)
     if args.cmd == "pick":

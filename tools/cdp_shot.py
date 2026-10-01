@@ -23,7 +23,10 @@ width = int(sys.argv[4]) if len(sys.argv) > 4 else 1500
 height = int(sys.argv[5]) if len(sys.argv) > 5 else 940
 PORT = 9333
 
-subprocess.run(["pkill", "-f", "remote-debugging-port=%d" % PORT], capture_output=True)
+# Bara den här profilens browser, aldrig någon annans: en naken port i en pkill -f
+# träffar varje process som råkar nämna porten, och en webbläsare med devtools öppen
+# är någons arbete. Profilmappen är vår egen och ingen annans.
+subprocess.run(["pkill", "-f", "user-data-dir=/tmp/cdp-profile"], capture_output=True)
 chrome = subprocess.Popen(
     ["chromium", "--headless=new", "--remote-debugging-port=%d" % PORT,
      "--remote-allow-origins=*", "--no-sandbox", "--no-first-run", "--hide-scrollbars",
