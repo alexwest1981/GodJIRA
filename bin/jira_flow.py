@@ -586,6 +586,86 @@ def code_map(root: Path) -> dict:
             "prefix": ".".join(shared)}
 
 
+def graph_build(root: Path, project: str, scan: dict) -> dict:
+    """Kunskapsgrafen: paketen, filerna och ärendena i samma bild, med sina relationer.
+
+    Kodkartan vet hur paketen hänger ihop, scanningen vet vilka filer varje ärende rör --
+    två halvor av samma svar. Här blir de en graf: noder för paket, fil och ärende, och
+    kanter som säger varför de hör ihop (använder, ligger-i, nämner). Frågan den svarar på
+    är utvecklarens och agentens: vad hänger ihop med vad, och var skall ändringen göras?
+
+    ponytail: inget Jira-anrop. Grafen byggs ur scan-filen och källkoden, så den kan byggas
+    om hur ofta som helst och av vem som helst. Ärendena kommer ur scan-filen -- finns den
+    inte säger kommandot det i stället för att visa en halv graf.
+    """
+    code = code_map(root)
+    entries = list((scan or {}).get("map") or [])
+    skip = list((scan or {}).get("missing") or [])
+    files = sorted({path for entry in entries for path in (entry.get("files") or [])} |
+                   set((scan or {}).get("silent") or []))
+    package_of = {}
+    for rel in files:
+        try:
+            source = (Path(root) / rel).read_text(errors="replace")
+        except (OSError, UnicodeError):
+            continue
+        hit = re.search(r"^\s*package\s+([\w.]+)\s*;", source, re.M)
+        package_of[rel] = hit.group(1) if hit else "(utan paket)"
+
+    entities, relations, known = [], [], set()
+    for node in code.get("nodes") or []:
+        known.add(node["key"])
+        entities.append({"id": "paket:" + node["key"], "type": "package", "name": node["name"],
+                         "full": node["key"], "label": node.get("type") or "",
+                         "examples": list(node.get("examples") or [])})
+    for rel in files:
+        package = package_of.get(rel)
+        entities.append({"id": "fil:" + rel, "type": "file", "name": Path(rel).name,
+                         "path": rel, "package": package})
+        if not package:
+            continue
+        if package not in known:      # ett paket kodkartan inte såg (annat språk, ingen import)
+            known.add(package)
+            entities.append({"id": "paket:" + package, "type": "package", "name": package,
+                             "full": package, "label": "", "examples": []})
+        relations.append({"from": "fil:" + rel, "to": "paket:" + package, "kind": "ligger-i"})
+    for edge in code.get("edges") or []:
+        relations.append({"from": "paket:" + edge["from"], "to": "paket:" + edge["to"],
+                          "kind": "använder", "weight": edge.get("weight", 1)})
+    for entry in entries:
+        issue = "ärende:" + str(entry.get("key"))
+        entities.append({"id": issue, "type": "issue", "name": entry.get("key"),
+                         "summary": entry.get("summary") or "", "status": entry.get("status") or "",
+                         "pool": entry.get("pool") or ""})
+        for rel in entry.get("files") or []:
+            relations.append({"from": issue, "to": "fil:" + rel, "kind": "nämner"})
+    for entry in skip:
+        entities.append({"id": "ärende:" + str(entry.get("key")), "type": "issue",
+                         "name": entry.get("key"), "summary": entry.get("summary") or "",
+                         "status": "", "pool": entry.get("pool") or "", "unclear": True})
+
+    incoming = {}
+    for rel in relations:
+        if rel["kind"] == "använder":
+            # Nyckeln utan "paket:"-prefixet: navet skall gå att läsa och jämföra rakt av.
+            target = str(rel["to"]).split(":", 1)[-1]
+            incoming[target] = incoming.get(target, 0) + rel.get("weight", 1)
+    return {
+        "ok": True, "project": (project or "").upper(), "repo": repo_slug_of_dir(str(root)) or str(root),
+        "root": str(root), "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "entities": entities, "relations": relations,
+        "counts": {"paket": sum(1 for e in entities if e["type"] == "package"),
+                   "filer": sum(1 for e in entities if e["type"] == "file"),
+                   "ärenden": sum(1 for e in entities if e["type"] == "issue"),
+                   "relationer": len(relations)},
+        "issuesWithoutFile": len(skip),
+        "filesWithoutIssue": len((scan or {}).get("silent") or []),
+        # Det agenten behöver först: vilka paket allt annat lutar sig mot.
+        "hubs": [{"package": key, "usedBy": count}
+                 for key, count in sorted(incoming.items(), key=lambda kv: (-kv[1], kv[0]))[:8]],
+    }
+
+
 # --------------------------------------------------------------- flödeskartan
 #
 # Flödet ritat som en artefakt (Archify): n8n:s egna noder, kanter, banor och
@@ -973,6 +1053,63 @@ def cmd_codemap(args) -> int:
             graph.get("edgesCount", 0)),
     ] if graph["nodes"] else [graph.get("note", "no map")])
     return 0 if graph["nodes"] else 2
+
+
+def cmd_graph(args) -> int:
+    """Kunskapsgrafen för ett repo: allt vi vet, med sina relationer, i en fil.
+
+    Skrivs till `~/.config/jira-flow/graph-<PROJEKT>.json` (0600), samma ställe och samma
+    arbetsdelning som scanningen: kommandot läser, panelen och agenten läser filen.
+    """
+    project, _source = link_project(args)
+    root = plan_repo_dir(args)
+    if not root:
+        linked = [dict(value or {}, repo=key) for key, value in load_links().items()
+                  if (value or {}).get("project")]
+        if len(linked) == 1:
+            root = local_clone(linked[0]["repo"]) or ""
+    if not root or not Path(root).is_dir():
+        say(args, {"ok": False, "error": "no local copy of the repo to graph"}, [])
+        print("no local copy of the repo to graph — link it, or give --repo <dir>")
+        return 1
+    scan_path = SCAN_FILE / "scan-{}.json".format(project.upper())
+    scan = {}
+    if scan_path.exists():
+        try:
+            scan = json.loads(scan_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            scan = {}
+    if not scan.get("map") and not scan.get("missing"):
+        say(args, {"ok": False, "error": "no scan to build the graph from",
+                   "hint": "run: jira_flow scan --json"}, [])
+        print("no scan to build the graph from — run `jira_flow scan` first (it reads Jira once)")
+        return 1
+    graph = graph_build(Path(root), project, scan)
+    SCAN_FILE.mkdir(parents=True, exist_ok=True)
+    path = SCAN_FILE / "graph-{}.json".format(graph["project"])
+    try:
+        path.write_text(json.dumps(graph, ensure_ascii=False, indent=2))
+        os.chmod(path, 0o600)
+        graph["savedTo"] = str(path)
+    except OSError as exc:
+        print("the graph could not be written: {}: {}".format(type(exc).__name__, exc))
+        return 2
+    counts = graph["counts"]
+    with_files = [e for e in graph["entities"] if e["type"] == "issue" and not e.get("unclear")]
+    sample = sorted(with_files, key=lambda e: -len([r for r in graph["relations"]
+                                                    if r["from"] == e["id"]]))[:1]
+    say(args, graph, [
+        "{}: {} packages, {} files, {} issues — {} relations.".format(
+            graph["repo"], counts["paket"], counts["filer"], counts["ärenden"], counts["relationer"]),
+        "most used: " + " · ".join("{} ({})".format(h["package"].split(".")[-1], h["usedBy"])
+                                   for h in graph["hubs"]),
+        "{} issues point at no file, {} files are named by no issue.".format(
+            graph["issuesWithoutFile"], graph["filesWithoutIssue"]),
+    ] + (["e.g. {} touches {} files".format(sample[0]["name"], len(
+        [r for r in graph["relations"] if r["from"] == sample[0]["id"]]))] if sample else []) + [
+        "the graph is at {} (read it whole with: jira_flow graph --json)".format(path),
+    ])
+    return 0
 
 
 def code_context(root: Path, words) -> tuple:
@@ -2534,6 +2671,32 @@ def selftest() -> int:
     assert flowmap_text("bara svensk rad", "en") == "bara svensk rad", "rad utan översättning får källraden"
     assert all(flowmap_locale(tag) == tag for tag in FLOWMAP_CHROME), "ramen: varje språk med katalog"
     assert flowmap_locale("sv") == "sv" and flowmap_locale("fi") == "en", "ramen: vår katalog, annars engelska"
+    # Kunskapsgrafen: paket, filer och ärenden i en bild. Byggd ur en syntetisk scan och
+    # ett minimalt repo, så provet mäter formen och inte dagens data -- den växer.
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "src" / "app" / "store").mkdir(parents=True)
+        (root / "src" / "app" / "A.java").write_text(
+            "package app;\nimport app.store.B;\nclass A {}\n", encoding="utf-8")
+        (root / "src" / "app" / "store" / "B.java").write_text(
+            "package app.store;\nclass B {}\n", encoding="utf-8")
+        drawn_graph = graph_build(root, "X", {
+            "map": [{"key": "X-1", "summary": "s", "status": "To Do", "pool": "aktiv",
+                     "files": ["src/app/A.java"]}],
+            "silent": ["src/app/store/B.java"],
+            "missing": [{"key": "X-2", "summary": "t", "pool": "aktiv"}]})
+    ids = {e["id"] for e in drawn_graph["entities"]}
+    kinds = {r["kind"] for r in drawn_graph["relations"]}
+    assert {"paket:app", "paket:app.store", "fil:src/app/A.java", "ärende:X-1"} <= ids, \
+        "grafen: paket, fil och ärende är noder"
+    assert {"ligger-i", "använder", "nämner"} <= kinds, "grafen: de tre slagen av kanter"
+    assert drawn_graph["counts"] == {"paket": 2, "filer": 2, "ärenden": 2, "relationer": 4}, \
+        "grafen: räknar sina noder"
+    assert any(e["id"] == "ärende:X-2" and e.get("unclear") for e in drawn_graph["entities"]), \
+        "grafen: ärenden utan fil märks"
+    assert drawn_graph["hubs"] and drawn_graph["hubs"][0]["package"] == "app.store", \
+        "grafen: navet är det mest använda"
+    checks += 1
     assert "legend.title" in FLOWMAP_CHROME["sv"], "ramens nycklar är Archifys egna"
     checks += 1
     jql = pick_jql("SCRUM")
@@ -2800,8 +2963,8 @@ def selftest() -> int:
 
     # Underlaget: dokument läses, klipps med besked, och skräp nekas.
     import http.server
-    import tempfile
-    import threading
+    import threading      # tempfile importeras högst upp: en lokal import här gjorde
+                          # namnet lokalt i hela selftest(), och allt ovanför kraschade
     with tempfile.TemporaryDirectory() as tmp:
         base = Path(tmp)
         (base / "krav.txt").write_text("Krav: kunden ska kunna spara.\n")
@@ -3239,6 +3402,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_codemap.add_argument("--repo-name", default="", help="the linked repo (default: the only link)")
     p_codemap.add_argument("--repo", default="", help="a directory instead of the local copy")
     p_codemap.add_argument("--json", action="store_true")
+    p_graph = sub.add_parser("graph", help="everything we know about a repo, with its relations")
+    p_graph.add_argument("--repo", default="", help="a directory instead of the local copy")
+    p_graph.add_argument("--repo-name", default="", help="the repo's name, resolved to its local copy")
+    p_graph.add_argument("--project", default="", help="Jira key (default: the link)")
+    p_graph.add_argument("--json", action="store_true", help="the whole graph as JSON")
+
     p_flowmap = sub.add_parser("flowmap", help="the flow drawn as an artifact (Archify)")
     p_flowmap.add_argument("--workflow", required=True, help="n8n's workflow id")
     p_flowmap.add_argument("--lang", default="", help="the panel's language; missing rows fall back to English")
@@ -3294,6 +3463,8 @@ def main(argv) -> int:
         return cmd_repo(args)
     if args.cmd == "scan":
         return cmd_scan(args)
+    if args.cmd == "graph":
+        return cmd_graph(args)
     if args.cmd == "codemap":
         return cmd_codemap(args)
     if args.cmd == "flowmap":

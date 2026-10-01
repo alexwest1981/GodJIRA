@@ -130,8 +130,10 @@ def main() -> int:
     check("EveryHour" not in html, "no flow is drawn by hand in the page")
     # Flödet ritades förr i en egen vy ("Automatik", en egen räl-post). Den låg sida vid
     # sida med kodkartan, samma ruta två gånger, så den bor nu som en källa i Karta.
-    check("renderFlow" in html and "kartaShow" in html and 'id="flowCanvas"' in html,
-          "the flow is drawn in the Karta view")
+    check("renderFlow" in html and 'id="flowCanvas"' in html and 'id="pane-repos-automatik"' in html,
+          "the flow is drawn in its own Automatik tab")
+    check('id="kartaChips"' not in html and 'id="pane-repos-kartan"' in html,
+          "the map and the flow are two tabs, not a switch inside the map")
     check("v-automatik" not in html and 'automatik: ["Automatik"' not in html,
           "no separate Automatik view is left")
     # Ritningen skall gå att se och att flytta i: noderna bär data-node, vägarna
@@ -292,6 +294,10 @@ console.log(fel.length ? "FEL " + fel.join(" | ") : "OK");
     server = (HERE / "server.py").read_text(encoding="utf-8")
     check("flowMapShow" in html and 'class="flowMap"' in html,
           "the flow map is drawn where the canvas was")
+    # Kunskapsgrafen: samma arbetsdelning som kartan -- motorn bygger, panelen och
+    # agenten läser. Ingen Jira-trafik i den, så den svarar på under en sekund.
+    check('"/api/graph"' in server and "graph_read" in server,
+          "the knowledge graph is served to whoever asks for it")
     check('id="flowEdit"' in html and "getElementById(\"flowEdit\")" in html,
           "the edit button sits in the card head, so both views have it")
     # Fliksystemet: Karta flyttade ur rälen in i reposidan som flik, och den gamla

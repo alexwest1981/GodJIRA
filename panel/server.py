@@ -900,6 +900,26 @@ def codemap_read(repo: str) -> dict:
     return data
 
 
+def graph_read(repo: str) -> dict:
+    """Kunskapsgrafen för repot: paket, filer och ärenden med sina relationer.
+
+    Byggs av motorn ur scan-filen och källkoden -- inget Jira-anrop, alltså under en
+    sekund, och kan läsas av en agent så ofta den vill. Ärendena kommer ur scanningen;
+    finns ingen sådan säger svaret det i stället för att visa en halv graf.
+    """
+    name = (repo or "").strip()
+    if not name:
+        links = (links_state().get("links") or [])
+        name = str((links[0] or {}).get("repo") or "") if len(links) == 1 else ""
+    if not name:
+        return {"ok": False, "error": "no repo to graph"}
+    env = seam("flow", "graph", "--repo-name", name, "--json", timeout=120)
+    data = env.get("payload") if isinstance(env.get("payload"), dict) else None
+    if not data:
+        return {"ok": False, "error": first_line(env) or "the graph could not be built"}
+    return data
+
+
 def scan_read(repo: str) -> dict:
     """Kartan som scannen skrev, för det projekt repot är kopplat till.
 
@@ -1434,6 +1454,11 @@ class Handler(BaseHTTPRequestHandler):
             query = parse_qs(urlparse(self.path).query)
             name = (query.get("repo") or [""])[0]
             self._json(200, cached("codemap:" + name, lambda: codemap_read(name), ttl=120))
+            return
+        if path == "/api/graph":
+            query = parse_qs(urlparse(self.path).query)
+            name = (query.get("repo") or [""])[0]
+            self._json(200, cached("graph:" + name, lambda: graph_read(name), ttl=120))
             return
         if path == "/api/repo":
             query = parse_qs(urlparse(self.path).query)

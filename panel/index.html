@@ -616,7 +616,6 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
 
       <div class="pane" id="pane-repos-kartan">
       <div class="linkbar">
-        <div class="seg" id="kartaChips"></div>
         <select class="inp" id="kartaProject" hidden></select>
       </div>
       <div class="panel" id="codePanel">
@@ -645,10 +644,15 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
         </div>
       </div>
 
+      </div>
+
+      <!-- Flödet är en egen flik nu: det var en växel inuti kartan förut, men det är
+           n8n:s sak, inte kartans. Här pekar panelen till n8n -- ändrar gör man där. -->
+      <div class="pane" id="pane-repos-automatik">
       <!-- Hubens egna automationsflöden. Samma ruta som kodkartan, skrivskyddad med
            flit: filen i n8n/workflows ÄR källan, n8n:s egen tavla är länken dit man
            ändrar. Låg förut i en egen räl-post -- det var samma tavla två gånger. -->
-      <div class="panel" id="flowPanel" hidden>
+      <div class="panel" id="flowPanel">
         <h3>Flödet <span class="meta" id="flowMeta"></span>
           <span class="grow"></span><button class="chip" id="flowEdit" data-act="flow-edit" hidden>✎ ändra</button><a class="chip" id="flowCanvasLink" hidden>n8n:s egen tavla</a></h3>
         <div class="body">
@@ -739,7 +743,7 @@ const TEXT = {
 // Flikarna: nycklarna här, markupen i vyn. Deklarationerna måste ligga före allt som
 // körs vid start -- parseHash läser dem, och en const längre ner är en krasch vid start
 // (mätt: hela rälen blev tom på #karta?kalla=flow).
-const TABS = { repos: [["repot", "Repot"], ["kartan", "Kartan"]] };
+const TABS = { repos: [["repot", "Repot"], ["kartan", "Kartan"], ["automatik", TEXT.flowView]] };
 const tabState = {};
 
 let STATE = null, view = "board";
@@ -1460,32 +1464,6 @@ function renderTabs(vy) {
     `<button data-tab="${nyckel}"${nyckel === vald ? ' class="on"' : ""}>${esc(namn)}</button>`).join("");
   for (const el of document.querySelectorAll(`#v-${vy} .pane`))
     el.classList.toggle("on", el.id === `pane-${vy}-${vald}`);
-}
-
-let kartaKalla = "kod";
-
-function kartaShow(kalla) {
-  kartaKalla = kalla === "flow" ? "flow" : "kod";
-  F.karta = kartaKalla;
-  const kod = kartaKalla === "kod";
-  document.getElementById("codePanel").hidden = !kod;
-  document.getElementById("tracePanel").hidden = !kod;
-  document.getElementById("flowPanel").hidden = kod;
-  renderKartaChips();
-  renderKartaProject();
-  if (kod) { mapLoad(); renderCodeMap(); } else { renderFlow(); }
-}
-
-function renderKartaChips() {
-  const host = document.getElementById("kartaChips");
-  if (!host) return;
-  // Etiketterna är de redan översatta vy-namnen: "Karta" för kodkartan (som förut) och
-  // "Automatik" för flödena, som är vad de hette när de hade en egen post i rälen.
-  // "Karta" står som ord, inte ur TEXT.views: vyn finns inte längre där (den är en flik
-  // i reposidan nu), och etiketten skall inte hänga på en tabell som inte har den kvar.
-  host.innerHTML = [["kod", "Karta"], ["flow", TEXT.flowView]]
-    .map(([nyckel, namn]) => `<button data-act="map-${nyckel}"` +
-      `${nyckel === kartaKalla ? ' class="on"' : ""}>${esc(namn)}</button>`).join("");
 }
 
 // Projektväljaren i Karta: de projekt som är kopplade till både Jira och GitHub, alltså
@@ -2901,10 +2879,13 @@ function render() {
   // Kartan ritar sin aktiva källa även när staten kommer in efter en omladdning --
   // annars står en djup länk (#karta?kalla=flow) med tom yta tills man byter vy (mätt).
   if (view === "repos" && tabState.repos === "kartan") {
-    renderKartaChips();
     renderKartaProject();
-    if (kartaKalla === "flow") renderFlow();
-    else if (document.getElementById("codeCanvas")) renderCodeMap();
+    mapLoad();
+    if (document.getElementById("codeCanvas")) renderCodeMap();
+  }
+  if (view === "repos" && tabState.repos === "automatik") {
+    renderKartaProject();
+    renderFlow();
   }
   // Tillåtlista, inte blocklista: en ny vy skall aldrig ärva filterrader den inte
   // använder. Repon har sin egen sökning i sidofältet.
@@ -2927,7 +2908,6 @@ function render() {
     renderTabs("repos");
     renderRepos();
   }
-  if (view === "repos" && tabState.repos === "kartan") kartaShow(F.karta || kartaKalla);
   if (view === "import") renderImport();
 }
 
@@ -3012,11 +2992,11 @@ function readHash() {
   F.prio = new Set((p.get("prio") || "").split(",").filter(Boolean));
   F.pool = p.get("pool") === "backlog" ? "backlog" : "";
   F.project = (p.get("project") || "").toUpperCase();
-  F.karta = p.get("kalla") === "flow" ? "flow" : "kod";
+  if (p.get("kalla") === "flow") tabState.repos = "automatik";   // #karta?kalla=flow
   // Kartan är en flik i reposidan sedan den flyttade ur rälen: #karta skall landa
   // där i stället för på en vy som inte finns. v är const -- byt namn, mutera inte.
   const vy = v === "karta" ? "repos" : v;
-  if (vy !== v) tabState[vy] = "kartan";
+  if (vy !== v && !tabState[vy]) tabState[vy] = "kartan";
   if (p.get("flik") && (TABS[vy] || []).some(([k]) => k === p.get("flik"))) tabState[vy] = p.get("flik");
   return TEXT.views[vy] ? vy : "board";
 }
@@ -3026,7 +3006,7 @@ function writeHash() {
   if (F.prio.size) q.set("prio", [...F.prio].join(","));
   if (F.pool) q.set("pool", F.pool);
   if (F.project) q.set("project", F.project);
-  if (F.karta === "flow") q.set("kalla", "flow");
+  if (view === "repos" && tabState.repos === "automatik") q.set("kalla", "flow");
   const flik = tabState[view];
   if (flik && flik !== ((TABS[view] || [])[0] || [])[0]) q.set("flik", flik);
   location.hash = view + (q.toString() ? "?" + q : "");
@@ -3125,8 +3105,6 @@ document.addEventListener("click", e => {
   // Kodkartan har sin egen nollställning, och "läs om" hämtar om den ur filerna.
   const flik = e.target.closest("[data-tab]");
   if (flik) return tabPick(flik.dataset.tab);
-  if (e.target.closest('[data-act="map-kod"]')) { writeHash(); return kartaShow("kod"); }
-  if (e.target.closest('[data-act="map-flow"]')) { writeHash(); return kartaShow("flow"); }
   if (e.target.closest('[data-act="code-reset"]')) {
     if (FLOW.stores) delete FLOW.stores[CODE.key];
     try { localStorage.removeItem("godjira.flow." + CODE.key); } catch { /* utan lagring */ }
@@ -3167,7 +3145,7 @@ document.addEventListener("change", e => {
   if (e.target && e.target.id === "flowPickSel") { flowSel = e.target.value; renderFlow(); }
   if (e.target && e.target.id === "kartaProject") {
     const valt = (links().find(l => l.project === e.target.value) || {}).repo || "";
-    if (valt) return repoOpen(valt).then(() => kartaShow(kartaKalla));
+    if (valt) return repoOpen(valt).then(() => render());
   }
   if (e.target && e.target.id === "langSel") languageSave(e.target.value);
 });
