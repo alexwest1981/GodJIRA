@@ -1676,7 +1676,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/codemap":
             query = parse_qs(urlparse(self.path).query)
             name = (query.get("repo") or [""])[0]
-            self._json(200, cached("codemap:" + name, lambda: codemap_read(name), ttl=120))
+            # refresh=1: knappen "uppdatera kartan med färsk data" har just scannat om,
+            # och då skall svaret vara det nya -- annars visade kartan samma siffror som
+            # förut i två minuter efter ett tryck.
+            self._json(200, codemap_read(name) if (query.get("refresh") or [""])[0]
+                       else cached("codemap:" + name, lambda: codemap_read(name), ttl=120))
             return
         if path == "/api/graph":
             query = parse_qs(urlparse(self.path).query)

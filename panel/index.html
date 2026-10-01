@@ -636,6 +636,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
       <div class="panel" id="codePanel">
         <h3>Kodkartan över <span class="meta" id="codeWho"></span>
           <span class="grow"></span>
+          <button class="chip" data-act="map-fresh">uppdatera kartan med färsk data</button>
           <button class="chip" data-act="code-reset">nollställ vyn</button></h3>
         <div class="body">
           <div class="meta">Paketen och vad de använder — samma tavla som n8n:s flöde, så
@@ -788,6 +789,7 @@ const TEXT = {
   scope: { all: "Alla", shared: "Gemensamma", mine: "Egna" },
   flows: "Flöden", flowRuns: "går av sig själv", flowIdle: "trycks bara på",
   flowNone: "här finns inget flöde att rita — det här repot har inget eget än",
+  mapFresh: "uppdatera kartan med färsk data",
   flowUnreadable: "flödesfilen går inte att läsa", flowNodes: "noder", flowEdges: "vägar",
   n8nCanvas: "n8n:s egen tavla", under: "under", readCode: "läst ur repot",
   none: "utan",
@@ -1526,9 +1528,13 @@ function renderTabs(vy) {
 function renderKartaProject() {
   const host = document.getElementById("kartaProject");
   if (!host) return;
-  const par = links().filter(l => l && l.project && l.repo);
-  host.hidden = !par.length;
-  if (!par.length) return;
+  // Kartan hör till repot man står i, och ett repo har en karta -- väljaren fanns förut
+  // för varje länk i registret, alltså pekade den på AutoCore var man än stod. Nu listas
+  // bara det egna repots karta, och en lista med ett enda val är ingen väljare.
+  const par = links().filter(l => l && l.project && l.repo &&
+    (!REPO.name || l.repo === REPO.name));
+  host.hidden = par.length < 2;
+  if (par.length < 2) return;
   const valt = REPO.name || ((STATE || {}).project || {}).repo || "";
   host.innerHTML = par.map(l => `<option value="${esc(l.project)}"` +
     `${l.repo === valt ? " selected" : ""}>${esc(l.project)} — ${esc(l.repo)}</option>`).join("");
@@ -1658,7 +1664,7 @@ function flowEditorClose() {
 // därför samma id-mönster, med canvasten i FLOW.canvas ("flow" eller "code").
 const CODE = { repo: "", graph: null, error: "" };
 
-async function renderCodeMap(force) {
+async function renderCodeMap(force, fresh) {
   const canvas = document.getElementById("codeCanvas");
   if (!canvas) return;
   const who = document.getElementById("codeWho");
@@ -1666,8 +1672,11 @@ async function renderCodeMap(force) {
   if (force || CODE.repo !== repo || !CODE.graph) {
     CODE.repo = repo || "";
     try {
-      const a = await (await fetch("/api/codemap?repo=" + encodeURIComponent(repo))).json();
-      if (!a.ok) throw new Error(a.error || "inget svar");
+      const a = await (await fetch("/api/codemap?repo=" + encodeURIComponent(repo) +
+                                  (fresh ? "&refresh=1" : ""))).json();
+      // En tom karta har ett skäl, och skälet står i svaret. "inget svar" sade ingenting
+      // om varför -- det var den raden man möttes av i stället för beskedet.
+      if (!a.ok) throw new Error(a.note || a.error || "inget svar");
       CODE.graph = a; CODE.error = "";
     } catch (e) {
       CODE.graph = null; CODE.error = "kunde inte läsa kodkartan: " + e.message;
@@ -2728,6 +2737,22 @@ async function scanRun(button) {
   }
 }
 
+// Färsk data: scanna om repot och rita kartan ur det som kom ut. Scanningen är motorns,
+// inte panelens -- knappen går samma väg som "scanna om" och väntar på stämpeln, och
+// hämtar sedan kodkartan förbi cachen. Utan det sista visade kartan samma siffror som
+// förut, hur nyss den än var ritad.
+async function mapFresh(button) {
+  const forra = button.textContent;
+  button.textContent = "uppdaterar …";
+  try {
+    await scanRun(button);            // scannar hela projektet och väntar på kvittot
+    await renderCodeMap(true, true);  // och kartan läses om, förbi cachen
+  } finally {
+    button.textContent = forra;
+  }
+}
+
+
 async function linkSave(rm) {
   const value = id => ((document.getElementById(id) || {}).value || "").trim();
   const body = rm ? { repo: REPO.name, rm: true }
@@ -3307,6 +3332,7 @@ document.addEventListener("click", e => {
   if (e.target.closest('[data-act="link-save"]')) return linkSave(false);
   if (e.target.closest('[data-act="link-rm"]')) return linkSave(true);
   if (e.target.closest('[data-act="scan-run"]')) return scanRun(e.target.closest('[data-act="scan-run"]'));
+  if (e.target.closest('[data-act="map-fresh"]')) return mapFresh(e.target.closest('[data-act="map-fresh"]'));
   if (e.target.closest("#tokenWarn")) { show("settings"); renderSettings(); return; }
   if (e.target.closest("#setupOpen")) { show("setup"); return; }
   if (e.target.closest('[data-act="admin-people"]')) return adminPeople();

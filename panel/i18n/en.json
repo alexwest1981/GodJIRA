@@ -349,5 +349,6 @@
  "du": "you",
  "agenten": "the agent",
  "fel": "error",
- "här finns inget flöde att rita — det här repot har inget eget än": "nothing to draw here — this repo has no flow of its own yet"
+ "här finns inget flöde att rita — det här repot har inget eget än": "nothing to draw here — this repo has no flow of its own yet",
+ "uppdatera kartan med färsk data": "refresh the map with fresh data"
 }
