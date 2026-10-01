@@ -301,6 +301,15 @@ console.log(fel.length ? "FEL " + fel.join(" | ") : "OK");
           "the repo page has tabs and the map is one of them")
     check('karta: ["Karta"' not in html and 'if (v === "karta")' in html,
           "the map left the rail, and its old route still lands")
+    # Rälen: en ikonkolumn med fast bredd, och en ikon per vy. Mätt i den skarpa panelen:
+    # alla nio etiketterna börjar på samma x (51), ikonrutorna är 16x16, inget svämmar
+    # över. Utan ikon ritas raden utan märke, och raderna hamnar snett igen.
+    check("grid-template-columns: 22px 1fr" in html, "the rail is an icon column, not a stack")
+    vblock = html.split("views: {", 1)[1].split("},", 1)[0]
+    vkeys = set(re.findall(r"(\w+):\s*\[", vblock))
+    ikeys = set(re.findall(r"^\s{2}(\w+):\s*'<svg", html, re.M))
+    check(bool(vkeys) and vkeys <= ikeys,
+          "varje vy i rälen har en ikon (%d vyer, %d ikoner)" % (len(vkeys), len(ikeys)))
     check('"/api/flowmap"' in server and "flowmap_available" in server,
           "the flow map route is in the server")
 

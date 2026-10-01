@@ -238,11 +238,12 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
 
   /* ------------------------------------------------------------ icon rail */
   .rail {
-    /* 78 = 58 + 20: ikonerna är kvar på 46 px, så luften runt dem växer. */
-    /* 78 px rymde inte sina egna etiketter (mätt: innehållet svämmade över med 6 px).
-       108 ger "Inställningar" plats på en rad. */
-    width: 108px; flex: 0 0 108px; background: var(--rail); border-right: 1px solid var(--line);
-    align-items: center; gap: 12px; padding: 12px 0; height: 100%;
+    /* Riktig sidebar, inte en ikonrad: ikon och etikett på samma rad, etiketterna i en
+       kolumn. Den gamla raden staplade glyf över text och centrerade allt -- glyferna
+       (⌥ ⇪ ⚑) har olika bredd, så raderna hamnade snett, och ⚙ ritades som färgemoji.
+       Ikonerna är SVG nu: samma ruta, samma vikt, ingen typsnittsroulette. */
+    width: 176px; flex: 0 0 176px; background: var(--rail); border-right: 1px solid var(--line);
+    align-items: stretch; gap: 2px; padding: 12px 10px; height: 100%;
   }
   .rail .mark {
     position: relative;
@@ -251,6 +252,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
        Rita om logotypen -> räkna om 47px (36 / 0,7625). ponytail: ett fast mått,
        blir logotypen en annan form får det bli en egen ikonfil i stället. */
     background: var(--panel);
+    align-self: center; margin-bottom: 10px;
   }
   /* Rälens märke målas i stället för att filtreras: en mask lägger formen, färgen kommer
      från --text (nära svart i ljust, nära vitt i mörkt). Ett filter hade färgat hela
@@ -261,12 +263,16 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
     mask: url(/godjira.svg) center top / auto 47px no-repeat;
   }
   .railitem {
-    /* 64 = bredaste etiketten ("Importera" 56,6 px) + luft: vid 46 px spillde tre av
-       fem etiketter över sin egen ruta, alltså var hover-ytan smalare än sin text. */
-    width: 64px; display: grid; place-items: center; gap: 3px; padding: 6px 0; border-radius: 8px;
+    /* Ikonkolumn på fast bredd: där den börjar börjar varje etikett, och det är hela
+       skillnaden mot förut. Hela raden är hover-yta, inte bara orden. */
+    display: grid; grid-template-columns: 22px 1fr; align-items: center; gap: 10px;
+    width: 100%; padding: 7px 9px; border-radius: 8px;
     color: var(--muted); cursor: pointer; font-size: 10px; letter-spacing: .04em; text-transform: uppercase;
   }
-  .railitem .g { font-size: 15px; line-height: 1; }
+  .railitem .g { display: flex; align-items: center; justify-content: center; width: 22px; height: 16px; }
+  .railitem .g svg { width: 16px; height: 16px; fill: none; stroke: currentColor;
+    stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .railitem .n { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .railitem:hover { background: var(--panel); color: var(--text-2); }
   .railitem.on { background: var(--panel); color: var(--text); }
   .railitem.on .g { color: var(--accent); }
@@ -991,11 +997,27 @@ const link = (url, inner) => url ? `<a href="${esc(url)}" target="_blank" rel="n
 /* ------------------------------------------------------------- render ---- */
 // Vyerna i navigeringen. Admin-fliken finns bara när behörigheten finns -- den som
 // inte får något ändå skall inte se en flik som ger nej.
+// Rälens ikoner: en SVG per vy, ritad i samma ruta och med samma vikt. Textglyfer gick
+// inte att rada upp -- ⌥ ⇪ ⚑ har olika bredd, och ⚙ ritades som färgemoji. Inställningar
+// är två reglage: enklare än ett kugghjul och omöjligt att förväxla med ett emoji.
+const ICONS = {
+  overview: '<svg viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="5" rx="1.2"/><rect x="9" y="2" width="5" height="5" rx="1.2"/><rect x="2" y="9" width="5" height="5" rx="1.2"/><rect x="9" y="9" width="5" height="5" rx="1.2"/></svg>',
+  insights: '<svg viewBox="0 0 16 16"><path d="M3 13V9M8 13V4M13 13v-6"/></svg>',
+  board: '<svg viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M6 3v10M10 3v10"/></svg>',
+  items: '<svg viewBox="0 0 16 16"><path d="M5.5 4.5h8M5.5 8h8M5.5 11.5h8"/><circle cx="3" cy="4.5" r=".9"/><circle cx="3" cy="8" r=".9"/><circle cx="3" cy="11.5" r=".9"/></svg>',
+  repos: '<svg viewBox="0 0 16 16"><path d="M2 5.5A1.5 1.5 0 0 1 3.5 4h2.3l1.2 1.6h5.5A1.5 1.5 0 0 1 14 7.1v4.4A1.5 1.5 0 0 1 12.5 13h-9A1.5 1.5 0 0 1 2 11.5z"/></svg>',
+  import: '<svg viewBox="0 0 16 16"><path d="M8 3v6M5.6 6.6L8 9l2.4-2.4M3 11.5v.5a1.5 1.5 0 0 0 1.5 1.5h7a1.5 1.5 0 0 0 1.5-1.5v-.5"/></svg>',
+  setup: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M6.7 5.7v4.6L10.6 8z"/></svg>',
+  admin: '<svg viewBox="0 0 16 16"><path d="M8 2.4l5 1.9v3.4c0 2.9-2.1 5.1-5 6.1-2.9-1-5-3.2-5-6.1V4.3z"/></svg>',
+  settings: '<svg viewBox="0 0 16 16"><path d="M3 5.5h10M3 10.5h10"/><circle cx="6.4" cy="5.5" r="1.7"/><circle cx="10.4" cy="10.5" r="1.7"/></svg>',
+};
+
 const navViews = () => Object.entries(TEXT.views).filter(([v]) => v !== "admin" || adminVisible());
 
 function renderRail() {
   document.getElementById("rail").innerHTML = `<div class="mark" title="GodJIRA"></div>` + navViews().map(([v, [label, glyph]]) =>
-    `<div class="railitem ${v === view ? "on" : ""}" data-v="${v}"><span class="g">${glyph}</span>${label}</div>`).join("");
+    `<div class="railitem ${v === view ? "on" : ""}" data-v="${v}" title="${esc(label)}">` +
+    `<span class="g">${ICONS[v] || ""}</span><span class="n">${esc(label)}</span></div>`).join("");
   applyLayout();   // rälen ritas om vid varje hämtning: valet måste på igen
 }
 
@@ -1063,7 +1085,7 @@ function renderCrumbs() {
     (j.ok ? "" : ` <span class="err">jira: ${esc(j.error || "inget svar")}</span>`) +
     (g.ok ? "" : ` <span class="err">github: ${esc(g.error || "inget svar")}</span>`);
   document.getElementById("seg").innerHTML = navViews().map(([v, [label, glyph]]) =>
-    `<button data-v="${v}" class="${v === view ? "on" : ""}" title="${label}">${glyph}</button>`).join("");
+    `<button data-v="${v}" class="${v === view ? "on" : ""}" title="${esc(label)}">${ICONS[v] || glyph}</button>`).join("");
 }
 
 // Ett kort per källa, och varje kort går att stänga av för sig: en vill se Jira,
