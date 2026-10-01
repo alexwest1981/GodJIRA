@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import base64
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -24,6 +25,7 @@ import secrets
 import shutil
 import sqlite3
 import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
 import tempfile
 import threading
@@ -545,11 +547,78 @@ def flow_graphs() -> list:
             # Körningen hör till flödets id, som filen bär -- så den syns även när n8n
             # inte svarar och noderna kommer ur filen.
             flow["run"] = runs.get(flow.get("id") or "") or {}
+            # Flödeskartan: artefakten visas i stället för ritytan när Archify finns.
+            # Språket är panelens, och en rad som saknar det faller till engelska.
+            flow["map"] = ("/api/flowmap?flow={}&lang={}".format(flow["id"], panel_language(""))
+                           if (flow.get("id") and flowmap_available()) else "")
             out.append(flow)
         except Exception as exc:  # noqa: BLE001 -- vilket fel som helst är samma svar
             out.append({"file": path.name, "nodes": [], "edges": [],
                         "error": "{}: {}".format(type(exc).__name__, exc)})
     return out
+
+
+ENGINE = Path(__file__).resolve().parent.parent / "bin" / "jira_flow.py"
+
+
+def flowmap_cache_dir() -> Path:
+    """Artefakterna bor hos användaren, inte i repot."""
+    base = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
+    return base / "jira-flow" / "flowmap"
+
+
+def flowmap_available() -> bool:
+    """Finns Archify och node? Annars ritas flödet på ritytan, precis som förut."""
+    root = Path.home() / ".local/share/godjira/vendor"
+    candidates = [os.environ.get("ARCHIFY") or "",
+                  str(root / "archify" / "archify" / "bin" / "archify.mjs"),
+                  str(root / "archify" / "bin" / "archify.mjs")]
+    return bool(shutil.which("node")) and any(p and Path(p).exists() for p in candidates)
+
+
+def flowmap_engine(args: list, timeout: int = 300) -> dict:
+    """Kör motorn och läser dess kvitto. Flödeslogiken har en ägare."""
+    try:
+        proc = subprocess.run([sys.executable, str(ENGINE)] + args,
+                              capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"ok": False, "why": "{}: {}".format(type(exc).__name__, exc)}
+    for line in reversed((proc.stdout or "").strip().splitlines()):
+        try:
+            return json.loads(line)
+        except ValueError:
+            continue
+    return {"ok": False, "why": (proc.stderr or proc.stdout or "inget svar")[-200:]}
+
+
+def flowmap_artifact(wid: str, lang: str) -> dict:
+    """Flödets artefakt, ur cachen eller nyr itad.
+
+    IR:en byggs varje gång -- den är en lokal databasläsning -- och jämförs mot
+    stämpeln. HTML:en ritas bara om när noderna verkligen ändrats; Archify tar
+    ett par sekunder och flödet står stilla för det mesta.
+    """
+    folder = flowmap_cache_dir()
+    folder.mkdir(parents=True, exist_ok=True)
+    os.chmod(folder, 0o700)
+    html = folder / "{}-{}.html".format(wid, lang)
+    stamp = folder / "{}-{}.stamp".format(wid, lang)
+    with tempfile.TemporaryDirectory() as scratch:
+        drawn = Path(scratch) / "ir.json"
+        made = flowmap_engine(["flowmap", "--workflow", wid, "--lang", lang, "--ir", str(drawn)], timeout=60)
+        if not made.get("ok"):
+            return {"ok": False, "why": made.get("why") or "IR:en kunde inte byggas"}
+        want = hashlib.sha256(drawn.read_bytes()).hexdigest()
+        if html.exists() and stamp.exists() and stamp.read_text(encoding="utf-8").strip() == want:
+            return {"ok": True, "html": html, "cached": True}
+    done = flowmap_engine(["flowmap", "--workflow", wid, "--lang", lang, "--out", str(html), "--json"])
+    if not done.get("ok"):
+        item = (done.get("diagnostics") or [{}])[0]
+        return {"ok": False, "why": item.get("message") or "renderingen föll"}
+    stamp.write_text(want, encoding="utf-8")
+    os.chmod(html, 0o600)
+    os.chmod(stamp, 0o600)
+    return {"ok": True, "html": html, "cached": False}
 
 
 def project_of_the_link(flow: dict) -> dict:
@@ -1350,6 +1419,16 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/scan":
             query = parse_qs(urlparse(self.path).query)
             self._json(200, scan_read((query.get("repo") or [""])[0]))
+            return
+        if path == "/api/flowmap":
+            query = parse_qs(urlparse(self.path).query)
+            wid = (query.get("flow") or [""])[0][:64]
+            lang = (query.get("lang") or [""])[0][:8]
+            found = flowmap_artifact(wid, lang) if (wid and flowmap_available()) else {"ok": False}
+            if not found.get("ok"):
+                self._send(404, b"flow map not available", "text/plain")
+                return
+            self._send(200, found["html"].read_bytes(), "text/html; charset=utf-8")
             return
         if path == "/api/codemap":
             query = parse_qs(urlparse(self.path).query)

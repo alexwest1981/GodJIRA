@@ -202,6 +202,34 @@ if command -v curl >/dev/null 2>&1; then
 	fi
 fi
 
+# ---------------------------------------------------------------- Archify (valfritt)
+# Flödeskartan ritas av Archify. Det är tredjepartskod, så den hämtas hit -- aldrig
+# in i repot -- och hämtas på en fast commit som är granskad, inte på en gren som
+# rör sig. Utan node (eller utan nät) hoppar vi över: panelen ritar flödet på sin
+# egen rityta i stället, precis som förut.
+vendor="${XDG_DATA_HOME:-$HOME/.local/share}/godjira/vendor"
+archify="$vendor/archify"
+if ! command -v node >/dev/null 2>&1; then
+	say "node missing: the flow map stays on the panel's own canvas"
+elif [ -f "$archify/archify/bin/archify.mjs" ]; then
+	say "Archify is already in place ($archify)"
+else
+	pin="d5a1333d7447c866a765adac7d4d062f2f02e4d2"
+	mkdir -p "$vendor"
+	rm -rf "$archify"
+	if git init -q "$archify" 2>/dev/null &&
+	   git -C "$archify" remote add origin https://github.com/tt-a1i/archify 2>/dev/null &&
+	   git -C "$archify" fetch -q --depth 1 origin "$pin" 2>/dev/null &&
+	   git -C "$archify" checkout -q FETCH_HEAD 2>/dev/null &&
+	   [ "$(git -C "$archify" rev-parse HEAD 2>/dev/null)" = "$pin" ] &&
+	   [ -f "$archify/archify/bin/archify.mjs" ]; then
+		say "Archify fetched at $pin (MIT, in $archify -- out of the repo)"
+	else
+		rm -rf "$archify"
+		say "could not fetch Archify: the flow map stays on the panel's own canvas"
+	fi
+fi
+
 say ""
 say "Open http://127.0.0.1:$port and connect the two accounts in Kom igång:"
 say "  * a Jira API token (stored in the session keyring, never in a file here)"

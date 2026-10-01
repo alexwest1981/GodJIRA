@@ -14,6 +14,8 @@ It fails on exactly the things that made the view feel dead:
   * a flow file that is not drawn            -> the flow is invisible
   * drawn nodes/edges not matching the file  -> the drawing lies by omission
   * the view drawing its own copy of a flow  -> it goes stale on the next edit
+  * the edit button lost when the flow map replaced the canvas -> the flow can no
+                                               longer be edited from this view
   * the repo row/commit link wiring gone    -> rows render as plain text
   * the state fetch without a time limit    -> an unanswered request leaves the
                                                shell empty forever
@@ -284,6 +286,16 @@ console.log(fel.length ? "FEL " + fel.join(" | ") : "OK");
     # -- svaret sag ut som en saknad karta. Ett uppslag, alla vagar.
     check(html.count("scanRepo()") >= 4 and "repo: REPO.name }" not in html,
           "scanningen frågar efter samma repo överallt", "scanRepo() x%d" % html.count("scanRepo()"))
+
+    # Flödeskartan: artefakten tar ritytans plats. "✎ ändra" byggdes förut inuti
+    # ritytans rendering, så den försvann i samma stund som artefakten kom in.
+    server = (HERE / "server.py").read_text(encoding="utf-8")
+    check("flowMapShow" in html and 'class="flowMap"' in html,
+          "the flow map is drawn where the canvas was")
+    check('id="flowEdit"' in html and "getElementById(\"flowEdit\")" in html,
+          "the edit button sits in the card head, so both views have it")
+    check('"/api/flowmap"' in server and "flowmap_available" in server,
+          "the flow map route is in the server")
 
     check("AbortSignal.timeout" in html, "the state fetch has a time limit")
     check("retryLater" in html, "a failed refresh is retried and said out loud")

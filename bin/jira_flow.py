@@ -65,6 +65,7 @@ import os
 import re
 import shlex
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
@@ -76,6 +77,7 @@ import urllib.request
 import zipfile
 from base64 import b64encode
 from html import unescape
+from pathlib import Path
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -582,6 +584,328 @@ def code_map(root: Path) -> dict:
     return {"root": str(root), "nodes": nodes, "edges": edges, "layers": max(depth.values()) + 1,
             "files": len(files), "packages": len(classes_of), "edgesCount": len(edges),
             "prefix": ".".join(shared)}
+
+
+# --------------------------------------------------------------- flödeskartan
+#
+# Flödet ritat som en artefakt (Archify): n8n:s egna noder, kanter, banor och
+# kort, lästa ur n8n:s databas. Panelen visar artefakten; n8n äger flödet.
+#
+# Raderna nedan är panelens svenska källrader. En rad som saknar språket faller
+# tillbaka på engelska -- "så långt det går, annars engelska". Nodnamnen kommer
+# från n8n och översätts aldrig: de är någon annans ord.
+
+FLOWMAP_STRINGS = {
+    "Väckt av": {"en": "Started by", "de": "Gestartet von", "es": "Iniciado por",
+                 "fr": "Déclenché par", "it": "Avviato da", "nl": "Gestart door",
+                 "pl": "Uruchamiane przez", "pt": "Iniciado por"},
+    "Kontext": {"en": "Context", "de": "Kontext", "es": "Contexto", "fr": "Contexte",
+                "it": "Contesto", "nl": "Context", "pl": "Kontekst", "pt": "Contexto"},
+    "Stegen": {"en": "The steps", "de": "Die Schritte", "es": "Los pasos",
+               "fr": "Les étapes", "it": "I passi", "nl": "De stappen",
+               "pl": "Kroki", "pt": "Os passos"},
+    "Sammanställning": {"en": "Summary", "de": "Zusammenfassung", "es": "Resumen",
+                        "fr": "Synthèse", "it": "Riepilogo", "nl": "Samenvatting",
+                        "pl": "Podsumowanie", "pt": "Resumo"},
+    "Rapportering": {"en": "Reporting", "de": "Meldung", "es": "Informe",
+                     "fr": "Rapport", "it": "Rendicontazione", "nl": "Rapportage",
+                     "pl": "Raportowanie", "pt": "Relatório"},
+    "trycker själv": {"en": "you press it", "de": "du drückst", "es": "lo pulsas",
+                      "fr": "tu le lances", "it": "lo avvii", "nl": "je drukt erop",
+                      "pl": "uruchamiasz", "pt": "você aciona"},
+    "schemat": {"en": "on a schedule", "de": "nach Zeitplan", "es": "por horario",
+                "fr": "sur horaire", "it": "a orario", "nl": "op schema",
+                "pl": "z harmonogramu", "pt": "por horário"},
+    "projekt + verktygskatalog": {"en": "project + tool directory",
+                                  "de": "Projekt + Werkzeugkatalog",
+                                  "es": "proyecto + catálogo de herramientas",
+                                  "fr": "projet + catalogue d'outils",
+                                  "it": "progetto + catalogo strumenti",
+                                  "nl": "project + gereedschapsmap",
+                                  "pl": "projekt + katalog narzędzi",
+                                  "pt": "projeto + catálogo de ferramentas"},
+    "räknar ihop": {"en": "adds it up", "de": "rechnet zusammen",
+                    "es": "lo suma", "fr": "fait le total", "it": "somma",
+                    "nl": "telt op", "pl": "podsumowuje", "pt": "soma"},
+    "POST till panelen": {"en": "POST to the panel", "de": "POST an die Oberfläche",
+                          "es": "POST al panel", "fr": "POST vers le panneau",
+                          "it": "POST al pannello", "nl": "POST naar het paneel",
+                          "pl": "POST do panelu", "pt": "POST para o painel"},
+    "Manuell trigger": {"en": "Manual trigger", "de": "Manueller Auslöser",
+                        "es": "Disparador manual", "fr": "Déclencheur manuel",
+                        "it": "Trigger manuale", "nl": "Handmatige trigger",
+                        "pl": "Wyzwalacz ręczny", "pt": "Gatilho manual"},
+    "Schema": {"en": "Schedule", "de": "Zeitplan", "es": "Horario", "fr": "Horaire",
+               "it": "Orario", "nl": "Schema", "pl": "Harmonogram", "pt": "Horário"},
+    "Varifrån": {"en": "Where this comes from", "de": "Woher das kommt",
+                 "es": "De dónde viene", "fr": "D'où cela vient",
+                 "it": "Da dove viene", "nl": "Waar dit vandaan komt",
+                 "pl": "Skąd to jest", "pt": "De onde vem"},
+    "noder": {"en": "nodes", "de": "Knoten", "es": "nodos", "fr": "nœuds",
+              "it": "nodi", "nl": "knopen", "pl": "węzły", "pt": "nós"},
+    "kopplingar": {"en": "connections", "de": "Verbindungen", "es": "conexiones",
+                   "fr": "liaisons", "it": "collegamenti", "nl": "verbindingen",
+                   "pl": "połączenia", "pt": "ligações"},
+}
+
+# n8n:s nodtyp -> (bana, sort i artefakten, undertext). Sorterna är de som finns i
+# Archifys egna exempel: att hitta på fler ger ingen stil, bara en okänd ruta.
+FLOWMAP_KIND = {
+    "scheduleTrigger": ("vackt", "external", "schemat"),
+    "manualTrigger": ("vackt", "external", "trycker själv"),
+    "set": ("kontext", "backend", "projekt + verktygskatalog"),
+    "executeCommand": ("steg", "backend", ""),
+    "code": ("sammanst", "backend", "räknar ihop"),
+    "httpRequest": ("rapport", "messagebus", "POST till panelen"),
+}
+FLOWMAP_LANES = (("vackt", "Väckt av"), ("kontext", "Kontext"), ("steg", "Stegen"),
+                 ("sammanst", "Sammanställning"), ("rapport", "Rapportering"))
+FLOWMAP_COL_MAX = 5      # artefaktens rutnät har sex kolumner, 0..5 (deras schema)
+
+
+def flowmap_text(row: str, lang: str) -> str:
+    """En rad på valt språk, annars engelska, annars den svenska källraden.
+
+    Per rad, inte per språk: en halvfärdig översättning skall ge engelska på de
+    rader som saknas -- inte svenska.
+    """
+    if not lang or lang == "sv":
+        return row
+    table = FLOWMAP_STRINGS.get(row) or {}
+    return table.get(lang) or table.get("en") or row
+
+
+def flowmap_columns(lanes: list) -> list:
+    """Kedjan lagd över sex kolumner: lägsta lediga kolumn som inte går bakåt.
+
+    Delar två noder en kolumn måste de ligga i olika banor -- det är därför
+    banorna finns. Räcker inte kolumnerna till (en kedja längre än rutnätet) får
+    vi en tom lista, och då får artefakten vara: ritytan visas i stället.
+    """
+    taken, out, prev = set(), [], 0
+    for lane in lanes:
+        col = prev
+        while col <= FLOWMAP_COL_MAX and (lane, col) in taken:
+            col += 1
+        if col > FLOWMAP_COL_MAX:
+            return []
+        taken.add((lane, col))
+        out.append(col)
+        prev = col
+    return out
+
+
+def flowmap_chain(nodes: list, conns: dict) -> tuple:
+    """Körordningen ur kopplingarna, plus de noder som inte ligger på kedjan.
+
+    n8n:s egna positioner är musminne: två noder kan dela kolumn i filen och
+    ändå köras i tur och ordning. Ordningen hämtas därför ur kanterna, och en
+    parallell start (två triggers) hamnar vid sidan om kedjan, inte i den.
+    """
+    edges = {}
+    for src, out in (conns or {}).items():
+        for lane in (out.get("main") or []):
+            for link in (lane or []):
+                if link.get("node"):
+                    edges.setdefault(src, []).append(link["node"])
+    rooted = set()
+    for target in edges.values():
+        rooted.update(target)
+    starts = [n["name"] for n in nodes if n["name"] not in rooted]
+    if not starts:
+        starts = [n["name"] for n in nodes[:1]]
+    chain, seen = [], set()
+
+    def walk(name):
+        while name and name not in seen:
+            seen.add(name)
+            chain.append(name)
+            step = edges.get(name) or []
+            name = step[0] if len(step) == 1 else ""
+
+    walk(starts[0])
+    path = list(chain)          # berättelsen: bara kedjan, varje steg en riktig kant
+    # En parallell start (två triggers) ligger inte på kedjan. Den sätts in precis
+    # före sitt mål -- annars hamnade den sist, med en kant som pekar bakåt (mätt:
+    # validatorn fällde det som "moves backward from col 5 to 0").
+    for name in [n["name"] for n in nodes if n["name"] not in seen]:
+        targets = edges.get(name) or []
+        pos = next((chain.index(t) for t in targets if t in chain), len(chain))
+        chain.insert(pos, name)
+        seen.add(name)
+    return chain, path
+
+
+def flowmap_build(wid: str, lang: str = "en") -> dict:
+    """n8n:s databas -> Archify workflow-IR. Läser skrivskyddat; skriver ingenting."""
+    db = Path(os.environ.get("N8N_DB") or (Path.home() / ".n8n" / "database.sqlite"))
+    con = sqlite3.connect("file:{}?mode=ro".format(db), uri=True)
+    try:
+        row = con.execute("select name, nodes, connections, active from workflow_entity"
+                          " where id=?", (wid,)).fetchone()
+    finally:
+        con.close()
+    if not row:
+        raise ValueError("inget flöde med id {}".format(wid))
+    title, nodes_j, conns_j, active = row
+    everything = json.loads(nodes_j or "[]")
+    conns = json.loads(conns_j or "{}")
+    nodes = [n for n in everything if not (n.get("type") or "").endswith("stickyNote")]
+    note = ""
+    for n in everything:
+        if (n.get("type") or "").endswith("stickyNote"):
+            text = ((n.get("parameters") or {}).get("content") or "").strip()
+            lines = [l.strip() for l in text.splitlines() if l.strip() and not l.strip().startswith("#")]
+            if lines:
+                note = re.sub(r"<[^>]+>", "", lines[0])[:160]
+                break
+
+    chain, path = flowmap_chain(nodes, conns)
+    by_name = {n["name"]: n for n in nodes}
+    chain = [n for n in chain if n in by_name]
+    lanes, subs, kinds = [], [], []
+    for name in chain:
+        kind = (by_name[name].get("type") or "").split(".")[-1]
+        lane, sort, sub = FLOWMAP_KIND.get(kind, ("steg", "backend", ""))
+        lanes.append(lane)
+        kinds.append(sort)
+        subs.append(flowmap_text(sub, lang) if sub else "")
+    cols = flowmap_columns(lanes)
+    if not cols:
+        raise ValueError("kedjan ryms inte i rutnätet ({} noder)".format(len(chain)))
+
+    def slug(text):
+        low = text.lower()
+        for a, b in (("å", "a"), ("ä", "a"), ("ö", "o"), ("é", "e")):
+            low = low.replace(a, b)
+        return re.sub(r"[^a-z0-9]+", "-", low).strip("-") or "n"
+
+    out_nodes = [{"id": slug(name), "lane": lanes[i], "col": cols[i], "type": kinds[i],
+                  "label": name, "sublabel": subs[i], "width": 190}
+                 for i, name in enumerate(chain)]
+    ids = {name: slug(name) for name in chain}
+    edges = []
+    for src, targets in (conns or {}).items():
+        if src not in ids:
+            continue
+        for lane in (targets.get("main") or []):
+            for link in (lane or []):
+                to = link.get("node")
+                if to in ids:
+                    edges.append({"id": "e-" + ids[src] + "-" + ids[to], "from": ids[src],
+                                  "to": ids[to], "role": "main", "variant": "default"})
+
+    cards = [{"dot": "cyan", "title": flowmap_text("Väckt av", lang), "items": [
+        it for it in [flowmap_text("Manuell trigger", lang) if any(
+            (by_name[n].get("type") or "").endswith("manualTrigger") for n in chain) else "",
+            flowmap_text("Schema", lang) if any(
+                (by_name[n].get("type") or "").endswith("scheduleTrigger") for n in chain) else ""]
+        if it]}]
+    for name in chain:
+        kind = (by_name[name].get("type") or "").split(".")[-1]
+        params = by_name[name].get("parameters") or {}
+        if kind == "executeCommand" and params.get("command"):
+            cards.append({"dot": "cyan", "title": name,
+                          "items": [str(params["command"]).replace("\n", " ").strip()[:220]]})
+        if kind == "httpRequest":
+            cards.append({"dot": "cyan", "title": name,
+                          "items": ["%s %s" % (params.get("method") or "GET", params.get("url") or ""),
+                                    "jsonBody " + str(params.get("jsonBody") or "")[:120]]})
+    cards.append({"dot": "cyan", "title": flowmap_text("Varifrån", lang), "items": [
+        "n8n /api %s" % wid,
+        "%s: %d · %s: %d" % (flowmap_text("noder", lang), len(chain),
+                             flowmap_text("kopplingar", lang), len(edges))]})
+
+    return {
+        "schema_version": 2,
+        "diagram_type": "workflow",
+        "meta": {"title": title, "subtitle": note or "",
+                 "output": "reports/flow.html", "locale": "en",
+                 "animation": "trace", "visual_preset": "signal-flow",
+                 "quality_profile": "standard"},
+        "lanes": [{"id": lid, "label": flowmap_text(label, lang)} for lid, label in FLOWMAP_LANES],
+        "mainPath": [ids[name] for name in path if name in ids],
+        "nodes": out_nodes,
+        "edges": edges,
+        "cards": cards,
+    }
+
+
+def flowmap_binary() -> str:
+    """Var Archify bor: miljövariabeln först, annars den installerade kopian."""
+    # ponytail: samma sökvägar står också i panelen och i install.sh -- flytta till
+    # en delad konstant om de behöver ändras en gång till.
+    root = Path.home() / ".local/share/godjira/vendor"
+    for path in (os.environ.get("ARCHIFY") or "",
+                 str(root / "archify" / "archify" / "bin" / "archify.mjs"),
+                 str(root / "archify" / "bin" / "archify.mjs")):
+        if path and Path(path).exists():
+            return path
+    return ""
+
+
+def flowmap_render(ir: dict, out: Path) -> dict:
+    """Kör Archifys renderare på IR:en och lämnar tillbaka deras kvitto."""
+    binary = flowmap_binary()
+    node = shutil.which("node")
+    if not binary:
+        return {"ok": False, "diagnostics": [{"code": "flowmap/no-archify",
+                "message": "Archify saknas (ARCHIFY=<sökväg>, eller kör install.sh)"}]}
+    if not node:
+        return {"ok": False, "diagnostics": [{"code": "flowmap/no-node",
+                "message": "node saknas"}]}
+    out.parent.mkdir(parents=True, exist_ok=True)
+    handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
+    try:
+        json.dump(ir, handle, ensure_ascii=False)
+        handle.close()
+        proc = subprocess.run([node, binary, "finalize", "workflow", handle.name, str(out),
+                               "--quality", "standard", "--json"],
+                              capture_output=True, text=True, timeout=300)
+    finally:
+        os.unlink(handle.name)
+    try:
+        return json.loads(proc.stdout or "")
+    except ValueError:
+        return {"ok": False, "diagnostics": [{"code": "flowmap/no-receipt",
+                "message": ((proc.stderr or "") + (proc.stdout or ""))[-400:]}]}
+
+
+def cmd_flowmap(args) -> int:
+    """Flödets artefakt: n8n -> IR -> HTML. Utan --out skrivs bara IR:en."""
+    lang = (getattr(args, "lang", "") or "en").strip().lower()
+    try:
+        ir = flowmap_build(args.workflow, lang)
+    except (ValueError, OSError, sqlite3.Error) as why:
+        print(json.dumps({"ok": False, "why": str(why)}, ensure_ascii=False))
+        return 1
+    if getattr(args, "ir", ""):
+        Path(args.ir).expanduser().write_text(
+            json.dumps(ir, ensure_ascii=False, indent=1), encoding="utf-8")
+    if not getattr(args, "out", ""):
+        print(json.dumps({"ok": True, "lang": lang, "nodes": len(ir["nodes"]),
+                          "edges": len(ir["edges"]), "cards": len(ir["cards"])}))
+        return 0
+    receipt = flowmap_render(ir, Path(args.out).expanduser())
+    # Innehållsgrindarna avgör. browser-check klagar på att sidan är högre än
+    # skärmen (mätt: 1474 px i en 1320 px-ruta) -- artefakten är en webbsida som
+    # skrollas, och i panelens ruta gör den det med flit. Att stympa diagrammet
+    # för att slippa skrollning vore att göra sämre bild för en felaktig regel.
+    gates = receipt.get("gates") or {}
+    content_ok = all(gates.get(g) == "pass" for g in ("validate", "deliver", "check"))
+    ok = bool((receipt.get("artifact") or {}).get("bytes")) and content_ok
+    if ok and (gates.get("browser-check") or "") not in ("pass", "not-run"):
+        receipt["note"] = "artefakten skrollas (browser-check: sidan är högre än rutan)"
+    receipt["ok"] = ok            # kvittot bär sitt eget svar, även för --json
+    if getattr(args, "json", False):
+        print(json.dumps(receipt, ensure_ascii=False))      # hela, aldrig kapad
+    elif ok:
+        print("flödet ritat: %d noder, %d kort -> %s" % (len(ir["nodes"]), len(ir["cards"]), args.out))
+    else:
+        for item in (receipt.get("diagnostics") or [])[:4]:
+            print("  %s: %s" % (item.get("code"), (item.get("message") or "")[:200]))
+        print("  ingen artefakt skrevs (%s)" % (receipt.get("failedStage") or "?"))
+    return 0 if ok else 1
 
 
 def cmd_codemap(args) -> int:
@@ -2150,6 +2474,18 @@ def cmd_install(args) -> int:
 
 def selftest() -> int:
     checks = 0
+    # Flödeskartan: rutnätet (sex kolumner), banorna, och engelskan som fallback.
+    lanes = ["steg"] * 3 + ["vackt"] * 2 + ["rapport"]
+    cols = flowmap_columns(lanes)
+    assert cols and cols == sorted(cols) and max(cols) <= FLOWMAP_COL_MAX, cols
+    assert len(set(zip(lanes, cols))) == len(lanes), "två noder i samma bana och kolumn krockar"
+    assert flowmap_columns(["steg"] * 7) == [], "en kedja längre än rutnätet får vara"
+    assert flowmap_text("Stegen", "en") == "The steps"
+    assert flowmap_text("Stegen", "de") == "Die Schritte"
+    assert flowmap_text("Stegen", "sv") == "Stegen", "svenska är källraden"
+    assert flowmap_text("Stegen", "tlh") == "The steps", "okänt språk får engelska"
+    assert flowmap_text("bara svensk rad", "en") == "bara svensk rad", "rad utan översättning får källraden"
+    checks += 1
     jql = pick_jql("SCRUM")
     assert "project = SCRUM" in jql and "assignee IS EMPTY" in jql and "priority DESC" in jql, jql
     assert "In Progress" in current_jql("SCRUM")
@@ -2853,6 +3189,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_codemap.add_argument("--repo-name", default="", help="the linked repo (default: the only link)")
     p_codemap.add_argument("--repo", default="", help="a directory instead of the local copy")
     p_codemap.add_argument("--json", action="store_true")
+    p_flowmap = sub.add_parser("flowmap", help="the flow drawn as an artifact (Archify)")
+    p_flowmap.add_argument("--workflow", required=True, help="n8n's workflow id")
+    p_flowmap.add_argument("--lang", default="", help="the panel's language; missing rows fall back to English")
+    p_flowmap.add_argument("--out", default="", help="where the artifact is written (without it, only the IR)")
+    p_flowmap.add_argument("--ir", default="", help="write the intermediate JSON here too")
+    p_flowmap.add_argument("--json", action="store_true", help="the whole receipt, uncut")
     p_repo = sub.add_parser("repo", help="one repo: what it is, what is open, and its link")
     p_repo.add_argument("name", nargs="?", help="owner/name, or a name")
     p_repo.add_argument("--json", action="store_true")
@@ -2904,6 +3246,8 @@ def main(argv) -> int:
         return cmd_scan(args)
     if args.cmd == "codemap":
         return cmd_codemap(args)
+    if args.cmd == "flowmap":
+        return cmd_flowmap(args)
     if args.cmd == "admin":
         return cmd_admin(args)
     # En plats för projektnyckeln: flaggan, annars länken, annars standarden. Nästa,

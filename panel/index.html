@@ -339,6 +339,9 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
      som filterraden gick i en gång. */
   .flowsplit[hidden] { display: none; }
   /* n8n:s egen editor, inbäddad. Den tar flödets plats medan den är öppen. */
+  /* Flödeskartan: Archify-artefakten är en hel sida i sin egen ram. Samma höjd som
+     editor-ramen nedan, så verktygsraden och n8n:s tavla står kvar där de stod. */
+  .flowMap { width: 100%; height: 74vh; border: 0; display: block; border-radius: 10px; }
   .editor iframe { width: 100%; height: 74vh; border: 0; display: block;
                    border-radius: var(--r); background: var(--card); }
   .fnode.sel > rect:first-of-type { stroke-opacity: 1; stroke-width: 2; }
@@ -567,7 +570,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
            ändrar. Låg förut i en egen räl-post -- det var samma tavla två gånger. -->
       <div class="panel" id="flowPanel" hidden>
         <h3>Flödet <span class="meta" id="flowMeta"></span>
-          <span class="grow"></span><a class="chip" id="flowCanvasLink" hidden>n8n:s egen tavla</a></h3>
+          <span class="grow"></span><button class="chip" id="flowEdit" data-act="flow-edit" hidden>✎ ändra</button><a class="chip" id="flowCanvasLink" hidden>n8n:s egen tavla</a></h3>
         <div class="body">
           <div class="seg" id="flowChips"></div>
           <div class="flowsplit" id="flowSplit">
@@ -1443,6 +1446,8 @@ function renderKartaProject() {
 // n8n:s ruta i miniatyr. Panelen visar; ändrar gör man i n8n, via ändra-knappen nedan
 // -- men ett klick skall svara på frågan "vad gör den här noden?".
 function flowNodeShow(key) {
+  const ruta = document.getElementById("flowNode");
+  if (ruta) ruta.hidden = false;   // artefakten håller undan den; ritytan vill ha den
   const host = document.getElementById("flowNode");
   if (!host) return;
   const flow = (STATE.flows || []).find(f => f.file === FLOW.file) || {};
@@ -1513,6 +1518,21 @@ function flowRun(flows) {
 // loggade in på, annars möts man av n8n:s inloggning i onödan.
 // ponytail: porten står som konstant -- flytta den till /api/state om n8n flyttar.
 const N8N_PORT = 5678;
+let flowMapSrc = "";
+function flowMapShow(flow) {
+  const canvas = document.getElementById("flowCanvas");
+  const node = document.getElementById("flowNode");
+  if (!canvas) return false;
+  if (flowMapSrc !== FLOW.map) {
+    canvas.innerHTML = `<iframe class="flowMap" src="${esc(FLOW.map)}"` +
+      ` title="${esc(flow.name || "")}" referrerpolicy="no-referrer"></iframe>`;
+    flowMapSrc = FLOW.map;
+  }
+  if (node) node.hidden = true;
+  flowNodeClear();
+  return true;
+}
+
 function flowEditorOpen() {
   const flows = ((STATE || {}).flows || []).filter(f => f && f.file);
   const flow = flows.find(f => f.file === FLOW.file) || flows[0] || {};
@@ -1638,6 +1658,9 @@ function renderFlow() {
     flowSel = (usable.find(f => f.active) || usable[0] || flows[0]).file;
   }
   const flow = flows.find(f => f.file === flowSel) || flows[0];
+  // Byter man flöde skall editorrutan stängas -- men en vanlig omladdning (var 60:e
+  // sekund) får inte rycka den ur händerna på den som sitter i den.
+  if (FLOW.editorFile && FLOW.editorFile !== flow.file) flowEditorClose();
   // En lista i stället för en rad knappar: automationerna blir fler än tre, och en
   // rad knappar går inte att läsa då. ◷ = den går av sig själv (ur n8n:s svar).
   chips.innerHTML = `<select class="inp" id="flowPickSel" title="${esc(flow.file)}">` +
@@ -1647,6 +1670,16 @@ function renderFlow() {
   link.href = `${location.protocol}//${location.hostname}:5678` +
     (flow.id ? `/workflow/${flow.id}` : "/home/workflows");
   link.hidden = false;
+  // Flödeskartan: Archify ritar flödet som en artefakt, och den tar ritytans plats.
+  // Verktygsraden står kvar -- "✎ ändra" öppnar n8n:s egen tavla som förut -- och
+  // inspektören hålls undan, för artefakten har sina egna nodkort. Saknas Archify
+  // finns ingen adress i svaret, och då ritas ritytan precis som den alltid gjort.
+  FLOW.map = flow.map || "";
+  // ✎ ändra hör till flödet, inte till ritningen: den står i kortets huvud och
+  // gäller både artefakten och ritytan. Bara n8n:s egna flöden kan ändras här.
+  const edit = document.getElementById("flowEdit");
+  if (edit) edit.hidden = flow.source !== "n8n";
+  if (FLOW.map && flowMapShow(flow)) return;
   if (flow.error || !(flow.nodes || []).length) {
     canvas.innerHTML = `<div class="empty">${esc(TEXT.flowUnreadable)}: ${esc(flow.file)}` +
       `${flow.error ? " — " + esc(flow.error) : ""}</div>`;
@@ -1661,9 +1694,6 @@ function renderFlow() {
   FLOW.canvas = "flow";
   FLOW.file = flow.file; FLOW.W = W; FLOW.H = H;
   flowNodeClear();
-  // Byter man flöde skall editorn stängas -- men en vanlig omladdning (var 60:e sekund)
-  // får inte rycka rutan ur händerna på den som sitter i den.
-  if (FLOW.editorFile && FLOW.editorFile !== flow.file) flowEditorClose();
   FLOW.pos = {}; FLOW.base = {};
   flow.nodes.forEach(n => {
     const key = n.key || n.name, [dx, dy] = store.move[key] || [0, 0];
@@ -1696,8 +1726,7 @@ function renderFlow() {
       `dra i en ruta för att flytta den · dra i bakgrunden för att panorera · ` +
       `rullhjulet zoomar</span><span class="grow"></span>` +
       // Ändra-knappen finns bara när n8n svarade: annars pekade den på en editor som inte finns.
-      (flow.source === "n8n" ? `<button class="chip" data-act="flow-edit">✎ ändra</button>` : "") +
-      `<button class="chip" data-act="flow-reset">nollställ vyn</button></div>`;
+      `<button class="chip" data-act="flow-reset">nollställ vyn</button></div>`;   // ✎ ändra bor i kortets huvud
   flowBind(flow.file, { x0, y0, w: x1 - x0, h: y1 - y0 });
 }
 
