@@ -20,6 +20,7 @@ Självkontroll: python3 bin/jira_mcp.py --selftest
 """
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -32,6 +33,53 @@ PROTOCOL = "2024-11-05"
 SERVER = {"name": "godjira", "version": "0.1.0"}
 READ_TIMEOUT = 120
 WRITE_TIMEOUT = 300
+
+# Låset: en agent som kopplas mot GodJIRA för ett projekt ska inte kunna läsa eller
+# röra ett annat. Projektet kommer från --project, eller från GODJIRA_MCP_PROJECT --
+# den miljövariabeln sätter flödet när den startar en agent, så en MCP-koppling som
+# redan finns i agentens egen config blir låst utan att någon behöver ändra den.
+# Vakten sitter i handle(): varje verktygsanrop går genom den, så ingen enskild
+# verktygsfunktion kan glömma bort den. Tomt lås = öppet, som förut.
+LOCK = ""
+KEY_RE = re.compile(r"\b[A-Z][A-Z0-9_]{1,9}-\d+\b", re.IGNORECASE)
+# Fält som är prosa. En ärendenyckel som *nämns* i en kommentar är text, inte
+# åtkomst; allt annat genomsöks. Hellre en vägran för mycket (ett okänt fält som
+# råkar innehålla "UTF-8") än en för litet -- felet går att läsa och formulera om.
+PROSE = ("text", "comment", "body", "summary", "description", "note")
+
+
+def lock_from(argv):
+    for index, item in enumerate(argv):
+        if item in ("--project", "--lock") and index + 1 < len(argv):
+            return argv[index + 1].strip().upper()
+        if item.startswith("--project="):
+            return item.split("=", 1)[1].strip().upper()
+    return (os.environ.get("GODJIRA_MCP_PROJECT") or "").strip().upper()
+
+
+def guard(wanted, args):
+    """Släpp igenom, eller säg varför inte. Fyller i projektet när låset är satt.
+
+    Två saker kontrolleras: projektargumentet, och varje ärendenyckel som råkar stå
+    i ett annat projekt. Den andra är den som betyder något -- en agent kan mycket
+    väl hitta på att fråga om en nyckel den sett någon annanstans.
+    """
+    if not LOCK:
+        return None
+    if "project" in ((wanted.get("schema") or {}).get("properties") or {}):
+        asked = str(args.get("project") or "").strip().upper()
+        if asked and asked != LOCK:
+            return {"code": -32000, "message": "låst till {}: {} får inte fråga om {}".format(
+                LOCK, wanted["name"], asked)}
+        args["project"] = LOCK
+    for field, value in args.items():
+        if field in PROSE or not isinstance(value, str):
+            continue
+        for found in KEY_RE.findall(value):
+            if found.split("-")[0].upper() != LOCK:
+                return {"code": -32000, "message": "låst till {}: {} får inte röra {}".format(
+                    LOCK, wanted["name"], found)}
+    return None
 
 # Fälten som betyder något för en agent. Ikon-URL:er och millisekunder kostar
 # bara kontext. Ingenting hittas på: raderna är bryggans egna.
@@ -411,7 +459,12 @@ def handle(message):
             reply(mid, error={"code": -32602,
                               "message": "okänt verktyg: {}".format(params.get("name"))})
             return
-        ok, data = wanted["run"](params.get("arguments") or {})
+        arguments = params.get("arguments") or {}
+        blocked = guard(wanted, arguments)
+        if blocked:
+            reply(mid, error=blocked)
+            return
+        ok, data = wanted["run"](arguments)
         reply(mid, {"content": [{"type": "text",
                                  "text": json.dumps(data, ensure_ascii=False, indent=1)}],
                     "isError": not ok})
@@ -494,10 +547,63 @@ def selftest():
     body = json.loads(call["content"][0]["text"])
     assert body["count"] == len(body["backlog"]) > 0, body
     proc.stdin.close()
+
+    # Låset: vakten prövas direkt, utan nät, och en gång över protokollet -- att
+    # argv når fram till den körande servern är det som annars går sönder tyst.
+    global LOCK
+    os.environ.pop("GODJIRA_MCP_PROJECT", None)   # annars ärver servern ovan ett lås
+    assert lock_from(["--project", "scrum"]) == "SCRUM"
+    assert lock_from(["--project=web"]) == "WEB"
+    assert lock_from(["--lock", "OTHER"]) == "OTHER"
+    assert lock_from([]) == ""
+    kept, LOCK = LOCK, "SCRUM"
+    try:
+        args = {"dryRun": True}
+        assert guard({"name": "jira_next", "schema": {"properties": PROJECT}}, args) is None
+        assert args["project"] == "SCRUM", "projektet fylls i när låset är satt"
+        blocked = guard({"name": "jira_next", "schema": {"properties": PROJECT}},
+                        {"project": "WEB"})
+        assert blocked and "WEB" in blocked["message"], blocked
+        blocked = guard({"name": "jira_comments", "schema": {"properties": KEY}},
+                        {"key": "WEB-7"})
+        assert blocked and "WEB-7" in blocked["message"], blocked
+        assert guard({"name": "jira_comments", "schema": {"properties": KEY}},
+                     {"key": "WEB-7".lower()}) is not None, "gemener ska inte slinka igenom"
+        assert guard({"name": "jira_comment", "schema": {"properties": KEY}},
+                     {"key": "SCRUM-7", "text": "handlar om WEB-12 och UTF-8"}) is None, \
+            "en nyckel i ett fritextfält är text, inte åtkomst"
+        assert guard({"name": "jira_comments", "schema": {"properties": KEY}},
+                     {"key": "SCRUM-7", "text": "om SCRUM-7"}) is None
+        assert guard({"name": "jira_status", "schema": {"properties": {}}}, {}) is None
+    finally:
+        LOCK = kept
+
+    locked = subprocess.Popen([sys.executable, os.path.abspath(__file__), "--project", "OTHER"],
+                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    def lrpc(obj):
+        locked.stdin.write(json.dumps(obj) + "\n")
+        locked.stdin.flush()
+        return json.loads(locked.stdout.readline())
+
+    lrpc({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": PROTOCOL}})
+    locked.stdin.write(json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n")
+    locked.stdin.flush()
+    denied = lrpc({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                   "params": {"name": "jira_comments", "arguments": {"key": "SCRUM-1"}}})
+    assert denied.get("error") and "SCRUM-1" in denied["error"]["message"], denied
+    allowed = lrpc({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                    "params": {"name": "jira_status", "arguments": {}}})
+    assert "isError" in allowed.get("result", {}), allowed
+    locked.stdin.close()
+    locked.wait(timeout=10)
     proc.wait(timeout=10)
     print("OK: {} verktyg; backlog {} ärenden ur '{}' (projekt {})."
           .format(len(names), body["count"], body["board"], body["project"]))
 
 
 if __name__ == "__main__":
-    selftest() if "--selftest" in sys.argv else serve()
+    if "--selftest" in sys.argv:
+        selftest()
+    else:
+        LOCK = lock_from(sys.argv)
+        serve()

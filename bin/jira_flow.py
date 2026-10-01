@@ -106,7 +106,11 @@ AGENT = os.environ.get("JIRA_FLOW_AGENT", "")  # tom = användarens lista, sedan
 # `jira_flow agent add|set|rm` -- ingen behöver vara beroende av någon annans val.
 # {prompt} i ett kommando betyder att CLI:t vill ha texten som argument; annars går
 # den på stdin (Hermes läser den därifrån).
-AGENT_CHAIN = ("hermes chat --query-file -", "agy -p {prompt}")
+AGENT_CHAIN = ("hermes chat --query-file - --format stream-json -Q", "agy -p {prompt}")
+# Den här raden stod i den skeppade listan förut. Har användaren inte rört den är
+# den fortfarande hans -- och då är den också fortfarande utan flaggan som gör svaret
+# läsbart. En egen skriven rad lämnas i fred: bara den ordagrant gamla standarden byts.
+AGENT_UPGRADE = {"hermes chat --query-file -": AGENT_CHAIN[0]}
 AGENT_TIMEOUT = int(os.environ.get("JIRA_FLOW_AGENT_TIMEOUT", "600"))
 # Ett agent-svar som inte gick att tolka hamnar här (0600). Annars finns ingenting
 # kvar att titta på när flödet säger att svaret var obrukbart.
@@ -1906,7 +1910,8 @@ def agents_from(config, override: str = ""):
         return [override.strip()]
     listed = (config or {}).get("agents")
     if isinstance(listed, list):
-        commands = [str(c).strip() for c in listed if str(c).strip()]
+        commands = [AGENT_UPGRADE.get(str(c).strip(), str(c).strip())
+                    for c in listed if str(c).strip()]
         if commands:
             return commands
     return list(AGENT_CHAIN)
@@ -1944,13 +1949,54 @@ def agent_argv(prompt: str):
         ", ".join(shlex.split(c)[0] for c in commands if shlex.split(c))))
 
 
-def ask_agent(prompt: str) -> str:
+def read_agent_reply(out: str) -> str:
+    """Svaret ur det CLI:t skrev -- inte dekoren runt det.
+
+    Med --format stream-json kommer svaret som NDJSON, och sista raden av typen
+    "result" bär texten. Allt annat (rutan, sessionsraden, resume-tipset) är CLI:ts
+    egen terminalutsmyckning och hör inte till svaret: den som läste det som ett svar
+    fick en ruta i knät. En CLI som skriver ren text (agy, claude -p) går rakt igenom
+    -- känner vi igen strömmen tar vi resultatet, annars är hela utdata svaret.
+    """
+    text, chunks, stream = "", [], False
+    for line in out.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict) or not event.get("type"):
+            continue
+        stream = True
+        if event["type"] == "text" and isinstance(event.get("text"), str):
+            chunks.append(event["text"])
+        elif event["type"] == "result" and isinstance(event.get("text"), str):
+            text = event["text"]
+    if text:
+        return text.strip()
+    if chunks:
+        return "".join(chunks).strip()
+    return "" if stream else out.strip()
+
+
+def ask_agent(prompt: str, env: dict = None) -> str:
     """Prompten in, svaret ut. Hermes i grunden, sedan Antigravity; JIRA_FLOW_AGENT
-    pekar på vilken CLI som helst som pratar stdin/stdout."""
+    pekar på vilken CLI som helst som pratar stdin/stdout.
+
+    `env` läggs ovanpå den ärvda miljön. Chatten skickar med GODJIRA_MCP_PROJECT där:
+    agenten startar sin MCP-koppling mot GodJIRA som underprocess och ärver variabeln,
+    så kopplingen är låst till projektet utan att någon config behöver röras.
+    """
     argv, stdin_text = agent_argv(prompt)
+    where = dict(os.environ)
+    where.update(env or {})
+    if not env:
+        where.pop("GODJIRA_MCP_PROJECT", None)
     try:
         done = subprocess.run(argv, input=stdin_text, capture_output=True, text=True,
-                              timeout=AGENT_TIMEOUT)
+                              timeout=AGENT_TIMEOUT, env=where)
     except FileNotFoundError:
         raise RuntimeError("{} is not installed".format(argv[0]))
     except subprocess.TimeoutExpired:
@@ -1958,7 +2004,113 @@ def ask_agent(prompt: str) -> str:
     if done.returncode != 0:
         raise RuntimeError("{} exited {}: {}".format(
             argv[0], done.returncode, (done.stderr or "").strip()[:200]))
-    return done.stdout
+    return read_agent_reply(done.stdout)
+
+
+CHAT_CHARS = 12000      # sammanhanget agenten får. Mer än så slutar den läsa och börjar gissa.
+
+
+def chat_prompt(project: str, repo: str, question: str, history=None, errors=None,
+                graph=None) -> str:
+    """Vad agenten får: frågan, sammanhanget den behöver, och gränsen för uppdraget.
+
+    Samtalet följer med varje tur. Det är hela skillnaden mot att hålla en session:
+    GodJIRA behöver inte minnas något mellan turerna, den skickar med det som sades.
+    """
+    lines = [
+        "You are the assistant inside GodJIRA, helping a developer with one repo and its Jira project.",
+        "",
+        "The project is {} and the GodJIRA MCP connection is locked to it: read and write that".format(project),
+        "project, nothing else. If a question needs another project, say so instead of guessing.",
+        "Answer in the language the question is written in. Be concrete -- name the issue key, the file,",
+        "the command -- and say plainly when you do not know. Say what you checked.",
+        "",
+        "Repository: {}".format(repo or "(not linked to a local clone yet)"),
+    ]
+    if graph:
+        counts = graph.get("counts") or {}
+        hubs = ", ".join("{}{}".format(str(h.get("package") or "").split(".")[-1],
+                                       " (" + str(h.get("usedBy")) + ")")
+                         for h in (graph.get("hubs") or [])[:5])
+        lines += [
+            "The knowledge graph: {} issues, {} files, {} packages, {} relations.".format(
+                counts.get("ärenden", "?"), counts.get("filer", "?"), counts.get("paket", "?"),
+                counts.get("relationer", "?")),
+            "Packages the rest leans on: {}".format(hubs or "(no imports read yet)"),
+        ]
+    if errors:
+        lines += ["", "What the panel itself cannot answer right now:"]
+        lines += ["- {}: {}".format(str(e.get("what") or "?"), str(e.get("why") or "")) for e in errors[:8]]
+    if history:
+        lines += ["", "The conversation so far:"]
+        for turn in history[-12:]:
+            who = "Developer" if str(turn.get("role")) == "user" else "Assistant"
+            lines.append("{}: {}".format(who, str(turn.get("text") or "").strip()[:1200]))
+    lines += ["", "The developer asks:", question.strip()]
+    text = "\n".join(lines)
+    if len(text) > CHAT_CHARS:
+        text = text[:CHAT_CHARS] + "\n\n[context cut here -- ask for the rest if you need it]"
+    return text
+
+
+def cmd_chat(args) -> int:
+    """En tur med agenten: frågan in, svaret ut.
+
+    Kopplingen är användarens egen kedja (samma som flödet använder) -- den väljs med
+    `jira_flow agent`. Projektet följer med i miljön, så agentens MCP-koppling mot
+    GodJIRA är låst till det projektet: den agenten ser inget annat.
+    """
+    question = (args.question or "").strip()
+    if not question and not sys.stdin.isatty():
+        question = sys.stdin.read().strip()
+    if not question:
+        say(args, {"ok": False, "error": "no question"},
+            ["nothing to ask -- give the question as an argument or on stdin"])
+        return 2
+    root = plan_repo_dir(args)
+    project, source = link_project(args)
+    if not project:
+        say(args, {"ok": False, "error": "no Jira project to ask about"},
+            ["no project to ask about -- link the repo first: jira_flow link set <repo> <PROJECT>"])
+        return 2
+    graph = {}
+    wherever = SCAN_FILE / "graph-{}.json".format(project)
+    if wherever.exists():
+        try:
+            graph = json.loads(wherever.read_text())
+        except (OSError, ValueError):
+            graph = {}
+    history, errors = [], []
+    for path, into in ((args.history, history), (args.context, errors)):
+        if not path:
+            continue
+        try:
+            loaded = json.loads(Path(path).read_text())
+        except (OSError, ValueError) as exc:
+            say(args, {"ok": False, "error": "{}: {}".format(type(exc).__name__, exc)},
+                ["could not read {}: {}".format(path, exc)])
+            return 2
+        into.extend(loaded if isinstance(loaded, list) else [])
+    prompt = chat_prompt(project, str(root or ""), question, history, errors, graph)
+    if args.dry_run:
+        print(prompt)
+        return 0
+    try:
+        answer = ask_agent(prompt, {"GODJIRA_MCP_PROJECT": project})
+    except RuntimeError as exc:
+        say(args, {"ok": False, "error": str(exc), "project": project},
+            ["the agent could not answer: {}".format(exc)])
+        return 2
+    answer = answer.strip()
+    who = ""
+    try:
+        who = Path(agent_argv("")[0][0]).name
+    except RuntimeError:
+        who = ""
+    say(args, {"ok": True, "project": project, "agent": who, "source": source,
+               "answer": answer, "promptChars": len(prompt)},
+        [answer] if answer else ["(the agent answered nothing)"])
+    return 0 if answer else 1
 
 
 def cmd_agent(args) -> int:
@@ -1969,6 +2121,14 @@ def cmd_agent(args) -> int:
     action = args.action or "list"
 
     if action == "list":
+        rows = [{"command": command,
+                 "binary": (shlex.split(command) or [""])[0],
+                 "installed": bool(shutil.which((shlex.split(command) or [""])[0]))}
+                for command in listed]
+        if getattr(args, "json", False):
+            say(args, {"ok": True, "agents": rows, "yours": "agents" in config,
+                       "anything": any(row["installed"] for row in rows)}, [])
+            return 0 if (any(row["installed"] for row in rows) or "agents" not in config) else 2
         for number, command in enumerate(listed, 1):
             first = shlex.split(command)[0] if shlex.split(command) else ""
             mark = "installed" if shutil.which(first) else "NOT installed"
@@ -2671,6 +2831,35 @@ def selftest() -> int:
     assert flowmap_text("bara svensk rad", "en") == "bara svensk rad", "rad utan översättning får källraden"
     assert all(flowmap_locale(tag) == tag for tag in FLOWMAP_CHROME), "ramen: varje språk med katalog"
     assert flowmap_locale("sv") == "sv" and flowmap_locale("fi") == "en", "ramen: vår katalog, annars engelska"
+    # Agentens svar: strömmen ger texten, dekoren runt den kastas. Provet är på
+    # formen, inte på en verklig körning -- den kostar minuter och en modell.
+    stream = ("{\"type\": \"system\", \"subtype\": \"init\", \"session_id\": \"abc\"}\n"
+              "{\"type\": \"text\", \"text\": \"KL\"}\n"
+              "{\"type\": \"text\", \"text\": \"ART\"}\n"
+              "{\"type\": \"result\", \"text\": \"KLART\", \"exit_code\": 0}\n"
+              "\nsession_id: abc\n")
+    assert read_agent_reply(stream) == "KLART", read_agent_reply(stream)
+    assert read_agent_reply("{\"type\": \"text\", \"text\": \"bara bitar\"}\n") == "bara bitar"
+    assert read_agent_reply("rent svar\nutan dekor\n") == "rent svar\nutan dekor"
+    assert read_agent_reply("") == "", "inget svar är tomt, inte dekorerat"
+    assert agents_from({"agents": ["hermes chat --query-file -"]}) == [AGENT_CHAIN[0]], \
+        "den gamla skeppade raden uppgraderas"
+    assert agents_from({"agents": ["hermes chat --query-file - --max-turns 3"]}) == \
+        ["hermes chat --query-file - --max-turns 3"], "en egen rad lämnas i fred"
+    checks += 1
+
+    asked = chat_prompt("SCRUM", "/tmp/klon", "varför står det så?",
+                        [{"role": "user", "text": "hej"}], [{"what": "flödet", "why": "inget svar"}],
+                        {"counts": {"ärenden": 131}, "hubs": [{"package": "x.model", "usedBy": 142}]})
+    assert "SCRUM" in asked and "varför står det så?" in asked, asked
+    assert "Developer: hej" in asked, "samtalet följer med"
+    assert "flödet: inget svar" in asked, "panelens egna fel följer med"
+    assert "model (142)" in asked, "grafen följer med"
+    assert "locked to it" in asked, "gränsen står i prompten"
+    big = chat_prompt("SCRUM", "", "x" * 40000)
+    assert len(big) <= CHAT_CHARS + 80 and "context cut here" in big, len(big)
+    checks += 1
+
     # Kunskapsgrafen: paket, filer och ärenden i en bild. Byggd ur en syntetisk scan och
     # ett minimalt repo, så provet mäter formen och inte dagens data -- den växer.
     with tempfile.TemporaryDirectory() as tmp:
@@ -3375,10 +3564,22 @@ def build_parser() -> argparse.ArgumentParser:
     p_next.add_argument("--json", action="store_true", help="machine-readable result (for an agent)")
     p_next.add_argument("--expect", metavar="KEY", default="",
                         help="take exactly KEY, which a human confirmed (the second press)")
+    p_chat = sub.add_parser("chat", help="ask your agent about the linked project (one turn)")
+    p_chat.add_argument("question", nargs="?", help="the question; empty reads stdin")
+    p_chat.add_argument("--repo", default="", help="a local clone to ask about")
+    p_chat.add_argument("--repo-name", default="", help="a repo by name (owner/name)")
+    p_chat.add_argument("--project", default="", help="the Jira project to lock the agent to")
+    p_chat.add_argument("--history", metavar="FILE", default="",
+                        help="the conversation so far: JSON [{role, text}, ...]")
+    p_chat.add_argument("--context", metavar="FILE", default="",
+                        help="what the panel cannot answer: JSON [{what, why}, ...]")
+    p_chat.add_argument("--dry-run", action="store_true", help="print what the agent would be asked")
+    p_chat.add_argument("--json", action="store_true", help="machine-readable result")
     p_agent = sub.add_parser("agent", help="your own agent list: list, add, set, rm")
     p_agent.add_argument("action", nargs="?", default="list",
                          choices=["list", "add", "set", "rm"])
     p_agent.add_argument("commands", nargs="*")
+    p_agent.add_argument("--json", action="store_true", help="machine-readable list")
     p_link = sub.add_parser("link", help="which Jira project and issue a repo belongs to")
     p_link.add_argument("action", nargs="?", default="list", choices=["list", "set", "rm"])
     p_link.add_argument("repo", nargs="?", help="the repo: owner/name, or a name")
@@ -3453,6 +3654,8 @@ def main(argv) -> int:
         return cmd_login(args)
     if args.cmd == "logout":
         return cmd_logout(args)
+    if args.cmd == "chat":
+        return cmd_chat(args)
     if args.cmd == "agent":
         return cmd_agent(args)
     if args.cmd == "pick":
