@@ -1781,6 +1781,104 @@ def posthog_save(payload: dict) -> tuple:
     return 200, dict(svar, sparad=True)
 
 
+# ---------------------------------------------------------------- kön
+#
+# Kön är hubbens framsida: allt som väntar på DIG, på ett ställe. Den hämtar ingenting --
+# den sätter ihop det panelen redan har svarat (körningarna, ärendena, PR:erna, nyckeln),
+# så den kostar inga anrop och går att prova med en handgjord state. Nycklarna är fragment
+# på svenska, som resten av appen: panelen skriver talet och i18n byter orden.
+NEED_ORDER = {"block": 0, "wait": 1, "info": 2}
+
+
+def is_mine(issue: dict, account: dict) -> bool:
+    """Samma regel som panelens filter ("Egna"): ansvarig på namn, annars på adress."""
+    name, mail = issue.get("assigneeName") or "", issue.get("assigneeEmail") or ""
+    return bool((name and name == (account.get("displayName") or ""))
+                or (mail and mail == (account.get("email") or "")))
+
+
+def needs_list(state: dict, limit: int = 4) -> list:
+    """Vad som väntar på dig. Ren funktion: inga anrop, ingen skrivning.
+
+    Talen är de sanna (antalet ärenden hos dig är hela talet); listorna kapas vid `limit`
+    och antalet står kvar, så en kapad rad ser inte ut som hela sanningen.
+    """
+    needs: list = []
+    token = state.get("token") or {}
+    github = state.get("github") or {}
+    runs = (state.get("runs") or {}).get("runs") or []
+    account = (state.get("jira") or {}).get("account") or {}
+    boards = (state.get("jira") or {}).get("boards") or [{}]
+    # Samma källa som panelens tabla använder (boardItems(): issues + backlog, en rad per
+    # nyckel). Att bara läsa `issues` missade de öppna ärenden som ligger i backloggen --
+    # alltså precis dem ingen har rört, som är de mest väntande av alla.
+    seen: set = set()
+    issues = [i for i in (boards[0].get("issues") or []) + (boards[0].get("backlog") or [])
+              if not (i.get("key") in seen or seen.add(i.get("key")))]
+
+    # 1. Körningar. En körning som öppnat en PR väntar på din merge -- det är människans
+    #    grind, och den skall synas. En körning som inte kom igenom väntar på ett beslut.
+    for run in runs[:6]:
+        key = str(run.get("key") or "")
+        if not key:
+            continue
+        if run.get("pr"):
+            needs.append({"kind": "merge", "level": "wait", "count": 1, "key": key,
+                          "label": "körningen väntar på din merge", "detail": run.get("branch") or "",
+                          "url": run.get("pr") or "", "view": "overview"})
+        elif run.get("ok") is False:
+            needs.append({"kind": "failed", "level": "wait", "count": 1, "key": key,
+                          "label": "körningen gick inte igenom",
+                          "detail": (run.get("note") or run.get("answer") or "")[:160],
+                          "view": "overview"})
+
+    # 2. Ärenden som bär ditt namn och inte är klara, och de som inte har någon alls --
+    #    den som ingen äger väntar på ett beslut, inte på arbete.
+    öppna = [i for i in issues if (i.get("statusCategory") or "") != "done"]
+    mina = sorted([i for i in öppna if is_mine(i, account)], key=lambda i: -(i.get("updatedMs") or 0))
+    if mina:
+        needs.append({"kind": "issues", "level": "info", "count": len(mina),
+                      "keys": [str(i.get("key") or "") for i in mina[:limit]],
+                      "label": "ärenden hos dig", "view": "items"})
+    ingen = sorted([i for i in öppna if not (i.get("assigneeName") or i.get("assigneeEmail"))],
+                   key=lambda i: -(i.get("updatedMs") or 0))
+    if ingen:
+        needs.append({"kind": "unowned", "level": "info", "count": len(ingen),
+                      "keys": [str(i.get("key") or "") for i in ingen[:limit]],
+                      "label": "utan ansvarig", "view": "items"})
+
+    # 3. PR:er och ärenden som ligger öppna på ditt GitHub-konto.
+    prs = github.get("pullRequests") or []
+    if prs:
+        needs.append({"kind": "prs", "level": "info", "count": len(prs),
+                      "label": "PR öppen", "detail": str((prs[0] or {}).get("title") or ""),
+                      "view": "repos"})
+    gh_issues = github.get("issues") or []
+    if gh_issues:
+        needs.append({"kind": "gh-issues", "level": "info", "count": len(gh_issues),
+                      "label": "ärenden öppna på GitHub",
+                      "detail": str((gh_issues[0] or {}).get("title") or ""), "view": "items"})
+
+    # 4. Nyckeln. Utgångsdatumet finns inte i något API, så ett okänt datum säger ingenting
+    #    -- bara Jiras eget svar (alert/note) eller en räknad utgång larmar.
+    if token.get("present") and not token.get("connected"):
+        needs.append({"kind": "key", "level": "block", "count": 1, "label": "nyckeln svarar inte",
+                      "detail": token.get("alert") or token.get("note") or "",
+                      "view": "settings"})
+    elif token.get("alert"):
+        needs.append({"kind": "key", "level": "wait", "count": 1, "label": "nyckeln går ut",
+                      "detail": str(token.get("alert") or ""), "view": "settings"})
+    elif (token.get("daysLeft") or 9999) <= (token.get("warnDays") or 14):
+        needs.append({"kind": "key", "level": "wait", "count": 1, "label": "nyckeln går ut",
+                      "detail": str(token.get("daysLeft")) + " dygn", "view": "settings"})
+    elif not token.get("present"):
+        needs.append({"kind": "setup", "level": "info", "count": 1, "label": "ingen nyckel kopplad",
+                      "view": "setup"})
+
+    needs.sort(key=lambda n: NEED_ORDER.get(str(n.get("level")), 9))
+    return needs[:limit + 4]
+
+
 def state() -> dict:
     """En läsning: flödet räknar ut projektet, projektet läser ur registret, resten är Jira, GitHub och journalen."""
     def build() -> dict:
@@ -1805,8 +1903,12 @@ def state() -> dict:
                     # redan i jira-svaret. Utan den här raden vore "nytt projekt" en
                     # knapp som inte gör något på en sajt där kontot inte får skapa.
                     "projectCan": pool.submit(lambda: cached("projectCan", project_can))}
-        return {"generatedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-                "flow": flow, **{name: job.result() for name, job in jobs.items()}}
+        answer = {"generatedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                  "flow": flow, **{name: job.result() for name, job in jobs.items()}}
+        # Kön sätts ihop ur svaret självt, sist: inga nya anrop, och allt den tittar på
+        # finns redan här.
+        answer["needs"] = needs_list(answer)
+        return answer
     return dict(cached("state", build))
 
 

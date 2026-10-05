@@ -596,6 +596,16 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   .bars .bar span { color: var(--text-2); font-size: 12px; }
   .bars .bar i { height: 7px; border-radius: 4px; background: var(--accent); display: block; }
   .bars .bar u { text-decoration: none; color: var(--muted); font-size: 11.5px; text-align: right; font-variant-numeric: tabular-nums; }
+  /* Kön: en rad per sak som väntar, med sin allvarsgrad i pricken. Rader och luft lånas
+     av appens egna block (.wl/.r) -- bara färgen är ny. */
+  .wl .r.need { cursor: pointer; }
+  .wl .r.need:hover { background: var(--card-hi); }
+  .wl .r.need.block { border-left: 2px solid var(--red); }
+  .wl .r.need.wait { border-left: 2px solid var(--amber); }
+  .wl .r.need.info { border-left: 2px solid transparent; }
+  .wl .r.need .dot { background: var(--muted); }
+  .wl .r.need.wait .dot { background: var(--amber); }
+  .wl .r.need.block .dot { background: var(--red); }
   .runNote { padding: 0 13px 12px; color: var(--text-2); font-size: 12px; }
   .runNote .okdot { color: var(--green); }
   .cockpit .facts { margin-top: 14px; }
@@ -636,6 +646,10 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
       <div class="ovtools">
         <button class="chip" data-act="ov-edit" id="editChip">✎ ändra</button>
         <span class="meta" id="editNote" hidden>dra raderna dit du vill ha dem — ordningen sparas</span>
+      </div>
+      <div class="panel" data-ov="needs" data-unit="needs">
+        <h3>Väntar på dig <span class="meta" id="needsMeta"></span></h3>
+        <div class="body" id="needsBox"></div>
       </div>
       <div class="panel cockpit" data-ov="agents" data-unit="agents">
         <h3>Agenterna <span class="meta" id="agentsMeta"></span></h3>
@@ -3966,6 +3980,13 @@ function renderChat() {
   document.getElementById("chatSend").disabled = CHAT_BUSY;
   if (renderChat.wired) return;
   renderChat.wired = true;
+  // Kön: en rad öppnar det den handlar om (PR-adressen om den har en, annars vyn).
+  document.getElementById("needsBox").addEventListener("click", e => {
+    const rad = e.target.closest("[data-need]");
+    if (!rad) return;
+    if (rad.dataset.url) { window.open(rad.dataset.url, "_blank", "noopener"); return; }
+    if (rad.dataset.need) show(rad.dataset.need);
+  });
   document.getElementById("chatSend").addEventListener("click", chatSend);
   document.getElementById("chatClear").addEventListener("click", () => {
     CHAT = []; CHAT_NOTE = ""; renderChat();
@@ -4102,6 +4123,30 @@ function renderAgents() {
 }
 
 
+// Kön: vad som väntar på dig. Servern har räknat (needs i /api/state) ur samma svar --
+// panelen skriver talet och gör raden klickbar. Väntar ingenting ritas panelen inte alls.
+function renderNeeds() {
+  const box = document.getElementById("needsBox");
+  if (!box) return;
+  const panel = box.closest(".panel");
+  const rows = (STATE && STATE.needs) || [];
+  if (!rows.length) { panel.hidden = true; return; }
+  const antal = rows.reduce((n, r) => n + (r.count > 1 ? r.count : 1), 0);
+  panel.hidden = false;
+  document.getElementById("needsMeta").textContent = antal + (antal === 1 ? " sak" : " saker");
+  box.innerHTML = '<div class="wl">' + rows.map(n =>
+    '<div class="r need ' + esc(n.level || "info") + '" data-need="' + esc(n.view || "") + '"' +
+    (n.url ? ' data-url="' + esc(n.url) + '"' : "") + '>' +
+    '<span class="dot"></span>' +
+    '<span class="t">' + (n.count > 1 ? n.count + " " : "") + esc(n.label) +
+      (n.key ? ' <span class="key">' + esc(n.key) + "</span>" : "") +
+      (n.detail ? ' <span class="meta">' + esc(n.detail) + "</span>" : "") + "</span>" +
+    ((n.keys || []).length
+      ? '<span class="tside">' + n.keys.map(k => '<span class="key">' + esc(k) + "</span>").join(" ") + "</span>"
+      : "") +
+    "</div>").join("") + "</div>";
+}
+
 function render() {
   if (!STATE) return;
   renderRail(); renderSide(); renderCrumbs(); renderFilters(); renderItemProject();
@@ -4129,7 +4174,7 @@ function render() {
   document.getElementById("filtersRow").hidden = !["board", "items"].includes(view);
   // Projektväljaren hör till Uppgifter; i andra vyer vore den en död ratt.
   document.getElementById("itemProject").hidden = view !== "items";
-  if (view === "overview") { renderAgentWeek(); renderRuns(); renderStats(); renderAutomation(); renderFlowPick(); renderJournal(); renderRecent(); }
+  if (view === "overview") { renderNeeds(); renderAgentWeek(); renderRuns(); renderStats(); renderAutomation(); renderFlowPick(); renderJournal(); renderRecent(); }
   if (view === "board") renderBoard();
   if (view === "chat") { renderChat(); if (!AGENTS) agentLoad(); }
   if (view === "items") renderItems();

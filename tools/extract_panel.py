@@ -137,9 +137,15 @@ for m in re.finditer(r"'((?:[^'\\\n]|\\.){2,200})'", script):
 # som egna ord mellan två räknade tal. Ingen av dem syns för textstyckena.
 # "provläge: …" kommer ur panel/server.py (provlägets kvitto), inte ur index.html, men
 # den syns på skärmen och går att byta på samma sätt som resten.
+# Ord inuti ${...} och strängar som byggs i panelen. Kön skrivs av SERVERN (needs_list i
+# server.py) och ritas ordagrant av panelen: de raderna finns ingen annanstans i markupen,
+# så utan dem tappar en omkörning av --json dem.
 EXTRA = ("oassignerat", "standarden", "nytt projekt", "privata", "publika",
          "Utseende", "följ skrivbordet", "ljust", "mörkt",
-         "provläge: exempeldata, inget konto kopplat", "ur filen", "st")
+         "provläge: exempeldata, inget konto kopplat", "ur filen", "st",
+         "körningen väntar på din merge", "ärenden hos dig", "PR öppen",
+         "nyckeln svarar inte", "ingen nyckel kopplad",
+         "utan ansvarig", "ärenden öppna på GitHub")
 for word in EXTRA:
     found.setdefault(word, set()).add("extra")
 
