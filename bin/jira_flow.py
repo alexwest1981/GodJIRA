@@ -148,7 +148,8 @@ PLAN_WORDS = {
         "wish": "Kundens önskemål",
         "project": "Projekt",
         "documents": "dokument", "document": "dokument", "cut": "klippt",
-        "overview": "Översikt", "kinds": "Typer",
+        "chars": "tecken",
+        "overview": "Översikt", "kinds": "Typer", "of": "av",
         "sprint": "Sprint", "issue": "uppgift", "issues": "uppgifter",
         "holds": "Innehåller", "under": "under", "empty": "inget i den här sprinten",
         "note": "Det här är ett förslag. Ingenting är skrivet till Jira än. När det skrivs "
@@ -160,7 +161,8 @@ PLAN_WORDS = {
         "wish": "What the customer asked for",
         "project": "Project",
         "documents": "documents", "document": "document", "cut": "truncated",
-        "overview": "Overview", "kinds": "Types",
+        "chars": "characters",
+        "overview": "Overview", "kinds": "Types", "of": "of",
         "sprint": "Sprint", "issue": "task", "issues": "tasks",
         "holds": "Holds", "under": "under", "empty": "nothing in this sprint",
         "note": "This is a proposal. Nothing is written to Jira yet. When it is, it is "
@@ -224,8 +226,12 @@ p.source { color: #7c8481; font-size: 8pt; margin: 0; }
 # Underlaget agenten får utöver själva önskemålet. Taken finns för att en agent
 # som får 300 000 tecken slutar läsa och börjar gissa; allt som klipps bort sägs
 # det om i prompten, så ett kort svar aldrig ser ut som ett fullständigt underlag.
-DOC_CHARS = 6000        # per dokument
-TOTAL_CHARS = 20000     # alla dokument tillsammans
+# Budgetarna går att styra per körning. Mätt 2026-10-05: ett kravdokument på 7999 tecken
+# förlorade sina sista 1999 (25 %) -- och det som klipptes bort var just kravlistan och
+# sista avsnittet, alltså det en plan skall vila på. 6000 var för snålt för den här sortens
+# dokument; taken finns för att skydda modellen, inte för att spara in ett par sidor.
+DOC_CHARS = int(os.environ.get("JIRA_FLOW_DOC_CHARS", "20000"))     # per dokument
+TOTAL_CHARS = int(os.environ.get("JIRA_FLOW_TOTAL_CHARS", "60000"))  # alla dokument tillsammans
 MAX_FILES = 20          # filer ur en mapp, fler än så är inte ett önskemål
 COMMITS = 30            # rader ur git-historiken
 REPO_ROWS = 10          # öppna PR:er, ärenden och commits i repo-detaljen
@@ -2800,7 +2806,22 @@ def sprint_holds(items: list, words: dict) -> str:
     return ", ".join(names[:3]) or words["empty"]
 
 
-def plan_document(items: list, meta: dict, lang: str = "") -> str:
+def avklippt(documents, words: dict) -> str:
+    """Markören för underlag som klipptes: vad som visades av vad som fanns.
+
+    Ren funktion, så att den går att prova: summan av det visade mot summan av det hela,
+    över de dokument som faktiskt klipptes.
+    """
+    klippta = [n for n in documents or [] if (n or {}).get("truncated")]
+    if not klippta:
+        return ""
+    visat = sum(n.get("chars") or 0 for n in klippta)
+    helt = sum(n.get("documentChars") or 0 for n in klippta)
+    return " ({}: {} {} {} {})".format(words["cut"], visat, words.get("of") or "av",
+                                       helt, words.get("chars") or "tecken")
+
+
+def plan_document(items, meta, lang: str = "") -> str:
     """Fördelningen som en A4-sida HTML: översikt över sprintarna, sedan varje sprint med
     sina uppgifter. Ren funktion -- inget anrop, ingen fil, ingenting skrivet."""
     words = plan_words(lang)
@@ -2819,7 +2840,9 @@ def plan_document(items: list, meta: dict, lang: str = "") -> str:
         meta.get("documents") and "{} {}{}".format(
             len(meta["documents"]),
             words["documents"] if len(meta["documents"]) > 1 else words["document"],
-            " ({})".format(words["cut"]) if any(n.get("truncated") for n in meta["documents"]) else ""),
+            # Markören säger hur mycket som klipptes, inte bara att något gjorde det:
+            # "klippt" utan siffror säger inte om det saknas en rad eller en tredjedel.
+            avklippt(meta["documents"], words)),
     ] if x)
 
     rows = []
@@ -4366,6 +4389,19 @@ def selftest() -> int:
         raise AssertionError("platshållartext skulle ha vägrats")
     except ValueError as exc:
         assert "echoed" in str(exc), exc
+    # Markören för klippt underlag: siffrorna med, och tom när inget klipptes. Ett kravdokument
+    # på 7999 tecken tappade sina sista 1999 med den gamla budgeten, och "klippt" utan siffror
+    # sade inte om det saknades en rad eller en tredjedel.
+    ordbok = PLAN_WORDS["sv"]
+    assert avklippt([], ordbok) == "", "inget klippt underlag ger ingen markör"
+    assert avklippt([{"chars": 8000, "documentChars": 8000}], ordbok) == "", "helt underlag tiger"
+    assert avklippt([{"chars": 6000, "documentChars": 7999, "truncated": True}], ordbok) == \
+        " (klippt: 6000 av 7999 tecken)", avklippt([{"chars": 6000, "documentChars": 7999, "truncated": True}], ordbok)
+    assert avklippt([{"chars": 100, "documentChars": 200, "truncated": True},
+                     {"chars": 50, "documentChars": 150, "truncated": True}], ordbok) == \
+        " (klippt: 150 av 350 tecken)", "två klippta dokument summeras"
+    assert DOC_CHARS >= 20000 and TOTAL_CHARS >= DOC_CHARS, "budgetarna skall rymma ett kravdokument"
+
     # Ett svar på 16 ärenden är ett riktigt svar, inte ett tak-fel: en pdf gav precis det,
     # och hela förslaget kastades. Taket skall bara fånga en agent som spårar ur.
     riktigt = "[" + ",".join('{"summary": "uppgift %d"}' % i for i in range(16)) + "]"
