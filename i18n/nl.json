@@ -265,5 +265,6 @@
   "timeline.noSprintRange": "{count} issues zonder sprint",
   "timeline.noSprintRangeOne": "{count} issue zonder sprint",
   "timeline.noSprints": "Dit bord heeft geen sprints. Maak sprints in Jira aan, dan verschijnen ze hier.",
-  "timeline.sprintEmpty": "Geen issues in de sprint."
+  "timeline.sprintEmpty": "Geen issues in de sprint.",
+  "plan.pdf": "De verdeling openen"
 }

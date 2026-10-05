@@ -265,5 +265,6 @@
   "timeline.noSprintRange": "{count} Vorgänge ohne Sprint",
   "timeline.noSprintRangeOne": "{count} Vorgang ohne Sprint",
   "timeline.noSprints": "Dieses Board hat keine Sprints. Lege Sprints in Jira an, dann erscheinen sie hier.",
-  "timeline.sprintEmpty": "Keine Vorgänge im Sprint."
+  "timeline.sprintEmpty": "Keine Vorgänge im Sprint.",
+  "plan.pdf": "Die Aufteilung öffnen"
 }

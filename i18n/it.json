@@ -265,5 +265,6 @@
   "timeline.noSprintRange": "{count} issue senza sprint",
   "timeline.noSprintRangeOne": "{count} issue senza sprint",
   "timeline.noSprints": "Questa bacheca non ha sprint. Crea gli sprint in Jira e compariranno qui.",
-  "timeline.sprintEmpty": "Nessuna issue nello sprint."
+  "timeline.sprintEmpty": "Nessuna issue nello sprint.",
+  "plan.pdf": "Apri la distribuzione"
 }

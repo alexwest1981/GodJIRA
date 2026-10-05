@@ -265,5 +265,6 @@
   "timeline.noSprintRange": "{count} chamados sem sprint",
   "timeline.noSprintRangeOne": "{count} chamado sem sprint",
   "timeline.noSprints": "Este quadro não tem sprints. Crie sprints no Jira e eles aparecem aqui.",
-  "timeline.sprintEmpty": "Nenhum chamado na sprint."
+  "timeline.sprintEmpty": "Nenhum chamado na sprint.",
+  "plan.pdf": "Abrir a divisão"
 }

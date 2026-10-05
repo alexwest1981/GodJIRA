@@ -976,6 +976,7 @@ const TEXT = {
   paketet: "paketet", visaAlla: "visa alla", visaFärre: "visa färre", stäng: "stäng",
   n8nCanvas: "n8n:s egen tavla", under: "under", readCode: "läst ur repot",
   sprint: "sprint", planPdf: "Fördelningen (PDF)",
+  planSprints: "lägg dem i sprintar (två veckor)",
   none: "utan",
 };
 // Flikarna: nycklarna här, markupen i vyn. Deklarationerna måste ligga före allt som
@@ -3621,7 +3622,7 @@ function renderRepos() {
 // proposed items to write -- never issue text of its own.
 const IMP = { files: [], plan: [], token: "", spent: false, keep: new Set(), busy: false,
               note: "", bad: false, created: [], project: "", projectSource: "", repo: "",
-              pdf: false, pdfError: "" };
+              pdf: false, pdfError: "", sprints: false, made: [], sprintError: "" };
 const projectKey = () => (board() || {}).projectKey || "SCRUM";
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const jiraMode = () => (STATE && STATE.jira.mode === "real" ? "skarpt läge" : "provläge");
@@ -3719,6 +3720,7 @@ function renderImport() {
         <button class="chip" data-act="imp-none">bocka av alla</button>
         <span class="grow"></span>
         ${IMP.pdf ? `<a class="chip" href="/api/import/pdf?token=${encodeURIComponent(IMP.token)}" download>${TEXT.planPdf}</a>` : ""}
+        <button class="chip${IMP.sprints ? " on" : ""}" data-act="imp-sprints">${TEXT.planSprints}</button>
         <button class="chip on" data-act="imp-apply" ${IMP.keep.size && !IMP.busy && !IMP.spent && mayCreateIssues().ok ? "" : "disabled"}>
           Skapa ${plural(IMP.keep.size, "ärende", "ärenden")} i ${esc(IMP.project || projectKey())} (${jiraMode()})
         </button>
@@ -3729,12 +3731,17 @@ function renderImport() {
   done.hidden = !IMP.created.length;
   if (IMP.created.length) {
     document.getElementById("impDoneMeta").textContent =
-      IMP.created.length + " skrivna i " + (IMP.project || projectKey());
+      IMP.created.length + " skrivna i " + (IMP.project || projectKey()) +
+      (IMP.made.length ? " · " + plural(IMP.made.length, "sprint", "sprintar") : "");
     document.getElementById("impDone").innerHTML = IMP.created.map(c => `<div class="r">` +
       link(jiraOrigin() ? `${jiraOrigin()}/browse/${c.key}` : "",
            `<span class="key">${esc(c.key || "")}</span> <span class="t">${esc(c.summary || "")}</span>` +
            (c.epic ? `<span class="meta">${esc(TEXT.under)} ${esc(c.epic)}</span>` : "") + ("")) +
-      `</div>`).join("");
+      `</div>`).join("") +
+      // Sprintarna sist: de är vad ärendena lades i, inte ärenden.
+      IMP.made.map(s => `<div class="r"><span class="t">${esc(s.name || "")}</span>` +
+        `<span class="meta">${esc(s.start || "")} – ${esc(s.end || "")}</span>` +
+        `<span class="meta">${esc((s.keys || []).join(", "))}</span></div>`).join("");
   }
 }
 
@@ -3772,17 +3779,27 @@ async function impApply() {
   const keep = [...IMP.keep].sort((a, b) => a - b);
   if (!keep.length || IMP.busy || IMP.spent) return;
   const project = IMP.project || projectKey();
-  if (!window.confirm(`Skapa ${plural(keep.length, "ärende", "ärenden")} i ${project} (${jiraMode()})?`)) return;
+  // Raden om sprintarna är den redan översatta etiketten, inte en egen mening: en
+  // window.confirm översätts aldrig av panelen (den är ingen textnod), så en ny nyckel
+  // hade varit en rad ingen kunde läsa.
+  const extra = IMP.sprints ? "\n\n" + TEXT.planSprints : "";
+  if (!window.confirm(`Skapa ${plural(keep.length, "ärende", "ärenden")} i ${project} (${jiraMode()})?${extra}`)) return;
   IMP.busy = true; IMP.note = `skriver ${keep.length} ärenden i ${project} …`; renderImport();
   try {
     const r = await fetch("/api/import/apply", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: IMP.token, keep }) });
+      body: JSON.stringify({ token: IMP.token, keep, sprints: IMP.sprints }) });
     const answer = await r.json();
     IMP.created = answer.created || [];
+    IMP.made = answer.sprints || [];
+    IMP.sprintError = answer.sprintError || "";
     IMP.spent = true;                       // one approval, used once -- also when it failed
     if (answer.ok) {
       IMP.plan = []; IMP.keep = new Set(); IMP.pdf = false;   // godkännandet är förbrukat, och pappret med det
-      IMP.bad = false; IMP.note = `${plural(IMP.created.length, "ärende", "ärenden")} skapade i ${project}`;
+      IMP.bad = false;
+      IMP.note = `${plural(IMP.created.length, "ärende", "ärenden")} skapade i ${project}` +
+        (IMP.made.length ? ` · ${plural(IMP.made.length, "sprint", "sprintar")}` : "") +
+        (IMP.sprintError ? ` · sprintarna skrevs inte: ` + IMP.sprintError.slice(0, 120) : "");
+      if (IMP.sprintError) IMP.bad = true;
       load(false);                          // the board changed: read it again
     } else {
       IMP.bad = true;
@@ -4252,6 +4269,9 @@ document.addEventListener("click", e => {
     if (FLOW.stores) delete FLOW.stores[CODE.key];
     try { localStorage.removeItem("godjira.flow." + CODE.key); } catch { /* utan lagring */ }
     return renderCodeMap();
+  }
+  if (e.target.closest('[data-act="imp-sprints"]')) {
+    IMP.sprints = !IMP.sprints; return renderImport();     // vad Skapa-knappen gör om
   }
   if (e.target.closest('[data-act="imp-all"]')) { IMP.keep = new Set(IMP.plan.map((_, i) => i)); return renderImport(); }
   if (e.target.closest('[data-act="imp-none"]')) { IMP.keep = new Set(); return renderImport(); }

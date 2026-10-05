@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import Quickshell
 import qs.Commons
 import qs.Ui
 
@@ -31,9 +32,14 @@ Item {
   property string error: ""
   property string skipped: ""
   property string linkDraft: ""
+  property string pdfPath: ""
   property bool busy: false
   property bool picking: false
   property bool dragging: false
+
+  // Pappret skrivs på ett fast ställe i användarens egen state-katalog. Motorn skapar
+  // mappen om den inte finns, och filen skrivs om vid varje tolkning.
+  readonly property string sheetPath: Quickshell.env("HOME") + "/.local/state/jira-flow/plan.pdf"
 
   // Vad en post heter i listan: filen, eller länken som den skrevs.
   function paperLabel(item) {
@@ -132,6 +138,9 @@ Item {
     var args = ["plan", "--json"]
     if (wish.trim() !== "") args.push("--text", wish)
     for (var i = 0; i < papers.length; i++) args.push("--context", String(papers[i]))
+    // Fördelningen som papper, på ett fast ställe i användarens egen state-katalog:
+    // motorn skapar mappen om den inte finns, och knappen nedan öppnar filen.
+    if (!create) args.push("--pdf", planView.sheetPath)
     if (create) args.push("--create")
     app.callFlow(args, function(parsed) {
       planView.busy = false
@@ -155,6 +164,7 @@ Item {
       } else {
         planView.proposal = parsed.proposal || []
         planView.created = []
+        planView.pdfPath = parsed.pdf || ""
       }
     })
   }
@@ -314,6 +324,17 @@ Item {
           enabled: !planView.busy && planView.proposal.length > 0
           tooltipText: planView.t("plan.hint")
           onClicked: planView.run(true)
+        }
+
+        // Pappret med fördelningen: öppnas i läsaren, inte i panelen. Knappen finns
+        // bara när filen blev något -- en knapp till ingenting är värre än ingen knapp.
+        Button {
+          text: planView.t("plan.pdf")
+          bordered: true
+          fontSize: Style.font.caption
+          horizontalPadding: Style.space(8)
+          visible: planView.pdfPath !== ""
+          onClicked: Util.execDetached("xdg-open " + Util.shellQuote(planView.pdfPath))
         }
       }
 

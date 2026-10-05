@@ -27,6 +27,7 @@ Commands
         hermes, then agy. JIRA_FLOW_AGENT overrides it for one run.
     plan [--text TEXT | --file PATH] [--context PATH|URL]... [--repo DIR]
          [--create] [--json] [--project KEY] [--pdf PATH] [--lang CODE]
+         [--sprints] [--sprint-weeks N] [--sprint-start YYYY-MM-DD]
         Hands the customer's wish to the agent you have chosen (JIRA_FLOW_AGENT,
         "claude -p" by default -- any CLI that reads a prompt on stdin and answers
         with JSON works) and gets issue proposals back. GodJIRA never calls a model
@@ -85,7 +86,7 @@ import zipfile
 from base64 import b64encode
 from html import escape, unescape
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 SELF = Path(__file__).resolve()
@@ -2078,6 +2079,23 @@ class Http:
                  "content": [{"type": "text", "text": item["description"]}]}]}
         return self.request("POST", "/rest/api/3/issue", {"fields": fields})
 
+    def comment(self, key: str, text: str) -> None:
+        """En kommentar. Kroppen är ADF, en stycke-nod per rad -- API v3 avvisar en vanlig
+        sträng, och en enda nod med radbrytningar inuti är inte samma sak som rader."""
+        content = [{"type": "paragraph", "content": [{"type": "text", "text": line}]}
+                   for line in (str(text).splitlines() or [""])]
+        self.request("POST", "/rest/api/3/issue/{}/comment".format(key),
+                     {"body": {"type": "doc", "version": 1, "content": content}})
+
+    def sprint_create(self, board_id: str, name: str, start: str, end: str) -> dict:
+        return self.request("POST", "/rest/agile/1.0/sprint",
+                            {"name": name, "originBoardId": board_id,
+                             "startDate": start, "endDate": end})
+
+    def sprint_add(self, sprint_id: str, keys: list) -> None:
+        self.request("POST", "/rest/agile/1.0/sprint/{}/issue".format(sprint_id),
+                     {"issues": list(keys)})
+
     def log(self, action: str, key: str, detail: str = "", ok: bool = True) -> None:
         LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
         LOG_FILE.parent.chmod(0o700)
@@ -2106,6 +2124,20 @@ class Bridge:
 
     def move(self, key: str, status: str) -> None:
         self.jb.real_move(self.cfg, key, status)
+
+    def comment(self, key: str, text: str) -> None:
+        """Bryggans egen kommentar: den bygger ADF och läser tillbaka ärendet efteråt."""
+        self.jb.real_add_comment(self.cfg, key, text)
+
+    def sprint_create(self, board_id: str, name: str, start: str, end: str) -> dict:
+        """Bryggan skapar sprinten OCH läser tillbaka den: Jira svarar inte alltid med
+        raden, och ett svar utan id ser ut som en sprint som finns."""
+        return self.jb.real_sprint_create(self.cfg, board_id, name, start=start, end=end)
+
+    def sprint_add(self, sprint_id: str, keys: list) -> None:
+        """Bryggan lägger ärendena i sprinten och kontrollerar att de verkligen hamnade
+        där innan den svarar -- den flyttar ingenting tyst."""
+        self.jb.real_sprint_add(self.cfg, sprint_id, list(keys))
 
     def log(self, action: str, key: str, detail: str = "", ok: bool = True) -> None:
         self.jb.log_action(self.cfg, action, key, detail=detail, ok=ok)
@@ -2504,6 +2536,53 @@ def agent_label(answered_by) -> str:
     if isinstance(answered_by, str):
         return os.path.basename(answered_by) or answered_by
     return (answered_by or ["(no agent answered)"])[0]
+
+
+def sprint_windows(start: str, weeks: int, count: int) -> list:
+    """Start- och slutdatum per sprint, back to back ur startdagen. Ren funktion, så
+    provet kan mata den med ett eget datum i stället för med dagens."""
+    day = date.today()
+    if str(start or "").strip():
+        day = datetime.strptime(str(start).strip(), "%Y-%m-%d").date()
+    width = max(1, int(weeks or 2))
+    windows = []
+    for number in range(max(1, int(count or 1))):
+        first = day + timedelta(days=7 * width * number)
+        windows.append((first.isoformat(), (first + timedelta(days=7 * width - 1)).isoformat()))
+    return windows
+
+
+def sprint_write(client_, board: dict, placed: list, weeks: int, start: str) -> list:
+    """En sprint per nummer i förslaget, med sina ärenden i. Vad som skapades svaras.
+
+    Ärendena skrivs först och flyttas in efteråt: Jira delar ut nycklarna vid skapandet,
+    och en sprint med ärenden i är ett andra steg. En sprint som redan står på tavlan med
+    samma namn används i stället för att en ny skapas -- importen skall gå att köra om en
+    gång utan att tavlan fylls av två likadana "Sprint 1".
+    """
+    numbers = sorted({int(n) for n, _ in placed})
+    if not numbers or not str((board or {}).get("id") or "").strip():
+        raise RuntimeError("the board did not say which board it is; no sprint to create in")
+    known = {str(s.get("name") or "").strip().lower(): s for s in (board.get("sprints") or [])}
+    windows = sprint_windows(start, weeks, max(numbers))
+    made = []
+    for number in numbers:
+        name = "Sprint {}".format(number)
+        first, last = windows[number - 1]
+        row = known.get(name.lower()) or {}
+        sprint_id = str(row.get("id") or "")
+        if not sprint_id:
+            row = client_.sprint_create(str(board["id"]), name, first, last) or {}
+            sprint_id = str(row.get("id") or "")
+            if not sprint_id:
+                raise RuntimeError("Jira took {} but gave back no id".format(name))
+        keys = [key for n, key in placed if int(n) == number and key]
+        if keys:
+            client_.sprint_add(sprint_id, keys)
+        made.append({"name": name, "id": sprint_id, "keys": keys,
+                     "start": str(row.get("startDate") or first),
+                     "end": str(row.get("endDate") or last)})
+    return made
 
 
 def agents_from(config, override: str = ""):
@@ -3167,7 +3246,8 @@ def cmd_plan(client_, args) -> int:
             answer = {"key": answer}
         key = answer.get("key") or (answer.get("result") or {}).get("key") or ""
         created.append({"key": key, "summary": item["summary"], "type": item.get("type"),
-                        "epic": item.get("parentKey") or ""})
+                        "epic": item.get("parentKey") or "",
+                        "sprint": int(item.get("sprint") or 1)})
         keys[item["summary"]] = key
         if not args.json:
             print("created: {}  {}{}".format(key or "(no key back)", item["summary"],
@@ -3175,8 +3255,31 @@ def cmd_plan(client_, args) -> int:
                                              if item.get("parentKey") else ""))
     for entry in created:
         client_.log("flow-plan", entry["key"], entry["summary"][:80])
+    # Sprintarna skrivs EFTER ärendena: Jira delar ut nycklarna vid skapandet, och en
+    # sprint med ärenden i är ett andra steg. Att skapa sprintar rör tavlan, så det görs
+    # bara när någon bad om det (--sprints) -- och ett fel här lämnar ärendena i fred
+    # och säger var det stannade.
+    sprints_made, sprint_error = [], ""
+    if getattr(args, "sprints", False):
+        placed = [(entry.get("sprint") or 1, entry.get("key") or "") for entry in created]
+        try:
+            sprints_made = sprint_write(client_, board, placed,
+                                        getattr(args, "sprint_weeks", 2),
+                                        getattr(args, "sprint_start", ""))
+        except Exception as exc:  # noqa: BLE001 -- tavlan är skriven, det skall sägas
+            sprint_error = "{} ({} issues are written)".format(
+                exc if str(exc) else type(exc).__name__, len(created))
+        for row_ in sprints_made:
+            client_.log("flow-plan-sprint", row_["id"], row_["name"])
+            if not args.json:
+                print("sprint: {}  {} -> {}  ({})".format(
+                    row_["name"], row_["start"], row_["end"],
+                    ", ".join(row_["keys"]) or "no issues"))
+        if sprint_error and not args.json:
+            print("jira_flow: the sprints were not written: " + sprint_error)
     say(args, {"ok": True, "created": created, "proposal": items, "project": project,
                "projectSource": project_source,
+               "sprints": sprints_made, "sprintError": sprint_error,
                "pdf": pdf_path, "pdfError": pdf_error,
                "agent": answered_by, "context": context_note}, [])
     return 0
@@ -4250,6 +4353,54 @@ def selftest() -> int:
         assert cmd_plan(cranky, plan_argv) == 2, "en krasch ska ge fel, inte tyst halv tavla"
         assert len(cranky.written) == 1, "och ska ha skrivit precis ett ärende"
 
+        # Sprintarna: fönstren räknas ur startdagen, och skrivningen gör en sprint per
+        # nummer och lägger ärendena i den. En sprint som redan står på tavlan används i
+        # stället för att en andra "Sprint 1" skapas.
+        assert sprint_windows("2026-01-05", 2, 2) == [("2026-01-05", "2026-01-18"),
+                                                     ("2026-01-19", "2026-02-01")], \
+            sprint_windows("2026-01-05", 2, 2)
+        assert sprint_windows("2026-01-05", 1, 1) == [("2026-01-05", "2026-01-11")], "en vecka"
+
+        class SprintClient(FakeClient):
+            def __init__(self):
+                FakeClient.__init__(self)
+                self.made, self.added = [], []
+
+            def board(self, project):
+                row = FakeClient.board(self, project)
+                row["sprints"] = [{"id": "31", "name": "Sprint 1"}]
+                return row
+
+            def sprint_create(self, board_id, name, start, end):
+                self.made.append((board_id, name, start, end))
+                return {"id": str(40 + len(self.made)), "name": name,
+                        "startDate": start, "endDate": end}
+
+            def sprint_add(self, sprint_id, keys):
+                self.added.append((sprint_id, list(keys)))
+
+        globals()["ask_agent"] = lambda prompt: ('[{"summary": "A", "sprint": 1}, '
+                                                 '{"summary": "B", "sprint": 2}, '
+                                                 '{"summary": "C", "sprint": 2}]')
+        sprinty = SprintClient()
+        sprint_argv = argparse.Namespace(file="", text="kunden vill boka", create=True, json=True,
+                                         project="SCRUM", sprints=True, sprint_weeks=2,
+                                         sprint_start="2026-01-05")
+        captured = io.StringIO()
+        sys.stdout = captured
+        try:
+            assert cmd_plan(sprinty, sprint_argv) == 0, "sprintarna skrivs efter ärendena"
+        finally:
+            sys.stdout = Quiet()
+        out = json.loads(captured.getvalue())
+        assert [row["name"] for row in out["sprints"]] == ["Sprint 1", "Sprint 2"], out["sprints"]
+        assert out["sprints"][0]["id"] == "31", "sprinten som fanns återanvänds: " + repr(out["sprints"])
+        assert sprinty.made == [("7", "Sprint 2", "2026-01-19", "2026-02-01")], sprinty.made
+        assert sprinty.added == [("31", ["SCRUM-901"]), ("41", ["SCRUM-902", "SCRUM-903"])], \
+            sprinty.added
+        assert out["sprintError"] == "" and out["sprints"][0]["keys"] == ["SCRUM-901"], out
+        checks += 1
+
         # Den godkända listan: panelen visar ett förslag, människan bockar av, och
         # exakt den listan skrivs -- agenten ska inte tillfrågas en andra gång, för
         # den svarar olika varje gång och då är det som godkändes inte det som skrivs.
@@ -4617,6 +4768,13 @@ def build_parser() -> argparse.ArgumentParser:
                         help="write the division of the issues (sprint by sprint) as a PDF here")
     p_plan.add_argument("--lang", default="", metavar="CODE",
                         help="the language of the PDF's frame: sv, or English for anything else")
+    p_plan.add_argument("--sprints", action="store_true",
+                        help="with --create: also make one sprint per sprint number and put "
+                             "the issues in them (a write to the board)")
+    p_plan.add_argument("--sprint-weeks", type=int, default=2, metavar="N",
+                        help="how long a sprint is (default 2)")
+    p_plan.add_argument("--sprint-start", default="", metavar="YYYY-MM-DD",
+                        help="the first sprint's start day (default: today)")
     p_ins.add_argument("repo", nargs="?", help="repository root (default: here)")
     p_ins.add_argument("--project", default=DEFAULT_PROJECT)
     p_ins.add_argument("--dry-run", action="store_true")

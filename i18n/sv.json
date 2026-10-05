@@ -265,5 +265,6 @@
   "timeline.noSprintRange": "{count} ärenden utan sprint",
   "timeline.noSprintRangeOne": "{count} ärende utan sprint",
   "timeline.noSprints": "Den här tavlan har inga sprintar. Skapa sprintar i Jira så visas de här.",
-  "timeline.sprintEmpty": "Inga ärenden i sprinten."
+  "timeline.sprintEmpty": "Inga ärenden i sprinten.",
+  "plan.pdf": "Öppna fördelningen"
 }

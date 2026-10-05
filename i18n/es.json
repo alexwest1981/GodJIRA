@@ -265,5 +265,6 @@
   "timeline.noSprintRange": "{count} incidencias sin sprint",
   "timeline.noSprintRangeOne": "{count} incidencia sin sprint",
   "timeline.noSprints": "Este tablero no tiene sprints. Crea sprints en Jira y aparecerán aquí.",
-  "timeline.sprintEmpty": "No hay incidencias en el sprint."
+  "timeline.sprintEmpty": "No hay incidencias en el sprint.",
+  "plan.pdf": "Abrir el reparto"
 }

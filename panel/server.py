@@ -1818,6 +1818,10 @@ def import_apply(payload: dict) -> tuple[int, dict]:
         repo = str(entry.get("repo") or "")
         args = ["flow", "plan", "--proposal", str(path), "--create", "--json"]
         args += ["--repo-name", repo] if repo else ["--project", PROJECT]
+        # Sprintarna skrivs bara när människan bad om det: en sprint på tavlan är en
+        # skrivning till, och den har sitt eget kryss i vyn.
+        if payload.get("sprints"):
+            args += ["--sprints"]
         env = seam(*args, timeout=600)
         data = env.get("payload") or {}
         if env.get("exitCode") != 0:
@@ -1827,6 +1831,8 @@ def import_apply(payload: dict) -> tuple[int, dict]:
         with _lock:
             _cache.clear()      # the board changed: the next read must not be the old one
         return 200, {"ok": True, "created": data.get("created") or [],
+                     "sprints": data.get("sprints") or [],
+                     "sprintError": data.get("sprintError") or "",
                      "project": data.get("project") or PROJECT}
     finally:
         shutil.rmtree(folder, ignore_errors=True)

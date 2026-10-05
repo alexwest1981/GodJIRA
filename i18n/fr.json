@@ -265,5 +265,6 @@
   "timeline.noSprintRange": "{count} tickets sans sprint",
   "timeline.noSprintRangeOne": "{count} ticket sans sprint",
   "timeline.noSprints": "Ce tableau n'a pas de sprint. Créez des sprints dans Jira pour les voir ici.",
-  "timeline.sprintEmpty": "Aucun ticket dans le sprint."
+  "timeline.sprintEmpty": "Aucun ticket dans le sprint.",
+  "plan.pdf": "Ouvrir la répartition"
 }

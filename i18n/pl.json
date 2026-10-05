@@ -265,5 +265,6 @@
   "timeline.noSprintRange": "{count} zgłoszeń bez sprintu",
   "timeline.noSprintRangeOne": "{count} zgłoszenie bez sprintu",
   "timeline.noSprints": "Ta tablica nie ma sprintów. Utwórz sprinty w Jira, a pojawią się tutaj.",
-  "timeline.sprintEmpty": "Brak zgłoszeń w sprincie."
+  "timeline.sprintEmpty": "Brak zgłoszeń w sprincie.",
+  "plan.pdf": "Otwórz podział"
 }

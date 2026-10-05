@@ -265,5 +265,6 @@
   "timeline.noSprintRange": "{count} issues without sprint",
   "timeline.noSprintRangeOne": "{count} issue without sprint",
   "timeline.noSprints": "This board has no sprints. Create sprints in Jira and they show up here.",
-  "timeline.sprintEmpty": "No issues in the sprint."
+  "timeline.sprintEmpty": "No issues in the sprint.",
+  "plan.pdf": "Open the division"
 }
