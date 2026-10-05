@@ -42,7 +42,9 @@ SAJTER = [
      "salj": "eventCode", "kassa": "Stripe"},
     {"nyckel": "alibit", "namn": "Alibit", "url": "https://alibit.se/",
      "vardar": ["alibit.se", "www.alibit.se"], "tjanst": "redthread.service",
-     "salj": None, "kassa": None},
+     "salj": "username", "kassa": "Stripe (eget konto)",
+     "kassa_fil": "~/.config/alibit/billing.env",
+     "kassa_namn": "REDTHREAD_BILLING_STRIPE_SECRET_KEY"},
     {"nyckel": "higgies", "namn": "Higgies", "url": "http://127.0.0.1:3000/",
      "vardar": [], "tjanst": "higgies.service", "salj": None, "kassa": None},
     {"nyckel": "godjira", "namn": "GodJIRA", "url": "http://127.0.0.1:8788/",
@@ -164,6 +166,20 @@ def stripe_nyckel():
     return None
 
 
+def kassa_nyckel(sajt):
+    """Sajtens egen Stripe-nyckel om den har en, annars den gemensamma.
+
+    Alibit saljer i ett eget konto ("Alibit Mystery"): den gemensamma nyckeln ger 404 pa
+    dess priser och noll betalningslankar, sa en delad nyckel hade last sajten som tom.
+    """
+    fil = sajt.get("kassa_fil")
+    if fil:
+        n = ur_fil(pathlib.Path(fil).expanduser(), sajt.get("kassa_namn") or "STRIPE_SECRET_KEY")
+        if n:
+            return n
+    return stripe_nyckel()
+
+
 def hogql(sql):
     """En HogQL-fraga mot panelens installning. Kastar vidare -- anroparen satter tillstandet."""
     nyckel, projekt, bas, _ = posthog_uppgifter()
@@ -181,8 +197,8 @@ def hogql_med(nyckel, bas, projekt, sql):
         return json.load(s).get("results") or []
 
 
-def stripe(vag):
-    nyckel = stripe_nyckel()
+def stripe(vag, nyckel=None):
+    nyckel = nyckel or stripe_nyckel()
     if not nyckel:
         return None
     req = urllib.request.Request("https://api.stripe.com/v1/" + vag,
@@ -357,9 +373,14 @@ def sajt_rapport(sajt, dagar=14):
     return {"nyckel": sajt["nyckel"], "namn": sajt["namn"], "url": sajt["url"],
             "liv": livstecken(sajt["url"]),
             "tjanst": {"enhet": sajt.get("tjanst"), "lage": tjanst_lage(sajt.get("tjanst"))},
+            # Vilket konto pengarna kommer ifran: Alibit saljer i ett eget, och en kolumn
+            # som blandar tva konton utan att saga det ar en fellasning som vantar.
+            "kassa": sajt.get("kassa"),
             "posthog": posthog_installerad(sajt["url"]),
             "trafik": trafik(vardar, dagar),
-            "salj": salj(sajt.get("salj"), dagar)}
+            # Kassan fragas med sajtens egen nyckel: Alibits konto ar inte Minnoria. 
+            "salj": salj(sajt.get("salj"), dagar,
+                         hamta=lambda vag: stripe(vag, kassa_nyckel(sajt)))}
 
 
 def rapport(dagar=14, dagens=None):
@@ -393,6 +414,8 @@ def skriv_ut(r):
 
 
 def selftest():
+    import tempfile
+
     # Vardnamnen: www och utan www ar samma sajt, dubbletter faller bort
     assert vardar_for({"vardar": ["www.Alibit.se", "alibit.se"]}) == ["alibit.se"]
     assert vardar_for({"vardar": []}) == []
@@ -430,6 +453,15 @@ def selftest():
 
     # Kassa utan markning visas som okopplad, aldrig som 0 kr
     assert salj(None)["kopplad"] is False
+
+    # Kassan: en sajt med eget konto laser sin egen nyckelfil, inte den gemensamma
+    with tempfile.TemporaryDirectory() as tmp:
+        fil = pathlib.Path(tmp) / "billing.env"
+        namn, varde = "REDTHREAD_BILLING_STRIPE_SECRET_KEY", "prov-" + "nyckel"
+        fil.write_text("%s=%s\n" % (namn, varde))
+        assert kassa_nyckel({"kassa_fil": str(fil), "kassa_namn": namn}) == varde
+        assert kassa_nyckel({"kassa_fil": str(fil), "kassa_namn": "FINNS_INTE"}) == stripe_nyckel()
+        assert kassa_nyckel({}) == stripe_nyckel(), "utan egen fil skall den gemensamma anvandas"
     s = salj("order_id", hamta=kastar)
     assert s.get("fel") == MISSLYCKAT, s
 
@@ -451,8 +483,6 @@ def selftest():
     assert posthog_installerad("http://x", hamta=kastar) == MISSLYCKAT
 
     # PostHog-installningen: panelens egen fil raknas forst, och nyckeln foljer aldrig med ut
-    import tempfile
-
     with tempfile.TemporaryDirectory() as tmp:
         saknas = pathlib.Path(tmp) / "panel.json"
         _, _, _, kalla_tom = posthog_uppgifter(str(saknas))

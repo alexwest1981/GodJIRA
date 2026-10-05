@@ -42,6 +42,13 @@ for s in sajter.SAJTER:
           "{}: tjansten skall vara en systemd-enhet".format(s["nyckel"]))
 check(len({s["nyckel"] for s in sajter.SAJTER}) == len(sajter.SAJTER), "tva sajter har samma nyckel")
 
+# Alibit saljer i ett eget Stripe-konto. Tappas den kopplingen lases sajten som tom --
+# och en tom kassa ser ut som en sanning. Kontot och markningen skall sta i registret.
+alibit = next(s for s in sajter.SAJTER if s["nyckel"] == "alibit")
+check(alibit.get("salj"), "Alibit har ingen markning: dess kassa skulle visas som okopplad")
+check("alibit" in (alibit.get("kassa_fil") or ""), "Alibit pekar inte pa sin egen nyckelfil")
+check(alibit.get("kassa_namn"), "Alibit saknar namnet pa nyckeln i sin miljofil")
+
 # --- 3. Panelen: vyn finns, och den ar kopplad till sin egen laddning -------------
 html = (PANEL / "index.html").read_text(encoding="utf-8")
 check('<section class="view" id="v-sites">' in html, "vyn v-sites saknas i panelen")

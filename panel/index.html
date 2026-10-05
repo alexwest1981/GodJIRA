@@ -2465,7 +2465,8 @@ function siteRow(s) {
     '<td><span class="key">' + esc(s.namn) + "</span></td>" +
     "<td>" + (liv.uppe ? "uppe" : "nere") + ' <span class="meta">' + esc(tid) + "</span></td>" +
     "<td>" + esc(trafik) + "</td>" +
-    "<td>" + esc(kassa) + "</td>" +
+    "<td>" + esc(kassa) +
+    (s.kassa ? ' <span class="meta">' + esc(s.kassa) + "</span>" : "") + "</td>" +
     '<td class="muted">' + esc(ph) + "</td></tr>";
 }
 
