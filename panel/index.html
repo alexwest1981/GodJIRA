@@ -734,6 +734,20 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
       <div class="tablewrap"><table id="itemsTable"></table></div>
     </section>
 
+    <section class="view" id="v-mine">
+      <div class="facts" id="mineTotals"></div>
+      <div class="panel">
+        <h3>Mina uppgifter <span class="meta" id="mineMeta"></span></h3>
+        <div class="body">
+          <div class="row">
+            <button class="chip on" data-act="mine-explain">förklara steg för steg</button>
+            <span class="meta" id="mineNote">ärendena är dina egna i Jira; förklaringen skrivs en gång per ärende och sparas</span>
+          </div>
+          <div class="implog" id="mineLog" hidden></div>
+          <div id="mineList"></div>
+        </div>
+      </div>
+    </section>
     <section class="view" id="v-import">
       <div class="panel">
         <h3>Underlag in, ärenden ut <span class="meta">pdf, docx, odt, xlsx, pptx eller text</span></h3>
@@ -991,7 +1005,8 @@ const TEXT = {
   views: { overview: ["Översikt", "◫"], insights: ["Projekt", "◎"], board: ["Tavlan", "▤"], items: ["Uppgifter", "☰"], repos: ["Repon", "⌥"],
            sites: ["Sajterna", "◔"],
            import: ["Importera", "⇪"], setup: ["Kom igång", "★"], chat: ["Agenten", "◈"],
-           admin: ["Admin", "⚑"], settings: ["Inställningar", "⚙"] },
+           admin: ["Admin", "⚑"], settings: ["Inställningar", "⚙"],
+           mine: ["Mina uppgifter", "☑"] },
   // Flödenas namn i Karta-vyns källväljare. Låg förut i views-listan, då flödena hade en
   // egen räl-post; strängen står kvar här så översättningarna inte tappas.
   flowView: "Automatik", params: "Parametrar", detailInN8n: "detaljerna står i n8n",
@@ -1316,6 +1331,7 @@ const ICONS = {
   setup: '<svg class="ico" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M6.7 5.7v4.6L10.6 8z"/></svg>',
   admin: '<svg class="ico" viewBox="0 0 16 16"><path d="M8 2.4l5 1.9v3.4c0 2.9-2.1 5.1-5 6.1-2.9-1-5-3.2-5-6.1V4.3z"/></svg>',
   settings: '<svg class="ico" viewBox="0 0 16 16"><path d="M3 5.5h10M3 10.5h10"/><circle cx="6.4" cy="5.5" r="1.7"/><circle cx="10.4" cy="10.5" r="1.7"/></svg>',
+  mine: '<svg class="ico" viewBox="0 0 16 16"><path d="M8 2.6l4.4 1.7v3c0 2.6-1.9 4.6-4.4 5.5-2.5-.9-4.4-2.9-4.4-5.5v-3z"/><path d="M6.3 8.1l1.4 1.4 2.7-2.9"/></svg>',
   // Sajterna: en jordglob med en linje i -- flera ytor, en översikt.
   sites: '<svg class="ico" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M2.2 6.5h11.6M2.2 9.5h11.6"/><path d="M8 2c1.6 2 1.6 10 0 12M8 2c-1.6 2-1.6 10 0 12"/></svg>',
 };
@@ -4099,6 +4115,86 @@ function impLogLine(text) {
 
 // En rad ur strömmen. Stegen ritas i terminalen; agentens egna händelser visas som korta
 // rader (verktygsanropen är det som syns medan de händer); sista raden är svaret.
+// Mina uppgifter: mina egna ärenden ur Jira, och förklaringen av dem steg för steg.
+// Panelen hittar inte på något här -- den visar motorns filer och lämnar raderna vidare
+// medan förklaringen skrivs. Uppskattningen står i Daniels bevisrad ("UPPSKATTNING: 5 timmar")
+// och räknas ihop, för det är den siffran som avgör om veckan går ihop.
+const MINE = { busy: false };
+
+function mineEvent(line, logg) {
+  const text = (line || "").trim();
+  if (!text) return null;
+  let event = null;
+  try { event = JSON.parse(text); } catch (e) { return null; }
+  if (!event || typeof event !== "object") return null;
+  if (event.type === "step") { logg.textContent += (event.text || "") + "\n"; logg.scrollTop = logg.scrollHeight; return null; }
+  if (event.type === "error") { logg.textContent += "fel: " + (event.error || "") + "\n"; return null; }
+  if (event.type === "done" || event.ok !== undefined) return event;
+  return null;
+}
+
+async function mineExplain() {
+  if (MINE.busy) return;
+  MINE.busy = true;
+  const logg = document.getElementById("mineLog"), note = document.getElementById("mineNote");
+  logg.hidden = false; logg.textContent = "";
+  note.textContent = "arbetar — förklaringen skrivs en gång per ärende, sedan ligger den kvar";
+  try {
+    const svar = await fetch("/api/mine/explain", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ stream: true, repo_name: (STATE && STATE.repoName) || "" }) });
+    const läsare = svar.body.getReader(), avkodare = new TextDecoder();
+    let rest = "", sista = null;
+    while (true) {
+      const bit = await läsare.read();
+      if (bit.done) break;
+      rest += avkodare.decode(bit.value, { stream: true });
+      const rader = rest.split("\n");
+      rest = rader.pop();
+      for (const rad of rader) { const ev = mineEvent(rad, logg); if (ev) sista = ev; }
+    }
+    note.textContent = (sista && sista.ok)
+      ? ("klart: " + (sista.explained || []).length + " förklarade, " + (sista.skipped || []).length + " fanns redan")
+      : ((sista && sista.error) || "klart");
+  } catch (fel) {
+    note.textContent = "gick inte: " + ((fel && fel.message) || fel);
+  }
+  MINE.busy = false;
+  await renderMine();
+}
+
+async function renderMine() {
+  const mål = document.getElementById("mineList");
+  if (!mål) return;
+  const logg = document.getElementById("mineLog");
+  try {
+    const data = await (await fetch("/api/mine")).json();
+    const ärenden = (data.issues || []).filter(i => i.open);
+    const timmar = ärenden.reduce((sum, i) => {
+      const m = /UPPSKATTNING:\s*(\d+)\s*timmar/i.exec(i.proof || "");
+      return sum + (m ? Number(m[1]) : 0);
+    }, 0);
+    document.getElementById("mineTotals").innerHTML = ärenden.length
+      ? `<span class="fact"><b>${ärenden.length}</b> öppna på dig</span>`
+        + (timmar ? `<span class="fact"><b>${timmar}</b> timmar uppskattat i bevisraderna</span>` : "")
+        + `<span class="fact">${esc(data.me || "")}</span>`
+      : "";
+    document.getElementById("mineMeta").textContent = data.me ? data.me + " · " + ärenden.length + " öppna" : "";
+    if (data.missing) { mål.innerHTML = `<p class="meta">Inget hämtat än — tryck på knappen.</p>`; return; }
+    mål.innerHTML = ärenden.length ? ärenden.map(i => `
+      <details class="mineitem">
+        <summary><b>${esc(i.key)}</b> ${esc(i.summary)} <span class="meta">${esc(i.status || "")}</span></summary>
+        <p class="meta"><b>Krav:</b> ${esc(i.requirement || "—")}</p>
+        <p class="meta"><b>Bevis:</b> ${esc(i.proof || "—")}</p>
+        ${i.explanation ? `<pre class="minexp">${esc(i.explanation)}</pre>`
+                        : `<p class="meta">Ingen förklaring skriven än — tryck på knappen.</p>`}
+      </details>`).join("")
+      : `<p class="meta">Inga öppna ärenden på dig.</p>`;
+  } catch (fel) {
+    mål.innerHTML = `<p class="meta">Kunde inte läsa mina uppgifter: ${esc(String(fel))}</p>`;
+  }
+  if (logg) logg.hidden = !!logg.textContent;
+}
+
 function impEvent(line) {
   const text = (line || "").trim();
   if (!text) return null;
@@ -4447,6 +4543,7 @@ function render() {
   document.getElementById("itemProject").hidden = view !== "items";
   if (view === "overview") { renderNeeds(); renderAgentWeek(); renderRuns(); renderStats(); renderAutomation(); renderFlowPick(); renderJournal(); renderRecent(); }
   if (view === "board") renderBoard();
+  if (view === "mine") renderMine();
   if (view === "chat") { renderChat(); if (!AGENTS) agentLoad(); }
   if (view === "items") renderItems();
   // In i Repon med inget valt: öppna det kopplade repot (annars det senast rörda),
@@ -4643,6 +4740,7 @@ document.addEventListener("click", e => {
   if (e.target.closest('[data-act="ov-edit"]')) return editOverview();
   if (e.target.closest('[data-act="imp-parse"]')) return impParse();
   if (e.target.closest('[data-act="imp-apply"]')) return impApply();
+  if (e.target.closest('[data-act="mine-explain"]')) return mineExplain();
   if (e.target.closest('[data-act="link-save"]')) return linkSave(false);
   if (e.target.closest('[data-act="link-rm"]')) return linkSave(true);
   if (e.target.closest('[data-act="scan-run"]')) return scanRun(e.target.closest('[data-act="scan-run"]'));

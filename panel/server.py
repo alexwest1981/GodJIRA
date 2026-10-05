@@ -2119,6 +2119,92 @@ def team_save(payload: dict) -> tuple:
     return 200, {"ok": True, "team": team}
 
 
+MINE_DIR = Path.home() / ".config" / "jira-flow" / "mine"
+
+
+def mine_read() -> dict:
+    """Mina ärenden och deras förklaringar, ur motorns egna filer.
+
+    Panelen äger ingen egen sanning här: motorn skriver mine.json och <KEY>.md, och panelen
+    läser dem. Är filen inte skriven än står ärendet kvar med sina krav- och bevisrader utan
+    förklaring -- hellre det än en tom rad utan förklaring till varför.
+    """
+    try:
+        data = json.loads((MINE_DIR / "mine.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"ok": True, "me": "", "issues": [], "missing": True}
+    for ärende in (data.get("issues") or []):
+        try:
+            ärende["explanation"] = Path(str(ärende.get("file") or "")).read_text(encoding="utf-8")
+        except OSError:
+            ärende["explanation"] = ""
+    data["ok"] = True
+    return data
+
+
+def mine_explain(payload: dict, on_line=None) -> tuple:
+    """Förklara mina öppna ärenden, steg för steg. Motorn gör arbetet; panelen lämnar raderna."""
+    args = ["flow", "mine", "--explain", "--json"]
+    nyckel = str(payload.get("key") or "").strip().upper()
+    if nyckel:
+        args += ["--key", re.sub(r"[^A-Z0-9-]", "", nyckel)[:20]]
+    repo = str(payload.get("repo_name") or "").strip()
+    if repo and re.fullmatch(r"[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)?", repo):
+        args += ["--repo-name", repo]
+    if on_line is None:
+        env = seam(*args, timeout=1800)
+        return env.get("exitCode"), (env.get("payload") or {})
+    proc = subprocess.Popen([sys.executable, str(ENGINE), *args[1:], "--stream"],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    sista = ""
+    for line in proc.stdout:
+        if not line.strip():
+            continue
+        sista = line
+        on_line(line if line.endswith("\n") else line + "\n")
+    try:
+        proc.wait(timeout=60)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+    if proc.returncode != 0:
+        svar = {}
+        try:
+            svar = json.loads(sista) if sista else {}
+        except ValueError:
+            svar = {}
+        if isinstance(svar, dict) and svar.get("error"):
+            return 200, {"ok": False, "error": svar["error"]}
+        var = (proc.stderr.read() or "").strip().splitlines()
+        return 200, {"ok": False,
+                     "error": var[-1] if var else "motorn föll (kod {})".format(proc.returncode)}
+    try:
+        return 200, json.loads(sista)
+    except ValueError:
+        return 200, {"ok": False, "error": "motorn svarade inte med ett svar"}
+
+
+def mine_stream(payload: dict):
+    """Förklaringen som den händer: samma form som importen, så panelen läser den likadant."""
+    kö, ut = queue.Queue(), {}
+
+    def kör():
+        try:
+            ut["svar"] = mine_explain(payload, on_line=kö.put)
+        except Exception as exc:  # noqa: BLE001 -- en krasch får inte tystna i strömmen
+            ut["svar"] = 500, {"ok": False, "error": "{}: {}".format(type(exc).__name__, exc)}
+        finally:
+            kö.put(None)
+
+    threading.Thread(target=kör, daemon=True).start()
+    while True:
+        rad = kö.get()
+        if rad is None:
+            break
+        yield rad
+    _, answer = ut.get("svar") or (500, {"ok": False, "error": "förklaringen svarade inget"})
+    yield json.dumps(dict(answer, type="done"), ensure_ascii=False) + "\n"
+
+
 def import_parse(payload: dict, on_line=None) -> tuple[int, dict]:
     """A wish plus the papers it came with -> an issue proposal. Writes nothing.
 
@@ -2512,6 +2598,9 @@ class Handler(BaseHTTPRequestHandler):
             answer = cached("repo:" + name, lambda: repo_detail(name), ttl=120)
             self._json(200, answer)   # svaret bär sitt eget ok/fel
             return
+        if path == "/api/mine":
+            self._json(200, mine_read())     # svaret bär sitt eget ok
+            return
         if path == "/api/import/pdf":
             query = parse_qs(urlparse(self.path).query)
             blob, name = import_blob((query.get("token") or [""])[0])
@@ -2540,7 +2629,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         handler = {"/api/import": import_parse, "/api/import/apply": import_apply,
                    "/api/link": link_set, "/api/automation": automation_report,
-                   "/api/team": team_save,
+                   "/api/team": team_save, "/api/mine/explain": mine_explain,
                    "/api/scan": scan_start, "/api/work": run_start, "/api/token": token_save,
                    "/api/github": github_save, "/api/language": language_save,
                    "/api/admin/people": admin_people, "/api/chat": chat_ask,
@@ -2569,6 +2658,9 @@ class Handler(BaseHTTPRequestHandler):
         if handler is import_parse and payload.get("stream"):
             self._import_stream(payload)
             return
+        if handler is mine_explain and payload.get("stream"):
+            self._mine_stream(payload)
+            return
         try:
             code, answer = handler(payload)
         except Exception as exc:  # noqa: BLE001 -- a crash must not look like a dead panel
@@ -2580,6 +2672,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def _import_stream(self, payload: dict) -> None:
         self._stream(import_stream(payload))
+
+    def _mine_stream(self, payload: dict) -> None:
+        self._stream(mine_stream(payload))
 
     def _stream(self, lines) -> None:
         """En ström av NDJSON-rader ut till panelen: det som händer, medan det händer.

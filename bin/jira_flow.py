@@ -3934,6 +3934,7 @@ def cmd_mine(jira, args) -> int:
         MINE_DIR.mkdir(parents=True, exist_ok=True)
         (MINE_DIR / "mine.json").write_text(json.dumps(
             {"me": me.get("displayName") or "", "project": project, "at": time.time(),
+             "open": len(öppna), "explained": förklarade, "skipped": hoppade,
              "issues": issues}, ensure_ascii=False, indent=1), encoding="utf-8")
     except OSError:
         pass      # indexet är för panelen; raderna nedan bär samma sak
