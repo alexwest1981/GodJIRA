@@ -139,10 +139,10 @@ PLAN_SPRINTS = int(os.environ.get("JIRA_FLOW_PLAN_SPRINTS", "3"))
 PLAN_WORDS = {
     "sv": {
         "title": "Fördelningen av uppgifterna",
-        "wish": "kundens önskemål",
+        "wish": "Kundens önskemål",
         "project": "Projekt",
-        "documents": "dokument", "document": "dokument", "chars": "tecken",
-        "overview": "Översikt",
+        "documents": "dokument", "document": "dokument", "cut": "klippt",
+        "overview": "Översikt", "kinds": "Typer",
         "sprint": "Sprint", "issue": "uppgift", "issues": "uppgifter",
         "holds": "Innehåller", "under": "under", "empty": "inget i den här sprinten",
         "note": "Det här är ett förslag. Ingenting är skrivet till Jira än. När det skrivs "
@@ -151,10 +151,10 @@ PLAN_WORDS = {
     },
     "en": {
         "title": "How the work is divided",
-        "wish": "what the customer asked for",
+        "wish": "What the customer asked for",
         "project": "Project",
-        "documents": "documents", "document": "document", "chars": "characters",
-        "overview": "Overview",
+        "documents": "documents", "document": "document", "cut": "truncated",
+        "overview": "Overview", "kinds": "Types",
         "sprint": "Sprint", "issue": "task", "issues": "tasks",
         "holds": "Holds", "under": "under", "empty": "nothing in this sprint",
         "note": "This is a proposal. Nothing is written to Jira yet. When it is, it is "
@@ -200,12 +200,12 @@ table.over th { text-align: left; font-weight: 600; border-bottom: 1px solid #cf
 table.over td { padding: 1mm 3mm 1mm 0; border-bottom: 1px solid #eceeed; vertical-align: top; }
 table.over td:nth-child(2) { width: 12mm; }
 p.kinds { color: #5b6360; font-size: 8.5pt; margin: 0 0 6mm; }
-section.sprint { border-top: 1px solid #00775c; padding-top: 3mm; margin: 0 0 7mm;
-                 break-inside: avoid; }
+section.sprint { border-top: 1px solid #00775c; padding-top: 3mm; margin: 0 0 7mm; }
 section.sprint h2 { font-size: 12pt; margin: 0 0 3mm; color: #00775c; }
 section.sprint h2 span.count { color: #5b6360; font-size: 9pt; font-weight: 400;
                                margin-left: 3mm; }
-div.item { margin: 0 0 3mm; padding: 0 0 0 3mm; border-left: 2px solid #eceeed; }
+div.item { margin: 0 0 3mm; padding: 0 0 0 3mm; border-left: 2px solid #eceeed;
+           break-inside: avoid; }
 div.item.nested { margin-left: 6mm; border-left-color: #cfd6d3; }
 span.type { display: inline-block; min-width: 16mm; color: #5b6360; font-size: 8.5pt; }
 span.sum { font-weight: 600; }
@@ -2403,10 +2403,12 @@ def plan_document(items: list, meta: dict, lang: str = "") -> str:
         meta.get("project") and "{} {}".format(words["project"], escape(str(meta["project"]))),
         meta.get("repo") and escape(str(meta["repo"])),
         escape(str(meta.get("date") or "")),
-        meta.get("documents") and "{} {} · {} {}".format(
+        # Antalet dokument, och om något av dem bara lästes till en del: vad som klippts
+        # bort hör synas på pappret också, inte bara i panelens rad.
+        meta.get("documents") and "{} {}{}".format(
             len(meta["documents"]),
             words["documents"] if len(meta["documents"]) > 1 else words["document"],
-            sum(n.get("chars") or 0 for n in meta["documents"]), words["chars"]),
+            " ({})".format(words["cut"]) if any(n.get("truncated") for n in meta["documents"]) else ""),
     ] if x)
 
     rows = []
@@ -2427,7 +2429,8 @@ def plan_document(items: list, meta: dict, lang: str = "") -> str:
                     priority=(' <span class="prio">{}</span>'.format(
                         escape(str(item["priority"]))) if item.get("priority") else ""),
                     beside=(' <span class="beside">{} {}</span>'.format(
-                        words["under"], escape(str(item["epic"]))) if item.get("epic") else ""),
+                        words["under"], escape(str(item["epic"])))
+                        if item.get("epic") and not nested else ""),
                     desc=('<div class="desc">{}</div>'.format(escape(str(item["description"])))
                           if item.get("description") else "")))
         rows.append(
@@ -2454,7 +2457,9 @@ def plan_document(items: list, meta: dict, lang: str = "") -> str:
         head=escape(words["sprint"]),
         holds=escape(words["holds"]),
         rows=overview,
-        kinds=escape(" · ".join("{} {}".format(name, count) for name, count in kinds.items())),
+        kinds="{}: {}".format(
+            escape(words["kinds"]),
+            escape(" · ".join("{} {}".format(name, count) for name, count in kinds.items()))),
         body="".join(rows),
         note=escape(words["note"]),
         source=('<p class="source">{}</p>'.format(escape(words["source"].format(agent)))
