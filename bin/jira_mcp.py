@@ -29,6 +29,8 @@ BRIDGE = os.path.join(HERE, "jira_bridge.py")
 # Flödet (välj det kritiska, sätt mig, In Progress) bor i jira_flow, som i sin tur
 # använder bryggan för token när den finns. Ett verktyg till, ingen andra klient.
 FLOW = os.environ.get("JIRA_FLOW", os.path.join(HERE, "jira_flow.py"))
+# Var motorns förklaringar bor (samma filer som panelens "Mina uppgifter" läser).
+MINE_DIR = os.path.expanduser("~/.config/jira-flow/mine")
 PROTOCOL = "2024-11-05"
 SERVER = {"name": "godjira", "version": "0.1.0"}
 READ_TIMEOUT = 120
@@ -429,6 +431,46 @@ PROJECT = {"project": {"type": "string",
                        "description": "Tavlans id, projektnyckel (SCRUM) eller namn. Tomt = första tavlan."}}
 KEY = {"key": {"type": "string", "description": "Ärendenyckel, t.ex. SCRUM-65"}}
 
+def t_mine(args: dict) -> tuple:
+    """Mina egna ärenden, och förklaringen steg för steg av dem.
+
+    Läser motorns filer (mine.json och <KEY>.md) och rör ingenting: en IDE vill ha svaret nu,
+    och förklaringen skrivs en gång av `jira_flow mine --explain` eller av knappen i panelen.
+    Finns ingen förklaring än står det i svaret -- en tom rad utan besked vore värre.
+    """
+    nyckel = str((args or {}).get("key") or "").strip().upper()
+    try:
+        with open(os.path.join(MINE_DIR, "mine.json"), encoding="utf-8") as fh:
+            index = json.load(fh)
+    except (OSError, ValueError):
+        return False, {"error": "inget hämtat än: kör `jira_flow mine --explain` "
+                                "(eller knappen i panelens Mina uppgifter)"}
+    alla = index.get("issues") or []
+    valda = [i for i in alla if (i.get("key") or "").upper() == nyckel] if nyckel \
+        else [i for i in alla if i.get("open")]
+    if nyckel and not valda:
+        return False, {"error": "{} finns inte bland dina ärenden i {}".format(
+            nyckel, index.get("project") or "projektet")}
+    ärenden = []
+    for i in valda:
+        post = dict(i)
+        try:
+            with open(os.path.join(MINE_DIR, "{}.md".format(i.get("key"))), encoding="utf-8") as fh:
+                post["explanation"] = fh.read()
+        except OSError:
+            post["explanation"] = ""
+            post["note"] = ("ingen förklaring skriven än — kör `jira_flow mine --explain` "
+                            "eller knappen i panelen")
+        ärenden.append(post)
+    timmar = 0
+    for i in ärenden:
+        m = re.search(r"UPPSKATTNING:\s*(\d+)\s*timmar", i.get("proof") or "", re.IGNORECASE)
+        if m:
+            timmar += int(m.group(1))          # Daniels egen siffra ur bevisraden, inte en gissning
+    return True, {"me": index.get("me") or "", "project": index.get("project") or "",
+                  "count": len(ärenden), "hours": timmar, "issues": ärenden}
+
+
 TOOLS = [
     tool("jira_status", "Anslutningen: konto, sajt, läge (real/mock) och språk.",
          run=t_status),
@@ -441,6 +483,13 @@ TOOLS = [
          dict(PROJECT, status={"type": "string", "description": "Målstatus, t.ex. 'In Progress'"},
               dryRun={"type": "boolean", "description": "Visa valet, skriv inget"}),
          run=t_next),
+    tool("jira_mine", "Mina egna ärenden, och förklaringen steg för steg av dem (skriven av "
+                      "GodJIRA: vad som skall göras, steg för steg med exakta filer, klart när, "
+                      "att se upp med). Utan key: mina öppna ärenden med krav, bevis och "
+                      "uppskattning. Med key: det ärendet med hela förklaringen. Läser, startar "
+                      "ingen körning.",
+         {"key": {"type": "string", "description": "Ärendenyckel, t.ex. SCRUM-210 (tomt = mina öppna)"}},
+         (), t_mine),
     tool("jira_board", "Hela tavlan: kolumner, sprintar, backloggen och ärendena i sprint.",
          PROJECT, run=t_board),
     tool("jira_transitions", "Vilka statusbyten ärendet tillåter just nu.", KEY,
@@ -623,6 +672,19 @@ def selftest():
         assert gone not in names, "{} ska inte ligga ute".format(gone)
 
     assert "jira_next" in names, names
+    assert "jira_mine" in names, names
+    # Verktyget svarar utan att röra Jira: antingen listan ur motorns filer, eller ett
+    # besked om att inget hämtats än. Aldrig ett undantag.
+    ok, lista = t_mine({})
+    assert isinstance(ok, bool) and isinstance(lista, dict), (ok, lista)
+    if ok:
+        assert all("explanation" in i for i in lista["issues"]), lista["issues"][:1]
+        assert lista["count"] == len(lista["issues"]), lista["count"]
+        if lista["issues"]:
+            ok_ett, ett = t_mine({"key": lista["issues"][0]["key"]})
+            assert ok_ett and len(ett["issues"]) == 1, ett
+        ok_nej, nej = t_mine({"key": "SCRUM-999999"})
+        assert ok_nej is False and "finns inte" in nej["error"], nej
     for added in ("jira_attachments", "jira_attach", "jira_links", "jira_link",
                   "jira_worklogs", "jira_worklog_add", "jira_sprints", "jira_sprint",
                   "jira_versions", "jira_version_create"):
