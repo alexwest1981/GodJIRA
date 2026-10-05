@@ -382,5 +382,19 @@
  "ändringen är kapad": "the change is cut off",
  "ingen ändring att visa": "no change to show",
  "sida vid sida": "side by side",
- "en kolumn": "one column"
+ "en kolumn": "one column",
+ "Sajterna": "Sites",
+ "Tjänsterna": "Services",
+ "uppe": "up",
+ "nere": "down",
+ "besök": "visits",
+ "personer": "people",
+ "kassa": "sales",
+ "dygn": "days",
+ "mäter inte trafiken": "does not measure traffic",
+ "PostHog saknas": "PostHog missing",
+ "mest besökta": "most visited",
+ "varifrån": "from",
+ "kassan är inte kopplad": "the checkout is not connected",
+ "provkörningar uteslutna": "test runs excluded"
 }

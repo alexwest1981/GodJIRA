@@ -382,5 +382,19 @@
  "ändringen är kapad": "de wijziging is afgekapt",
  "ingen ändring att visa": "geen wijziging om te tonen",
  "sida vid sida": "naast elkaar",
- "en kolumn": "één kolom"
+ "en kolumn": "één kolom",
+ "Sajterna": "Sites",
+ "Tjänsterna": "Diensten",
+ "uppe": "online",
+ "nere": "offline",
+ "besök": "bezoeken",
+ "personer": "personen",
+ "kassa": "omzet",
+ "dygn": "dagen",
+ "mäter inte trafiken": "meet geen verkeer",
+ "PostHog saknas": "PostHog ontbreekt",
+ "mest besökta": "meest bezocht",
+ "varifrån": "vanaf",
+ "kassan är inte kopplad": "de kassa is niet gekoppeld",
+ "provkörningar uteslutna": "testruns uitgesloten"
 }

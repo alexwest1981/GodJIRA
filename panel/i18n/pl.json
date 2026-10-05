@@ -382,5 +382,19 @@
  "ändringen är kapad": "zmiana jest ucięta",
  "ingen ändring att visa": "brak zmiany do pokazania",
  "sida vid sida": "obok siebie",
- "en kolumn": "jedna kolumna"
+ "en kolumn": "jedna kolumna",
+ "Sajterna": "Strony",
+ "Tjänsterna": "Usługi",
+ "uppe": "działa",
+ "nere": "nie działa",
+ "besök": "odwiedziny",
+ "personer": "osoby",
+ "kassa": "sprzedaż",
+ "dygn": "dni",
+ "mäter inte trafiken": "nie mierzy ruchu",
+ "PostHog saknas": "brak PostHog",
+ "mest besökta": "najczęściej odwiedzane",
+ "varifrån": "skąd",
+ "kassan är inte kopplad": "kasa nie jest podłączona",
+ "provkörningar uteslutna": "testy wykluczone"
 }

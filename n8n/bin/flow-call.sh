@@ -28,6 +28,10 @@ case "${1:-flow}" in
 		shift
 		out=$(gh "$@" 2>&1)
 		;;
+	sites)
+		shift
+		out=$(cd "$root" && python3 bin/jira_sites.py "$@" 2>&1)
+		;;
 	bridge)
 		shift
 		out=$(cd "$root" && python3 bin/jira_bridge.py "$@" 2>&1)

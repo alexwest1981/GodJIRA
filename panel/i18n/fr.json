@@ -382,5 +382,19 @@
  "ändringen är kapad": "la modification est tronquée",
  "ingen ändring att visa": "aucune modification à afficher",
  "sida vid sida": "côte à côte",
- "en kolumn": "une colonne"
+ "en kolumn": "une colonne",
+ "Sajterna": "Sites",
+ "Tjänsterna": "Services",
+ "uppe": "en ligne",
+ "nere": "hors ligne",
+ "besök": "visites",
+ "personer": "personnes",
+ "kassa": "caisse",
+ "dygn": "jours",
+ "mäter inte trafiken": "ne mesure pas le trafic",
+ "PostHog saknas": "PostHog manquant",
+ "mest besökta": "les plus visitées",
+ "varifrån": "depuis",
+ "kassan är inte kopplad": "la caisse n'est pas reliée",
+ "provkörningar uteslutna": "essais exclus"
 }

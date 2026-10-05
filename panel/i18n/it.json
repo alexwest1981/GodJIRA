@@ -382,5 +382,19 @@
  "ändringen är kapad": "la modifica è tagliata",
  "ingen ändring att visa": "nessuna modifica da mostrare",
  "sida vid sida": "affiancati",
- "en kolumn": "una colonna"
+ "en kolumn": "una colonna",
+ "Sajterna": "Siti",
+ "Tjänsterna": "Servizi",
+ "uppe": "attivo",
+ "nere": "inattivo",
+ "besök": "visite",
+ "personer": "persone",
+ "kassa": "cassa",
+ "dygn": "giorni",
+ "mäter inte trafiken": "non misura il traffico",
+ "PostHog saknas": "PostHog mancante",
+ "mest besökta": "più visitate",
+ "varifrån": "da",
+ "kassan är inte kopplad": "la cassa non è collegata",
+ "provkörningar uteslutna": "prove escluse"
 }

@@ -1584,6 +1584,19 @@ def insights_read() -> dict:
     return out
 
 
+def sites_read() -> dict:
+    """Sajterna: trafiken, kassan och livstecknet. Motorn raknar, panelen visar.
+
+    Motorn (bin/jira_sites.py) ar den enda som vet vad en sajt ar -- panelen fragar den
+    i stallet for att ha en andra asikt om vardnamn, markningar och trösklar.
+    """
+    env = seam("sites", "--json", timeout=180)
+    payload = env.get("payload")
+    if not isinstance(payload, dict):
+        return {"ok": False, "error": (env.get("raw") or "motorn svarade inget")[:300]}
+    return dict(payload, ok=True)
+
+
 def state() -> dict:
     """En läsning: flödet räknar ut projektet, projektet läser ur registret, resten är Jira, GitHub och journalen."""
     def build() -> dict:
@@ -1744,6 +1757,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/insights":
             self._json(200, cached("insights", insights_read, ttl=180))
+            return
+        if path == "/api/sites":
+            self._json(200, cached("sites", sites_read, ttl=120))
             return
         if path == "/api/admin":
             self._json(200, cached("admin", admin_read, ttl=180))

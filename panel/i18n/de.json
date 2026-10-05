@@ -382,5 +382,19 @@
  "ändringen är kapad": "die Änderung ist abgeschnitten",
  "ingen ändring att visa": "keine Änderung anzuzeigen",
  "sida vid sida": "Seite an Seite",
- "en kolumn": "eine Spalte"
+ "en kolumn": "eine Spalte",
+ "Sajterna": "Websites",
+ "Tjänsterna": "Dienste",
+ "uppe": "online",
+ "nere": "offline",
+ "besök": "Besuche",
+ "personer": "Personen",
+ "kassa": "Kasse",
+ "dygn": "Tage",
+ "mäter inte trafiken": "misst keine Zugriffe",
+ "PostHog saknas": "PostHog fehlt",
+ "mest besökta": "meistbesucht",
+ "varifrån": "von",
+ "kassan är inte kopplad": "die Kasse ist nicht verknüpft",
+ "provkörningar uteslutna": "Testläufe ausgeschlossen"
 }

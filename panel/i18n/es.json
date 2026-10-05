@@ -382,5 +382,19 @@
  "ändringen är kapad": "el cambio está cortado",
  "ingen ändring att visa": "no hay cambios que mostrar",
  "sida vid sida": "lado a lado",
- "en kolumn": "una columna"
+ "en kolumn": "una columna",
+ "Sajterna": "Sitios",
+ "Tjänsterna": "Servicios",
+ "uppe": "activo",
+ "nere": "caido",
+ "besök": "visitas",
+ "personer": "personas",
+ "kassa": "caja",
+ "dygn": "días",
+ "mäter inte trafiken": "no mide el tráfico",
+ "PostHog saknas": "falta PostHog",
+ "mest besökta": "más visitadas",
+ "varifrån": "desde",
+ "kassan är inte kopplad": "la caja no está conectada",
+ "provkörningar uteslutna": "pruebas excluidas"
 }

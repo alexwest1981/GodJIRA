@@ -445,6 +445,9 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   .wl .r:last-child { border-bottom: 0; }
   .wl .r .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .wl .r .tside { margin-left: auto; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+  /* Kurvan i sajtvyn: en linje, ingen fyllning. Utan regeln fylls polygonen svart. */
+  .spark { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linejoin: round; }
+  .spark + .meta { margin-top: 4px; }
 
   /* ----------------------------------------------------------------- board */
   .cols { display: flex; flex-direction: column; gap: 20px; }
@@ -581,6 +584,22 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
     <section class="view" id="v-insights">
       <div class="seg" id="insightTabs"></div>
       <div id="insightBox" class="meta">räknar …</div>
+    </section>
+
+    <section class="view" id="v-sites">
+      <div class="facts" id="siteTotals"></div>
+      <div class="panel">
+        <h3>Sajterna <span class="meta" id="sitesMeta"></span></h3>
+        <div class="body"><div class="tablewrap"><table id="sitesTable"></table></div></div>
+      </div>
+      <div class="panel" id="siteDetailPanel" hidden>
+        <h3 id="siteDetailName"></h3>
+        <div class="body" id="siteDetail"></div>
+      </div>
+      <div class="panel">
+        <h3>Tjänsterna</h3>
+        <div class="body"><div class="wl" id="serviceList"><div class="empty">läser …</div></div></div>
+      </div>
     </section>
 
     <section class="view" id="v-board">
@@ -834,6 +853,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
 <script>
 const TEXT = {
   views: { overview: ["Översikt", "◫"], insights: ["Projekt", "◎"], board: ["Tavlan", "▤"], items: ["Uppgifter", "☰"], repos: ["Repon", "⌥"],
+           sites: ["Sajterna", "◔"],
            import: ["Importera", "⇪"], setup: ["Kom igång", "★"], chat: ["Agenten", "◈"],
            admin: ["Admin", "⚑"], settings: ["Inställningar", "⚙"] },
   // Flödenas namn i Karta-vyns källväljare. Låg förut i views-listan, då flödena hade en
@@ -1144,6 +1164,8 @@ const ICONS = {
   setup: '<svg class="ico" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M6.7 5.7v4.6L10.6 8z"/></svg>',
   admin: '<svg class="ico" viewBox="0 0 16 16"><path d="M8 2.4l5 1.9v3.4c0 2.9-2.1 5.1-5 6.1-2.9-1-5-3.2-5-6.1V4.3z"/></svg>',
   settings: '<svg class="ico" viewBox="0 0 16 16"><path d="M3 5.5h10M3 10.5h10"/><circle cx="6.4" cy="5.5" r="1.7"/><circle cx="10.4" cy="10.5" r="1.7"/></svg>',
+  // Sajterna: en jordglob med en linje i -- flera ytor, en översikt.
+  sites: '<svg class="ico" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M2.2 6.5h11.6M2.2 9.5h11.6"/><path d="M8 2c1.6 2 1.6 10 0 12M8 2c-1.6 2-1.6 10 0 12"/></svg>',
 };
 
 const navViews = () => Object.entries(TEXT.views).filter(([v]) => v !== "admin" || adminVisible());
@@ -2310,6 +2332,114 @@ function renderInsights() {
   const d = INSIGHT.data;
   box.innerHTML = INSIGHT.tab === "development" ? insightDevelopment(d)
     : INSIGHT.tab === "timeline" ? insightTimeline(d) : insightSummary(d);
+}
+
+// ---- Sajterna: trafiken, kassan och livstecknet i en vy --------------------------
+// Siffrorna kommer ur motorns svar (bin/jira_sites.py), aldrig ur panelen: en vy som
+// räknar själv är en andra åsikt om samma sak, och de två glider isär förr eller senare.
+// Panelen ritar, motorn räknar.
+const SITES = { data: null, error: "", valt: "" };
+
+async function siteLoad() {
+  if (SITES.data) return;
+  try {
+    const a = await (await fetch("/api/sites")).json();
+    if (!a.ok) throw new Error(a.error || "inget svar");
+    SITES.data = a;
+    SITES.error = "";
+  } catch (e) {
+    SITES.error = "kunde inte läsa sajterna: " + e.message;
+  }
+  renderSites();
+}
+
+// Kurvan: en punkt per dygn. En siffra säger hur mycket, en kurva säger åt vilket håll.
+// Ett enda dygn ritas som en rak linje -- en punkt går inte att se riktningen i.
+function spark(perDag) {
+  const par = perDag || [];
+  const W = 160, H = 28;
+  const hog = Math.max(1, ...par.map(r => Number(r[1]) || 0));
+  const punkter = par.length > 1
+    ? par.map((r, i) => ((i / (par.length - 1)) * W).toFixed(1) + "," +
+        (H - 2 - (Number(r[1]) || 0) / hog * (H - 6)).toFixed(1)).join(" ")
+    : "0," + (H - 2) + " " + W + "," + (H - 2);
+  return '<svg class="spark" viewBox="0 0 ' + W + " " + H + '" width="' + W + '" height="' + H +
+    '" aria-hidden="true"><polyline points="' + punkter + '"/></svg>';
+}
+
+function siteRow(s) {
+  const liv = s.liv || {}, t = s.trafik || {}, k = s.salj || {};
+  const tid = liv.uppe ? liv.ms + " ms" : (liv.kod ? "HTTP " + liv.kod : "");
+  const trafik = t.fel ? t.fel : t.mats ? t.visningar + " besök / " + t.personer + " personer"
+    : "mäter inte trafiken";
+  const kassa = k.krTotalt != null
+    ? k.krTotalt.toFixed(2) + " kr"
+    : (k.kopplad === false ? "kassan är inte kopplad" : (k.fel || ""));
+  const ph = s.posthog === true ? "PostHog" : s.posthog === false ? "PostHog saknas" : "";
+  return '<tr data-site="' + esc(s.nyckel) + '">' +
+    '<td><span class="key">' + esc(s.namn) + "</span></td>" +
+    "<td>" + (liv.uppe ? "uppe" : "nere") + ' <span class="meta">' + esc(tid) + "</span></td>" +
+    "<td>" + esc(trafik) + "</td>" +
+    "<td>" + esc(kassa) + "</td>" +
+    '<td class="muted">' + esc(ph) + "</td></tr>";
+}
+
+function siteDetail(s) {
+  const t = s.trafik || {};
+  if (!t.mats) return '<div class="empty">mäter inte trafiken</div>';
+  if (t.fel) return '<div class="empty">' + esc(t.fel) + "</div>";
+  const rader = lista => (lista || []).map(r => '<div class="r"><span class="key">' +
+    esc(r[0] || "/") + '</span><span class="tside">' + Number(r[1]) + "</span></div>").join("");
+  const tot = t.totalt ? '<div class="meta">' + Number(t.totalt.visningar) + " besök / " +
+    Number(t.totalt.personer) + " personer (" + esc(t.totalt.forst) + " → " + esc(t.totalt.senast) + ")</div>" : "";
+  const k = s.salj || {};
+  const pengar = k.krTotalt != null
+    ? '<div><span class="meta">kassa</span> ' + k.krTotalt.toFixed(2) + " kr · " + Number(k.antalTotalt) +
+      (k.provTotalt ? ' <span class="meta">· ' + Number(k.provTotalt) + " provkörningar uteslutna</span>" : "") + "</div>"
+    : "";
+  return spark(t.perDag) + tot + pengar +
+    '<div class="meta">mest besökta</div><div class="wl">' + (rader(t.toppSidor) || '<div class="empty">—</div>') + "</div>" +
+    '<div class="meta">varifrån</div><div class="wl">' + (rader(t.kallor) || '<div class="empty">—</div>') + "</div>";
+}
+
+function renderSites() {
+  const lista = document.getElementById("sitesTable");
+  if (!lista) return;
+  if (SITES.error) { lista.innerHTML = '<tr><td class="empty">' + esc(SITES.error) + "</td></tr>"; return; }
+  if (!SITES.data) { lista.innerHTML = '<tr><td class="empty">läser …</td></tr>'; return; }
+  const sajter = SITES.data.sajter || [];
+  const meta = document.getElementById("sitesMeta");
+  if (meta) meta.textContent = SITES.data.genererad || "";
+  const box = document.getElementById("siteTotals");
+  if (box) {
+    const uppe = sajter.filter(s => (s.liv || {}).uppe).length;
+    const sum = fn => sajter.reduce((n, s) => n + (fn(s) || 0), 0);
+    box.innerHTML = kpi([
+      ["Sajterna", uppe + " / " + sajter.length, "uppe"],
+      ["besök", sum(s => (s.trafik || {}).visningar), "· " + SITES.data.dagar + " dygn"],
+      ["personer", sum(s => (s.trafik || {}).personer), ""],
+      ["kassa", sum(s => (s.salj || {}).krTotalt).toFixed(2) + " kr", ""],
+    ]);
+  }
+  lista.innerHTML = '<thead><tr><th style="width:150px">Sajterna</th><th style="width:130px">uppe</th>' +
+    "<th>besök</th><th style=\"width:210px\">kassa</th><th style=\"width:140px\">PostHog</th></tr></thead><tbody>" +
+    (sajter.map(siteRow).join("") || '<tr><td colspan="5" class="empty">—</td></tr>') + "</tbody>";
+  lista.querySelectorAll("[data-site]").forEach(rad => rad.addEventListener("click", () => {
+    SITES.valt = SITES.valt === rad.dataset.site ? "" : rad.dataset.site;
+    renderSites();
+  }));
+  const vald = sajter.find(s => s.nyckel === SITES.valt);
+  const panel = document.getElementById("siteDetailPanel");
+  if (panel) panel.hidden = !vald;
+  if (vald) {
+    document.getElementById("siteDetailName").textContent = vald.namn + " · " + vald.url;
+    document.getElementById("siteDetail").innerHTML = siteDetail(vald);
+  }
+  const tjanster = (SITES.data.tjanster || []).map(t =>
+    '<div class="r"><span class="key">' + esc(t.namn) + '</span><span class="tside">' +
+    esc(t.lage || "okänd") + "</span></div>").join("");
+  const tbox = document.getElementById("serviceList");
+  if (tbox) tbox.innerHTML = tjanster || '<div class="empty">—</div>';
 }
 
 // ---- Admin: roller, folk och fält ----------------------------------------------
@@ -3623,6 +3753,7 @@ function render() {
   renderRail(); renderSide(); renderCrumbs(); renderFilters(); renderItemProject();
   renderTokenAlert(); renderSettings(); renderTheme();
   if (view === "insights") renderInsights();
+  if (view === "sites") renderSites();
   // Kartan ritar sin aktiva källa även när staten kommer in efter en omladdning --
   // annars står en djup länk (#karta?kalla=flow) med tom yta tills man byter vy (mätt).
   if (view === "repos" && tabState.repos === "kartan") {
@@ -3778,6 +3909,7 @@ function show(v) {
   if (view === "settings") { renderRights(); renderLanguage(); }
   if (view === "admin") adminLoad();
   if (view === "insights") insightLoad();
+  if (view === "sites") siteLoad();
 }
 // Dra raderna i ändra-läget. Under draget flyttas noden förbi den rad man är över --
 // över mitten hamnar man efter den, annars före -- så man ser var den landar. På släpp
