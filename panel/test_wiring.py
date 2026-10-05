@@ -442,6 +442,18 @@ console.log(fel.length ? "FEL " + fel.join(" | ") : "OK");
           "kön räknas i servern ur state-svaret")
     check("def ci_of(" in server and "def ci_state(" in server and "ov:stat:ci" in html,
           "byggstatusen läses för de kopplade repona och har ett kort")
+
+    # Ett id som används två gånger: getElementById ger den FÖRSTA, och skriver man till
+    # den andra hamnar texten i en nod som inte ritas. Importen hade "impFiles" på både
+    # filväljaren och etiketten, så raden stod kvar på "inga filer valda" hur många filer
+    # man än valde (mätt i webgläsaren). Provet fångar nästa dubbelt använda id.
+    import collections
+    import re as _re
+    idn = _re.findall(r'\bid="([A-Za-z0-9_.:-]+)"', html)
+    dubbla = sorted(k for k, v in collections.Counter(idn).items() if v > 1)
+    check(not dubbla, "inget id används två gånger", ", ".join(dubbla))
+    check('id="impFilesNote"' in html and 'getElementById("impFilesNote").textContent' in html,
+          "importens etikett har ett eget id (inputen äger sitt)")
     print()
     if failed:
         print("FAILED: " + ", ".join(failed))

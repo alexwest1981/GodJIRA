@@ -730,7 +730,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
           </div>
           <div class="improw">
             <label class="chip impfile"><input type="file" id="impFiles" multiple hidden accept=".pdf,.docx,.odt,.xlsx,.pptx,.txt,.md,.csv,.json,.xml,.rst,.log,.html,.htm">välj filer</label>
-            <span class="meta" id="impFiles">inga filer valda</span>
+            <span class="meta" id="impFilesNote">inga filer valda</span>
             <span class="grow"></span>
             <button class="chip" data-act="imp-parse" id="impParse">Tolka → förslag</button>
           </div>
@@ -3822,7 +3822,11 @@ function renderImport() {
     sel.value = names.concat(all).includes(before) ? before : (linked.length === 1 ? names[0] : "");
   }
   document.getElementById("impTarget").textContent = impTargetText();
-  document.getElementById("impFiles").textContent = filesLabel();
+  // Etiketten har sitt EGET id: inputen hette också "impFiles", och getElementById gav
+  // därför inputen -- texten hamnade i en ersatt nod som inte ritas, och raden stod kvar på
+  // "inga filer valda" hur många filer man än valde (mätt i webbläsaren: filen kom in i
+  // IMP.files och knappen lästes upp, men kvittensen syntes aldrig).
+  document.getElementById("impFilesNote").textContent = filesLabel();
   const write = mayCreateIssues();       // före noten: noten säger varför knappen är av
   const note = document.getElementById("impNote");
   note.className = "meta" + (IMP.note ? (IMP.bad ? " err" : "") : "");
@@ -3889,7 +3893,9 @@ async function impParse() {
   if (!IMP.files.length || IMP.busy) return;
   IMP.busy = true; IMP.bad = false; IMP.plan = []; IMP.token = ""; IMP.spent = false;
   IMP.pdf = false; IMP.pdfError = "";
-  IMP.note = "tolkar underlaget — det tar några sekunder"; renderImport();
+  // Mätta 133 s för ett litet dokument: "några sekunder" var en lögn, och en lögn om
+  // väntetiden får folk att tro att knappen är död.
+  IMP.note = "tolkar underlaget — agenten läser dokumenten och koden, det tar en till två minuter"; renderImport();
   try {
     const files = [];
     for (const f of IMP.files) files.push({ name: f.name, b64: b64(await f.arrayBuffer()) });
