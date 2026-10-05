@@ -473,12 +473,13 @@ console.log(bad.length ? "FEL " + bad.join(" | ") : "OK");
     for pattern in (r"const F = \{[^\n]*\};", r"const board = \(st\) =>[^\n]*\n",
                     r"const issues = \(st\) =>[^\n]*\n", r"const backlog = \(st\) =>[^\n]*\n",
                     r"function pickedBoard\(st\) \{.*?\n\}", r"function boardItems\(st\) \{.*?\n\}",
-                    r"function findHits\(q, state\) \{.*?\n\}"):
+                    r"function findHits\(q, state\) \{.*?\n\}",
+                    r"function findFileHits\(q, files, repo\) \{.*?\n\}"):
         m = re.search(pattern, html, re.S)
         check(bool(m), "sökningens parts går att läsa: " + pattern[:26])
         if m:
             parts.append(m.group(0))
-    if len(parts) == 7:
+    if len(parts) == 8:
         with _tf.NamedTemporaryFile("w", suffix=".js", delete=False, encoding="utf-8") as fh:
             fh.write("\n".join(parts) + """
 var TEXT = { views: { items: ["Uppgifter", "▤"], settings: ["Inställningar", "⚙"] } };
@@ -502,6 +503,14 @@ t("ärendet går till uppgifterna", (findHits("SCRUM-1", state)[0] || {}).go.vie
 t("en bokstav är ingen fråga", findHits("S", state).length === 0);
 t("taket står vid tjugo", findHits("e", { jira: { boards: [{ issues: Array.from({ length: 30 },
     (_, i) => ({ key: "K-" + i, summary: "ett ärende" })) }] } }).length <= 20);
+const filer = ["README.md", "src/com/wac/service/CustomerService.java", "src/ui/App.java"];
+t("filens sökväg", findFileHits("service/", filer, "AutoCore").some(f => f.title === filer[1]));
+t("filens namn", findFileHits("customer", filer, "AutoCore").some(f => f.key === "CustomerService.java"));
+t("filen vet sitt repo", findFileHits("readme", filer, "AutoCore")[0].sub === "AutoCore");
+t("filen går till Filer-fliken", findFileHits("readme", filer, "AutoCore")[0].go.file === "README.md");
+t("ingen fil utan fråga", findFileHits("x", filer, "AutoCore").length === 0);
+t("filernas tak står vid tjugo", findFileHits(".java",
+    Array.from({ length: 30 }, (_, i) => "a/f" + i + ".java"), "AutoCore").length === 20);
 console.log(lines.join("\\n"));
 """)
             search_js = fh.name
@@ -509,8 +518,9 @@ console.log(lines.join("\\n"));
         _os.unlink(search_js)
         lines = [r for r in search.stdout.strip().splitlines() if r.strip()]
         bad = [r for r in lines if not r.startswith("OK")]
-        check(len(lines) == 9 and not bad, "sökningen hittar rätt sak och går till rätt ställe",
-              (bad or [search.stderr.strip()[:120]])[0] if (bad or search.stderr.strip()) else "")
+        felrader = bad + (["%d rader, väntade 15" % len(lines)] if len(lines) != 15 else [])
+        check(not felrader, "sökningen hittar rätt sak och går till rätt ställe",
+              felrader[0] if felrader else "")
     print()
     if failed:
         print("FAILED: " + ", ".join(failed))

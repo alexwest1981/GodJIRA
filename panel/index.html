@@ -1949,6 +1949,39 @@ function findHits(q, state) {
   return hits;
 }
 
+// Filerna är en EGEN källa: de kommer ur /api/files (ett anrop per repo, cachat) och inte
+// ur state, för en filkarta över varje repo i varje svar vore en tung läsning. Ren funktion
+// (fråga, lista, repo) så test_wiring kan köra den mot en handgjord lista.
+function findFileHits(q, files, repo) {
+  const needle = (q || "").trim().toLowerCase();
+  if (needle.length < 2 || !files || !files.length) return [];
+  const out = [];
+  for (const path of files) {
+    if (String(path).toLowerCase().includes(needle)) {
+      out.push({ kind: "file", key: String(path).split("/").pop(), title: String(path),
+                 sub: repo || "", go: { view: "repos", file: String(path) } });
+      if (out.length >= 20) break;
+    }
+  }
+  return out;
+}
+
+// Ett anrop per repo, sedan cachat: sökningen får inte kosta en förfrågan per bokstav.
+const FIND_FILES = { repo: "", list: [], busy: false };
+
+async function findFilesLoad(repo) {
+  if (!repo || FIND_FILES.repo === repo || FIND_FILES.busy) return;
+  FIND_FILES.repo = repo; FIND_FILES.list = []; FIND_FILES.busy = true;
+  try {
+    const answer = await (await fetch("/api/files?repo=" + encodeURIComponent(repo))).json();
+    FIND_FILES.list = answer.ok ? (answer.files || []) : [];
+  } catch (e) {
+    FIND_FILES.list = [];
+  }
+  FIND_FILES.busy = false;
+  renderFind();                      // raderna kommer in när svaret gör det
+}
+
 // Ett klick (eller Enter) går DIT fyndet hör: en adress öppnas, ett repo öppnas, ett ärende
 // visas -- och filtren nollas på vägen, för ett aktivt filter skulle kunna gömma raden man
 // just sökte fram, och då ser sökningen trasig ut.
@@ -1956,6 +1989,7 @@ function findGo(go) {
   if (!go) return;
   if (go.url) { window.open(go.url, "_blank", "noopener"); return; }
   if (go.repo) { show("repos"); repoOpen(go.repo); return; }
+  if (go.file) { show("repos"); tabPick("filer"); openFile(go.file); return; }
   if (go.map) { location.hash = "#karta?kalla=" + encodeURIComponent(go.map); show(readHash()); return; }
   if (go.view === "items") {
     // Ett aktivt filter eller en vald hög skulle kunna gömma raden man just sökte fram.
@@ -1972,7 +2006,11 @@ function renderFind() {
   const input = document.getElementById("findInput"), list = document.getElementById("findList");
   if (!input || !list) return;
   const query = input.value;
-  FIND.hits = findHits(query, STATE || {});
+  // Filerna i det repo panelen står i (samma uppslag som Karta- och Filer-fliken).
+  findFilesLoad(query.trim().length > 1 ? scanRepo() : "");
+  FIND.hits = findHits(query, STATE || {})
+    .concat(findFileHits(query, FIND_FILES.list, scanRepo()))
+    .slice(0, 24);
   FIND.none = query.trim().length > 1 && !FIND.hits.length;
   if (!FIND.hits.length && !FIND.none) { list.hidden = true; list.innerHTML = ""; return; }
   list.innerHTML = '<div class="wl">' + (FIND.hits.length
