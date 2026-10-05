@@ -98,6 +98,21 @@ check(row["count"] == 8 and len(row["keys"]) == 4, "en kapad lista säger ändå
 queue = server.needs_list(state_of(prs=[{"title": "Byt färg", "number": 3}, {"title": "Fix", "number": 4}]))
 check([n for n in queue if n["kind"] == "prs"][0]["count"] == 2, "två open_items PR:er blir en row med talet 2")
 
+# Vad som körs: en tjänst som står still blockerar, en som kör en äldre commit än sin gren
+# väntar. En tjänst i takt, och ett okänt svar, larmar inte.
+drift = {"sajter": [
+    {"nyckel": "web", "namn": "Web", "lage": "active",
+     "drift": {"ok": True, "commit": "a1b2c3", "behind": 3, "upstream": "origin/main"}},
+    {"nyckel": "api", "namn": "Api", "lage": "failed", "drift": {"ok": False, "note": "ingen katalog"}},
+    {"nyckel": "lugn", "namn": "Lugn", "lage": "active",
+     "drift": {"ok": True, "commit": "d4e5f6", "behind": 0, "upstream": "origin/main"}}]}
+queue = server.needs_list(dict(state_of(), drift=drift))
+sorter = sorted((n["kind"], n["level"]) for n in queue if n["kind"] in ("service", "deploy"))
+check(sorter == [("deploy", "wait"), ("service", "block")],
+      "en stillastående tjänst blockerar, en gammal commit väntar")
+check([n for n in queue if n["kind"] == "deploy"][0]["detail"] == "Web · 3 efter origin/main",
+      "raden säger vilken sajt och hur långt efter")
+
 # Nyckeln: ett okänt utgångsdatum säger ingenting; en räknad utgång larmar; ett avvisat svar
 # blockerar och hamnar först.
 check(not [n for n in server.needs_list(state_of(token={"present": True, "connected": True,

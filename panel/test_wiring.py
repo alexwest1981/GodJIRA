@@ -449,6 +449,11 @@ console.log(bad.length ? "FEL " + bad.join(" | ") : "OK");
           "sökningens lyssnare kopplas på ett ställe")
     check('answer["needs"] = needs_list(answer)' in server and "def needs_list(" in server,
           "kön räknas i servern ur state-svaret")
+    check("function driftRow(s)" in html and "const drift = driftRow(s);" in html
+          and "return drift + spark(t.perDag)" in html,
+          "den körande commiten står i sajtens detalj, inte bara för dem med trafik")
+    check("def drift_read()" in server and '"drift": pool.submit' in server,
+          "vad som körs läses i state (den lätta vägen), cachat")
     check("def ci_of(" in server and "def ci_state(" in server and "ov:stat:ci" in html,
           "byggstatusen läses för de kopplade repona och har ett kort")
 

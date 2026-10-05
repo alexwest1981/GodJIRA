@@ -368,11 +368,110 @@ def salj(marke, dagar=14, hamta=stripe):
             "tak": 100}
 
 
+# --------------------------------------------------------------- vad som KÖRS
+#
+# Sajtvyn visste att tjänsten svarade och att sajten svarade -- men inte VILKEN kod som
+# svarade. Det är skillnaden mellan "uppe" och "ute": en tjänst kan vara aktiv och köra en
+# commit från i förrgår medan grenen står tre commits längre fram.
+#
+# Allt läses med LÄSANDE kommandon i någon annans arbetsträd. `--no-optional-locks` gör att
+# ett uppslag aldrig skriver i deras index, och en katalog utan git-historik svarar tomt i
+# stället för att kasta.
+BRANCH_LINE = re.compile(r"^## (?P<branch>[^\s.]+)(?:\.\.\.(?P<upstream>[^\s\[]+))?"
+                         r"(?: \[(?P<flags>[^\]]+)\])?(?:\s+\(.*\))?\s*$")
+
+
+def parse_status(line: str) -> dict:
+    """`## main...origin/main [ahead 1, behind 2]` -> gren, uppströms, före, efter.
+
+    Ren funktion: hela tolkningen går att prova utan ett repo. Utan uppströms är före/efter
+    okända (None) -- inte noll, för noll betyder "i takt" och det vet vi inte."""
+    match = BRANCH_LINE.match(line or "")
+    if not match:
+        return {"branch": "", "upstream": "", "ahead": None, "behind": None}
+    upstream = match.group("upstream") or ""
+    flags = match.group("flags") or ""
+    ahead = behind = None
+    if upstream:
+        av = re.search(r"ahead (\d+)", flags)
+        bv = re.search(r"behind (\d+)", flags)
+        ahead = int(av.group(1)) if av else 0
+        behind = int(bv.group(1)) if bv else 0
+    return {"branch": match.group("branch"), "upstream": upstream, "ahead": ahead, "behind": behind}
+
+
+def git_las(katalog: str, args: list, kor=None) -> str:
+    """Ett läsande git-svar ur katalogen, eller tom sträng om det inte går."""
+    def standard(extra):
+        return subprocess.run(["git", "--no-optional-locks", "-C", katalog] + list(extra),
+                              capture_output=True, text=True, timeout=30)
+    kor = kor or standard
+    try:
+        svar = kor(args)
+        return (svar.stdout or "").strip() if svar.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
+def tjanst_katalog(enhet: str, kor=None) -> str:
+    """Tjänstens arbetskatalog -- ur systemd, inte ur en gissning."""
+    if not enhet:
+        return ""
+    def standard(u):
+        return subprocess.run(["systemctl", "--user", "show", "-p", "WorkingDirectory",
+                               "--value", u], capture_output=True, text=True, timeout=15)
+    kor = kor or standard
+    try:
+        svar = kor(enhet)
+        vantad = (svar.stdout or "").strip()
+        return "" if vantad in ("", "-") else vantad
+    except Exception:
+        return ""
+
+
+def drift_of(katalog: str, kor=None) -> dict:
+    """Vad som körs i katalogen: commit, när, ämne, gren, före/efter uppströms, ostädat.
+
+    Två kommandon räcker: `git log -1` ger commit + datum + ämne, och `git status -b`
+    ger grenen, avståndet till uppströms OCH antalet ostädade filer i samma svar."""
+    if not katalog:
+        return {"ok": False, "note": "ingen katalog"}
+    log = git_las(katalog, ["log", "-1", "--format=%h%x1f%cI%x1f%s"], kor)
+    if not log:
+        return {"ok": False, "note": "ingen git-historik i katalogen"}
+    delar = log.split("\x1f")
+    status = git_las(katalog, ["status", "--porcelain", "-b"], kor)
+    rader = status.splitlines()
+    gren = parse_status(rader[0] if rader else "")
+    return dict(gren, ok=True, katalog=katalog,
+                commit=delar[0] if delar else "",
+                at=delar[1] if len(delar) > 1 else "",
+                subject=delar[2] if len(delar) > 2 else "",
+                dirty=len([r for r in rader[1:] if r.strip()]))
+
+
+def drift_rapport() -> dict:
+    """Bara det lätta: ingen sajt hämtas, ingen trafik, ingen kassa -- bara vad som körs.
+
+    Panelen frågar den här vägen i /api/state (en gång i minuten), medan hela sajtvyn
+    (trafik, kassa, livstecken) hämtas först när man öppnar Sajter."""
+    ut = []
+    for sajt in SAJTER:
+        enhet = sajt.get("tjanst")
+        ut.append({"nyckel": sajt["nyckel"], "namn": sajt["namn"], "enhet": enhet,
+                   "lage": tjanst_lage(enhet),
+                   "drift": drift_of(tjanst_katalog(enhet))})
+    return {"genererad": datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M"),
+            "sajter": ut}
+
+
 def sajt_rapport(sajt, dagar=14):
     vardar = vardar_for(sajt)
     return {"nyckel": sajt["nyckel"], "namn": sajt["namn"], "url": sajt["url"],
             "liv": livstecken(sajt["url"]),
             "tjanst": {"enhet": sajt.get("tjanst"), "lage": tjanst_lage(sajt.get("tjanst"))},
+            # Vilken kod som svarar, inte bara att någon svarar.
+            "drift": drift_of(tjanst_katalog(sajt.get("tjanst"))),
             # Vilket konto pengarna kommer ifran: Alibit saljer i ett eget, och en kolumn
             # som blandar tva konton utan att saga det ar en fellasning som vantar.
             "kassa": sajt.get("kassa"),
@@ -409,12 +508,43 @@ def skriv_ut(r):
         else:
             print("          kassa: %s" % (k.get("skal") or k.get("fel")))
         print("          posthog: %s | tjanst: %s" % (s["posthog"], s["tjanst"]["lage"]))
+        d = s.get("drift") or {}
+        if d.get("ok"):
+            print("          kor: %s %s%s" % (
+                d["commit"], (d.get("subject") or "")[:60],
+                " · %d efter %s" % (d["behind"], d.get("upstream") or "uppströms")
+                if d.get("behind") else (" · i takt" if d.get("upstream") else " · ingen uppströms")))
+        else:
+            print("          kor: %s" % (d.get("note") or "okänt"))
     for t in r["tjanster"]:
         print("%-9s %s" % (t["namn"], t["lage"]))
 
 
 def selftest():
     import tempfile
+
+    # Vad som KÖRS: grenraden ur git tolkas rent, och utan uppströms är avståndet OKÄNT
+    # (None) -- inte noll, för noll betyder "i takt" och det vet vi inte.
+    assert parse_status("## main...origin/main [ahead 1, behind 2]") == {
+        "branch": "main", "upstream": "origin/main", "ahead": 1, "behind": 2}
+    assert parse_status("## main...origin/main")["behind"] == 0
+    assert parse_status("## main...origin/main")["ahead"] == 0
+    assert parse_status("## release")["behind"] is None
+    assert parse_status("## HEAD (no branch)")["branch"] == "HEAD"
+    assert parse_status("")["branch"] == "" and parse_status("skrap")["branch"] == ""
+
+    # drift_of: två kommandon, injicerade -- tolkningen provas utan en maskin med git
+    def git_svar(args):
+        if args[:2] == ["log", "-1"]:
+            return subprocess.CompletedProcess(args, 0,
+                                               "abc1234\x1f2026-10-05T09:00:00+02:00\x1fByt färg")
+        return subprocess.CompletedProcess(args, 0, "## main...origin/main [behind 3]\n M karta.py\n")
+
+    d = drift_of("/var/www/minnoria", kor=git_svar)
+    assert (d["commit"], d["behind"], d["dirty"]) == ("abc1234", 3, 1), d
+    assert d["at"].startswith("2026-10-05") and d["subject"] == "Byt färg", d
+    assert drift_of("")["ok"] is False
+    assert drift_of("/tmp", kor=lambda a: subprocess.CompletedProcess(a, 128, ""))["ok"] is False
 
     # Vardnamnen: www och utan www ar samma sajt, dubbletter faller bort
     assert vardar_for({"vardar": ["www.Alibit.se", "alibit.se"]}) == ["alibit.se"]
@@ -525,6 +655,9 @@ def selftest():
 if __name__ == "__main__":
     if "--selftest" in sys.argv:
         selftest()
+    elif "--drift" in sys.argv:
+        # Före --json: den lätta vägen (bara vad som körs) skall inte drunkna i den tunga.
+        print(json.dumps(drift_rapport(), ensure_ascii=False))
     elif "--json" in sys.argv:
         print(json.dumps(rapport(), ensure_ascii=False))
     elif "--posthog" in sys.argv:

@@ -990,6 +990,7 @@ const TEXT = {
   agentWindow: "senaste {days} dygnen", sessions: "sessioner", tokens: "tokens", cost: "kostnad",
   calls: "anrop", toolCalls: "verktygsanrop", messages: "meddelanden",
   findNone: "inget hittat",
+  inStep: "i takt", behindUpstream: "efter", noUpstream: "ingen uppströms", dirty: "ostädat",
   ciState: { green: "grön", red: "röd", running: "kör", none: "inget bygge" },
   run: "kör", runGoing: "körningen går", runDone: "körningen är klar",
   runFailed: "körningen gick inte igenom", runTooltip: "låt agenten göra ärendet i en egen worktree",
@@ -2818,10 +2819,25 @@ function siteRow(s) {
     '<td class="muted">' + esc(ph) + "</td></tr>";
 }
 
+// Vad som KÖRS i tjänsten: commiten, ämnet och avståndet till grenen. Raden hör till
+// VARJE sajt -- den får inte hänga på att trafiken mäts, för då är svaret på "vilken kod
+// svarar" bara ett svar för dem med PostHog.
+function driftRow(s) {
+  const d = s.drift || {};
+  if (!d.ok) return '<div class="meta">' + esc(d.note || "okänt vad som körs") + "</div>";
+  const avstånd = d.behind ? d.behind + " " + TEXT.behindUpstream + " " + (d.upstream || "")
+    : (d.upstream ? TEXT.inStep : TEXT.noUpstream);
+  return '<div class="r"><span class="key">' + esc(d.commit) + "</span>" +
+    '<span class="t">' + esc((d.subject || "").slice(0, 80)) + "</span>" +
+    '<span class="tside">' + esc(avstånd) +
+    (d.dirty ? " · " + d.dirty + " " + TEXT.dirty : "") + "</span></div>";
+}
+
 function siteDetail(s) {
+  const drift = driftRow(s);
   const t = s.trafik || {};
-  if (!t.mats) return '<div class="empty">mäter inte trafiken</div>';
-  if (t.fel) return '<div class="empty">' + esc(t.fel) + "</div>";
+  if (!t.mats) return drift + '<div class="empty">mäter inte trafiken</div>';
+  if (t.fel) return drift + '<div class="empty">' + esc(t.fel) + "</div>";
   const rader = lista => (lista || []).map(r => '<div class="r"><span class="key">' +
     esc(r[0] || "/") + '</span><span class="tside">' + Number(r[1]) + "</span></div>").join("");
   const tot = t.totalt ? '<div class="meta">' + Number(t.totalt.visningar) + " besök / " +
@@ -2831,7 +2847,7 @@ function siteDetail(s) {
     ? '<div><span class="meta">kassa</span> ' + k.krTotalt.toFixed(2) + " kr · " + Number(k.antalTotalt) +
       (k.provTotalt ? ' <span class="meta">· ' + Number(k.provTotalt) + " provkörningar uteslutna</span>" : "") + "</div>"
     : "";
-  return spark(t.perDag) + tot + pengar +
+  return drift + spark(t.perDag) + tot + pengar +
     '<div class="meta">mest besökta</div><div class="wl">' + (rader(t.toppSidor) || '<div class="empty">—</div>') + "</div>" +
     '<div class="meta">varifrån</div><div class="wl">' + (rader(t.kallor) || '<div class="empty">—</div>') + "</div>";
 }

@@ -1647,6 +1647,22 @@ def insights_read() -> dict:
     return out
 
 
+def drift_read() -> dict:
+    """Vad som KÖRS i varje sajts tjänst: commit, ämne och avståndet till grenen.
+
+    Den lätta vägen genom motorn (jira_sites --drift): ingen trafik, ingen kassa, inga
+    URL:er -- bara en systemd-fråga och två git-kommandon per sajt. Därför får den plats i
+    /api/state, medan hela sajtvyn hämtas först när man öppnar Sajter.
+    """
+    if demo():
+        return dict(DEMO_DRIFT, ok=True)
+    env = seam("sites", "--drift", "--json", timeout=90)
+    payload = env.get("payload")
+    if not isinstance(payload, dict):
+        return {"ok": False, "error": (env.get("raw") or "motorn svarade inget")[:200]}
+    return dict(payload, ok=True)
+
+
 def sites_read() -> dict:
     """Sajterna: trafiken, kassan och livstecknet. Motorn raknar, panelen visar.
 
@@ -1664,6 +1680,18 @@ def sites_read() -> dict:
 # forbrukning -- samma skal som DEMO_REPOS och demo-token.
 # Provlägets bygge: ett rött bygge på main, så kön visar sin allvarligaste rad i
 # skärmdumpar utan att bära något riktigt repos siffror.
+# Provlägets sajter: en som står still och en som kör en äldre commit, så kön visar båda
+# raderna i skärmdumpar -- med påhittade namn, aldrig riktiga repos siffror.
+DEMO_DRIFT = {"sajter": [
+    {"nyckel": "web", "namn": "Web", "enhet": "demo-web.service", "lage": "active",
+     "drift": {"ok": True, "commit": "a1b2c3d", "at": "2026-10-04T10:00:00Z",
+               "subject": "Checkout: kvitto per e-post", "branch": "main",
+               "upstream": "origin/main", "ahead": 0, "behind": 3, "dirty": 0}},
+    {"nyckel": "api", "namn": "Api", "enhet": "demo-api.service", "lage": "failed",
+     "drift": {"ok": True, "commit": "9f8e7d6", "at": "2026-10-01T08:00:00Z",
+               "subject": "Första utgåvan", "branch": "main", "upstream": "origin/main",
+               "ahead": 0, "behind": 0, "dirty": 1}}]}
+
 DEMO_CI = {"repos": [{"repo": DEMO_LOGIN + "/web-platform", "state": "red", "branch": "main",
                       "workflow": "CI", "conclusion": "failure", "at": "2026-10-05T16:40:00Z",
                       "url": "https://github.com/" + DEMO_LOGIN + "/web-platform/actions/runs/1"}]}
@@ -1937,7 +1965,25 @@ def needs_list(state: dict, limit: int = 4) -> list:
                       "label": "ärenden öppna på GitHub",
                       "detail": str((gh_issues[0] or {}).get("title") or ""), "view": "items"})
 
-    # 4. Nyckeln. Utgångsdatumet finns inte i något API, så ett okänt datum säger ingenting
+    # 4. Vad som körs. En tjänst som står still är ett block; en som kör en äldre commit än
+    #    sin gren är "ute" i sin mest bokstavliga mening. Bara aktiva->inaktiva/failed
+    #    räknas: ett okänt svar ("okand", tidsutfall) skall inte larma om något vi inte vet.
+    for site in ((state.get("drift") or {}).get("sajter") or []):
+        name = str(site.get("namn") or site.get("nyckel") or "")
+        lage = str(site.get("lage") or "")
+        drift = site.get("drift") or {}
+        if lage in ("inactive", "failed"):
+            needs.append({"kind": "service", "level": "block", "count": 1,
+                          "label": "tjänsten står still",
+                          "detail": (name + " · " + lage).strip(" ·"), "view": "sites"})
+        elif drift.get("ok") and (drift.get("behind") or 0) > 0:
+            needs.append({"kind": "deploy", "level": "wait", "count": 1,
+                          "label": "kör en äldre commit än grenen",
+                          "detail": name + " · " + str(drift["behind"]) + " efter " +
+                                    str(drift.get("upstream") or "uppströms"),
+                          "view": "sites"})
+
+    # 5. Nyckeln. Utgångsdatumet finns inte i något API, så ett okänt datum säger ingenting
     #    -- bara Jiras eget svar (alert/note) eller en räknad utgång larmar.
     if token.get("present") and not token.get("connected"):
         needs.append({"kind": "key", "level": "block", "count": 1, "label": "nyckeln svarar inte",
@@ -1976,6 +2022,10 @@ def state() -> dict:
                     # kostnaden. Egna siffror, lästa ur Hermes egen databas.
                     "agents": pool.submit(lambda: cached("agents", agents_read, ttl=300)),
                     "runs": pool.submit(lambda: cached("runs", runs_read, ttl=60)),
+                    # Vad som körs, inte bara att något svarar: två git-kommandon och en
+                    # systemd-fråga per sajt, så den får plats här (till skillnad från
+                    # hela sajtvyn, som hämtas först när man öppnar Sajter).
+                    "drift": pool.submit(lambda: cached("drift", drift_read, ttl=120)),
                     "flows": pool.submit(lambda: cached("flows", flow_graphs)),
                     # Bara frågan om behörigheten (ett anrop): projektlistan finns
                     # redan i jira-svaret. Utan den här raden vore "nytt projekt" en
