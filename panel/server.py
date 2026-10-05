@@ -1662,6 +1662,12 @@ def sites_read() -> dict:
 
 # Provlägets agenter: egna tal, for da hade skarmdumpen burit anvandarens riktiga
 # forbrukning -- samma skal som DEMO_REPOS och demo-token.
+# Provlägets bygge: ett rött bygge på main, så kön visar sin allvarligaste rad i
+# skärmdumpar utan att bära något riktigt repos siffror.
+DEMO_CI = {"repos": [{"repo": DEMO_LOGIN + "/web-platform", "state": "red", "branch": "main",
+                      "workflow": "CI", "conclusion": "failure", "at": "2026-10-05T16:40:00Z",
+                      "url": "https://github.com/" + DEMO_LOGIN + "/web-platform/actions/runs/1"}]}
+
 DEMO_RUNS = [
     {"at": "2026-10-05T16:52:11", "key": "WEB-42", "repo": "demo-user/web-platform",
      "branch": "godjira/WEB-42", "agent": "hermes", "commits": 3, "files": 4, "added": 61,
@@ -1781,6 +1787,64 @@ def posthog_save(payload: dict) -> tuple:
     return 200, dict(svar, sparad=True)
 
 
+# ------------------------------------------------------------ byggstatus
+#
+# Vad hubben saknade: ingenting visste om något var rött. Kontrollen görs för de KOPPLADE
+# repona (länken, samma koppling som flödet drivs av), inte för alla 61 -- hubben skall
+# veta hur det går där man jobbar, inte överallt. Allt cachas, så ett kallt svar betalar
+# två gh-anrop per repo och resten är gratis.
+CI_TTL = 120
+
+
+def ci_of(runs: list, branch: str) -> dict:
+    """Senaste körningen på huvudgrenen, tolkad. Ren funktion: provas utan nät.
+
+    Bara huvudgrenen räknas: ett rött bygge på en gren du jobbar i är inte "bygget är
+    rött", och en körning som inte är klar är inget svar än.
+    """
+    på = [r for r in (runs or []) if not branch or str(r.get("headBranch") or "") == branch]
+    if not på:
+        return {"state": "none", "branch": branch}
+    senaste = max(på, key=lambda r: str(r.get("createdAt") or ""))
+    status, slut = str(senaste.get("status") or ""), str(senaste.get("conclusion") or "")
+    lage = "running" if status != "completed" else ("green" if slut in ("success", "neutral", "skipped") else "red")
+    return {"state": lage, "branch": senaste.get("headBranch") or branch,
+            "workflow": senaste.get("workflowName") or "", "conclusion": slut,
+            "at": senaste.get("createdAt") or "", "url": senaste.get("url") or ""}
+
+
+def ci_runs(full: str) -> list:
+    env = seam("gh", "run", "list", "--repo", full, "--limit", "10", "--json",
+               "conclusion,status,workflowName,headBranch,createdAt,url", timeout=90)
+    payload = env.get("payload")
+    return payload if isinstance(payload, list) else []
+
+
+def ci_branch(full: str) -> str:
+    env = seam("gh", "repo", "view", full, "--json", "defaultBranchRef", timeout=60)
+    return str(((env.get("payload") or {}).get("defaultBranchRef") or {}).get("name") or "")
+
+
+def ci_state(links: dict, login: str) -> dict:
+    """Byggstatus per kopplat repo."""
+    if demo():
+        return dict(DEMO_CI, ok=True)
+    repon = [str((l or {}).get("repo") or "") for l in ((links or {}).get("links") or [])]
+    repon = [r for r in dict.fromkeys(repon) if r][:3]
+    if not repon:
+        return {"ok": True, "repos": [], "note": "ingen koppling"}
+    if not login:
+        return {"ok": False, "repos": [], "error": "ingen GitHub-inloggning"}
+    ut = []
+    for namn in repon:
+        full = namn if "/" in namn else login + "/" + namn
+        gren = cached("ci-gren:" + full, lambda f=full: ci_branch(f), ttl=1800)
+        ut.append(dict(ci_of(cached("ci:" + full, lambda f=full: ci_runs(f), ttl=CI_TTL),
+                             gren), repo=full))
+    return {"ok": True, "repos": ut,
+            "error": "" if any(r.get("state") != "none" for r in ut) else "inga byggen hittades"}
+
+
 # ---------------------------------------------------------------- kön
 #
 # Kön är hubbens framsida: allt som väntar på DIG, på ett ställe. Den hämtar ingenting --
@@ -1815,6 +1879,17 @@ def needs_list(state: dict, limit: int = 4) -> list:
     seen: set = set()
     issues = [i for i in (boards[0].get("issues") or []) + (boards[0].get("backlog") or [])
               if not (i.get("key") in seen or seen.add(i.get("key")))]
+
+    # 0. Bygget först: rött på huvudgrenen betyder att det som ligger i main inte går att
+    #    lita på, och då är allt annat på den grenen sekundärt.
+    for repo in ((state.get("ci") or {}).get("repos") or []):
+        if repo.get("state") == "red":
+            needs.append({"kind": "ci", "level": "block", "count": 1,
+                          "label": "bygget är rött",
+                          "detail": " · ".join(x for x in (str(repo.get("workflow") or ""),
+                                                           str(repo.get("branch") or ""),
+                                                           str(repo.get("repo") or "")) if x),
+                          "url": repo.get("url") or "", "view": "repos"})
 
     # 1. Körningar. En körning som öppnat en PR väntar på din merge -- det är människans
     #    grind, och den skall synas. En körning som inte kom igenom väntar på ett beslut.
@@ -1905,6 +1980,10 @@ def state() -> dict:
                     "projectCan": pool.submit(lambda: cached("projectCan", project_can))}
         answer = {"generatedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                   "flow": flow, **{name: job.result() for name, job in jobs.items()}}
+        # Byggstatus: den behöver länkarna (vilka repon man jobbar i) och GitHub-namnet,
+        # så den går efter poolen. Cachad -- ett kallt svar betalar två gh-anrop per repo.
+        answer["ci"] = ci_state(answer.get("links") or {},
+                                (answer.get("github") or {}).get("login") or "")
         # Kön sätts ihop ur svaret självt, sist: inga nya anrop, och allt den tittar på
         # finns redan här.
         answer["needs"] = needs_list(answer)

@@ -110,6 +110,28 @@ check(larm["level"] == "wait" and larm["label"] == "nyckeln går ut", "tre dygn 
 död = server.needs_list(state_av(token={"present": True, "connected": False, "alert": "401"}))
 check(död[0]["kind"] == "key" and död[0]["level"] == "block", "en nyckel Jira avvisar blockerar")
 
+# Bygget: rött på huvudgrenen blockerar och hamnar först. Ett grönt bygge larmar inte.
+rött = {"repos": [{"repo": "mig/repo", "state": "red", "branch": "main", "workflow": "CI",
+                   "url": "https://x/actions/1"}]}
+kö = server.needs_list(dict(state_av(), ci=rött))
+check(kö[0]["kind"] == "ci" and kö[0]["level"] == "block" and kö[0]["label"] == "bygget är rött",
+      "ett rött bygge blir kön första rad")
+check(not [n for n in server.needs_list(dict(state_av(), ci={"repos": [{"state": "green"}]}))
+           if n["kind"] == "ci"], "ett grönt bygge larmar inte")
+
+# ci_of: den nyaste körningen PÅ HUVUDGRENEN avgör -- en röd gren man jobbar i är inte
+# "bygget är rött", och en körning som inte är klar är inget svar än.
+körningar = [{"headBranch": "main", "status": "completed", "conclusion": "failure",
+              "createdAt": "2026-10-05T10:00:00Z", "workflowName": "CI", "url": "u"},
+             {"headBranch": "develop", "status": "completed", "conclusion": "success",
+              "createdAt": "2026-10-05T12:00:00Z"}]
+check(server.ci_of(körningar, "main")["state"] == "red", "den nyaste körningen på huvudgrenen avgör")
+check(server.ci_of(körningar, "release")["state"] == "none", "en gren utan körningar säger inget")
+check(server.ci_of([{"headBranch": "main", "status": "in_progress", "conclusion": "",
+                     "createdAt": "x"}], "main")["state"] == "running",
+      "en körning som inte är klar är inget svar")
+check(server.ci_of([], "main")["state"] == "none", "inga byggen alls är inget larm")
+
 # Ordningen: block före wait före info.
 kö = server.needs_list(state_av(issues=[arende("SCRUM-1")],
                                 token={"present": True, "connected": False},

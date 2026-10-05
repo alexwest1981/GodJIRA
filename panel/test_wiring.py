@@ -433,6 +433,15 @@ console.log(fel.length ? "FEL " + fel.join(" | ") : "OK");
           "flödeslistan visar bara repots eget flöde, utan reservväg")
     check("data-from=" in server and "flowmap_theme" in server,
           "panelens palett läggs på flödeskartan")
+
+    # Kön och bygget: ett block som ingen renderare når är en tom plats som ser ut som ett
+    # fel, och talen hör i servern (de går att prova), inte i ritningen.
+    check('data-ov="needs"' in html and "function renderNeeds()" in html and "renderNeeds();" in html,
+          "kön har ett block och ritas på Översikt")
+    check('answer["needs"] = needs_list(answer)' in server and "def needs_list(" in server,
+          "kön räknas i servern ur state-svaret")
+    check("def ci_of(" in server and "def ci_state(" in server and "ov:stat:ci" in html,
+          "byggstatusen läses för de kopplade repona och har ett kort")
     print()
     if failed:
         print("FAILED: " + ", ".join(failed))

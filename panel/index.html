@@ -976,6 +976,7 @@ const TEXT = {
   allTasks: "Alla uppgifter", sources: "Jira + GitHub",
   agentWindow: "senaste {days} dygnen", sessions: "sessioner", tokens: "tokens", cost: "kostnad",
   calls: "anrop", toolCalls: "verktygsanrop", messages: "meddelanden",
+  ciState: { green: "grön", red: "röd", running: "kör", none: "inget bygge" },
   run: "kör", runGoing: "körningen går", runDone: "körningen är klar",
   runFailed: "körningen gick inte igenom", runTooltip: "låt agenten göra ärendet i en egen worktree",
   changes: "ändringar", noChange: "ingen ändring", pushed: "skickad", localOnly: "bara lokalt",
@@ -1376,6 +1377,16 @@ function renderStats() {
       <div class="x">${g.repos.filter(r => r.isPrivate).length} privata · ${g.repos.filter(r => !r.isPrivate).length} publika</div></div>`],
     ["ov:stat:flow", `<div class="stat"><div class="n">${f.pick ? esc(f.pick.key) : "—"}</div><div class="l">flödets nästa</div>
       <div class="x">${esc(f.pick ? (f.pick.summary || "").slice(0, 40) : (f.error || TEXT.nothing))}</div></div>`]];
+  // Bygget: det hubben inte kunde se förut. GRÖNT syns också -- annars ser ett grönt bygge
+  // likadant ut som inget bygge alls, och det var hela hålet. Kontrollen gäller de kopplade
+  // repona (servern), inte alla sextioett.
+  const byggen = (STATE.ci || {}).repos || [];
+  if (byggen.length) {
+    const r = byggen[0];
+    cards.push(["ov:stat:ci", `<div class="stat"><div class="n">${esc(TEXT.ciState[r.state] || r.state)}</div>
+      <div class="l">${esc(r.workflow || "bygget")}</div>
+      <div class="x">${esc((r.repo || "") + " · " + (r.branch || ""))}</div></div>`]);
+  }
   document.getElementById("stats").innerHTML =
     cards.filter(([id]) => !off.has(id)).map(([, html]) => html).join("");
 }

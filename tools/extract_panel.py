@@ -145,7 +145,7 @@ EXTRA = ("oassignerat", "standarden", "nytt projekt", "privata", "publika",
          "provläge: exempeldata, inget konto kopplat", "ur filen", "st",
          "körningen väntar på din merge", "ärenden hos dig", "PR öppen",
          "nyckeln svarar inte", "ingen nyckel kopplad",
-         "utan ansvarig", "ärenden öppna på GitHub")
+         "utan ansvarig", "ärenden öppna på GitHub", "bygget är rött")
 for word in EXTRA:
     found.setdefault(word, set()).add("extra")
 
