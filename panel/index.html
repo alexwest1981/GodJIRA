@@ -643,6 +643,10 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
           <div class="bars" id="agentsSources"></div>
         </div>
       </div>
+      <div class="panel" data-ov="runs" data-unit="runs">
+        <h3>Körningar <span class="meta" id="runsMeta"></span></h3>
+        <div class="body"><div class="wl" id="runsList"><div class="empty">läser …</div></div></div>
+      </div>
       <div class="stats" id="stats" data-unit="stats"></div>
       <div class="panel" data-ov="automation" data-unit="automation">
         <h3>Projektet du är kopplad till <span class="meta" id="automationMeta"></span>
@@ -955,6 +959,8 @@ const TEXT = {
   allTasks: "Alla uppgifter", sources: "Jira + GitHub",
   agentWindow: "senaste {days} dygnen", sessions: "sessioner", tokens: "tokens", cost: "kostnad",
   calls: "anrop", toolCalls: "verktygsanrop", messages: "meddelanden",
+  changes: "ändringar", noChange: "ingen ändring", pushed: "skickad", localOnly: "bara lokalt",
+  noRuns: "inga körningar än — flödet tar ett ärende, körningen gör det",
   scope: { all: "Alla", shared: "Gemensamma", mine: "Egna" },
   flows: "Flöden", flowRuns: "går av sig själv", flowIdle: "trycks bara på",
   flowNone: "här finns inget flöde att rita — det här repot har inget eget än",
@@ -1397,12 +1403,45 @@ function renderAgentWeek() {
     `<u>${human(s.tokens)}</u></div>`).join(""));
 }
 
+// Körningarna: vad agenterna gjorde i repot. Ur motorns egen liggare (STATE.runs) --
+// samma fil som `jira_flow runs` läser, så panelen håller ingen egen lista över dem.
+function renderRuns() {
+  const r = (STATE || {}).runs || {};
+  const rows = r.runs || [];
+  const meta = document.getElementById("runsMeta");
+  const host = document.getElementById("runsList");
+  if (!host) return;
+  if (meta) meta.textContent = "jira_flow runs";   // källan, som syskonens meta-rader
+  if (!r.ok) {
+    host.innerHTML = `<div class="empty">${esc(r.error || TEXT.nothing)}</div>`;
+    return;
+  }
+  if (!rows.length) {
+    host.innerHTML = `<div class="empty">${esc(TEXT.noRuns)}</div>`;
+    return;
+  }
+  host.innerHTML = rows.map(e => {
+    const when = esc(String(e.at || "").slice(11, 16));
+    const done = (e.commits || 0) > 0;
+    const tail = done
+      ? `${e.commits} ${esc(TEXT.changes)}${e.pr ? ` · <a href="${esc(e.pr)}" target="_blank" rel="noopener">PR</a>`
+        : (e.pushed ? " · " + esc(TEXT.pushed) : " · " + esc(TEXT.localOnly))}`
+      : `<span class="err">${esc(TEXT.noChange)}</span>`;
+    const why = e.note ? ` title="${esc(e.note)}"` : "";
+    return `<div class="r"${why}><span class="muted" style="width:34px">${when}</span>` +
+      `<span class="key">${esc(e.key || "")}</span>` +
+      `<span class="t">${esc(e.branch || "")}</span>` +
+      `<span class="tside">${tail}</span></div>`;
+  }).join("");
+}
+
 /* ----------------------------------------------------------- vad som syns ---- */
 // Testarens önskemål: alla vill inte se samma sak. Här stängs verktyg (rälen) och
 // block (Översikt) av. Listan är det som är AV -- nya block är alltså på från början,
 // och ett tomt val betyder allt. Valet ligger i webbläsaren, som temat.
 const HIDDEN_KEY = "godjira.hidden";
-const OVERVIEW_BLOCKS = [["agents", "Agenterna"], ["automation", "Projektet du är kopplad till"],
+const OVERVIEW_BLOCKS = [["agents", "Agenterna"], ["runs", "Körningar"],
+  ["automation", "Projektet du är kopplad till"],
   ["flow", "Flödets nästa"], ["journal", "Flödets egna skrivningar"], ["recent", "Senast rörda repon"]];
 // Statuskorten högst upp: källan står i etiketten, så valet handlar om källor och inte om
 // var i gränssnittet något råkade hamna.
@@ -1411,7 +1450,8 @@ const STATUS_CARDS = [["ov:stat:jira", "Jira — öppna ärenden"], ["ov:stat:gh
 // Raderna på Översikt, i den ordning de står i filen. Alla är direkta barn till vyn, så
 // ordningen sätts med det inbyggda order -- ingen flytt av noder i trädet.
 const ORDER_KEY = "godjira.order";
-const UNITS = [["agents", "Agenterna"], ["stats", "Statuskorten"], ["automation", "Projektet du är kopplad till"],
+const UNITS = [["agents", "Agenterna"], ["runs", "Körningar"], ["stats", "Statuskorten"],
+  ["automation", "Projektet du är kopplad till"],
   ["pair", "Flödets nästa + egna skrivningar"], ["recent", "Senast rörda repon"]];
 // Översikt är vägen tillbaka och Inställningar är där man slår på igen: de två går inte
 // att stänga av.
@@ -4015,7 +4055,7 @@ function render() {
   document.getElementById("filtersRow").hidden = !["board", "items"].includes(view);
   // Projektväljaren hör till Uppgifter; i andra vyer vore den en död ratt.
   document.getElementById("itemProject").hidden = view !== "items";
-  if (view === "overview") { renderAgentWeek(); renderStats(); renderAutomation(); renderFlowPick(); renderJournal(); renderRecent(); }
+  if (view === "overview") { renderAgentWeek(); renderRuns(); renderStats(); renderAutomation(); renderFlowPick(); renderJournal(); renderRecent(); }
   if (view === "board") renderBoard();
   if (view === "chat") { renderChat(); if (!AGENTS) agentLoad(); }
   if (view === "items") renderItems();

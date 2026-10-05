@@ -1602,6 +1602,16 @@ def sites_read() -> dict:
 
 # Provlägets agenter: egna tal, for da hade skarmdumpen burit anvandarens riktiga
 # forbrukning -- samma skal som DEMO_REPOS och demo-token.
+DEMO_RUNS = [
+    {"at": "2026-10-05T16:52:11", "key": "WEB-42", "repo": "demo-user/web-platform",
+     "branch": "godjira/WEB-42", "agent": "hermes", "commits": 3, "files": 4, "added": 61,
+     "removed": 12, "pushed": True, "pr": "https://github.com/demo-user/web-platform/pull/213",
+     "ok": True, "note": ""},
+    {"at": "2026-10-05T15:20:03", "key": "WEB-44", "repo": "demo-user/web-platform",
+     "branch": "godjira/WEB-44", "agent": "agy", "commits": 0, "files": 0, "added": 0,
+     "removed": 0, "pushed": False, "pr": "", "ok": False,
+     "note": "the issue needs a decision from the customer"},
+]
 DEMO_AGENTS = {
     "ok": True, "days": 7, "since": "2026-09-28", "mode": "mock", "note": "",
     "totals": {"sessions": 243, "messages": 17258, "tools": 9741, "tokens": 68779369,
@@ -1630,6 +1640,21 @@ def agents_read() -> dict:
     payload = env.get("payload")
     if not isinstance(payload, dict):
         return {"ok": False, "error": (env.get("raw") or "motorn svarade inget")[:300]}
+    return dict(payload, ok=True)
+
+
+def runs_read() -> dict:
+    """Körningarna ur liggaren: vad agenterna gjorde, ur motorns egen fil.
+
+    Panelen håller ingen egen lista över körningar -- den läser samma fil som CLI:t
+    skriver i, genom samma kommando (`runs`).
+    """
+    if demo():
+        return {"ok": True, "runs": DEMO_RUNS}
+    env = seam("flow", "runs", "--json", "--limit", "20", timeout=60)
+    payload = env.get("payload")
+    if not isinstance(payload, dict):
+        return {"ok": False, "runs": [], "error": (env.get("raw") or "motorn svarade inget")[:300]}
     return dict(payload, ok=True)
 
 
@@ -1714,6 +1739,7 @@ def state() -> dict:
                     # Vad agenterna gjorde medan Jira stod still: modellerna, tokens,
                     # kostnaden. Egna siffror, lästa ur Hermes egen databas.
                     "agents": pool.submit(lambda: cached("agents", agents_read, ttl=300)),
+                    "runs": pool.submit(lambda: cached("runs", runs_read, ttl=60)),
                     "flows": pool.submit(lambda: cached("flows", flow_graphs)),
                     # Bara frågan om behörigheten (ett anrop): projektlistan finns
                     # redan i jira-svaret. Utan den här raden vore "nytt projekt" en

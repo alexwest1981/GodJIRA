@@ -2307,6 +2307,380 @@ def cmd_next(client_, args) -> int:
     return 0
 
 
+# --------------------------------------------------- körningen: work <KEY>
+# Flödet TAR ett ärende (`next`); körningen GÖR det. Ärendet in, en gren och en PR ut,
+# med kvittot tillbaka på ärendet. Agenten jobbar i en egen git-worktree, så den egna
+# trädkatalogen aldrig rörs -- och en körning som går fel lämnar ingenting efter sig där.
+#
+# Skrivytan är med flit liten i den första versionen: körningen lägger grenen på fjärren,
+# öppnar PR:en och kommenterar ärendet. Den flyttar INTE statusen -- det är `next`s jobb,
+# och två kommandon som flyttar samma ärende är två sanningar om samma sak.
+
+RUNS_FILE = Path.home() / ".config/jira-flow/runs.jsonl"
+RUNS_DIR = Path.home() / ".config/jira-flow/runs"
+
+
+def work_branch(key: str, given: str = "") -> str:
+    """Grenen körningen jobbar på: godjira/<KEY>, eller det man själv namngav.
+
+    Namnet går rakt in i git, så det prövas HÄR i stället för att git säger nej mitt i en
+    körning som redan kostat en agent. Reglerna är gits egna (refs/heads): inga mellanslag,
+    `..`, `~`, `^`, `:`, `?`, `*`, `[`, `\\`, ingen inledande `-`, inget `@{`.
+    """
+    name = (given or "").strip() or "godjira/{}".format(str(key).strip().upper())
+    bad = " ~^:?*[\\\x7f"
+    if (not name or name.startswith("-") or name.endswith("/") or ".." in name
+            or "@{" in name or any(c in bad or ord(c) < 32 for c in name)):
+        raise ValueError("git would not accept the branch name {!r}".format(name))
+    return name
+
+
+def work_dir(key: str) -> Path:
+    """Körningens egen katalog. Ärendenyckeln räcker: den är unik och går att läsa."""
+    return RUNS_DIR / str(key).strip().upper()
+
+
+def parse_commits(text: str) -> list:
+    """`git log --oneline` -> en rad per commit. Ingen commit är ett svar, inte ett fel."""
+    rows = []
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        sha, _, subject = line.partition(" ")
+        rows.append({"sha": sha, "subject": subject.strip()})
+    return rows
+
+
+def parse_shortstat(text: str) -> dict:
+    """Filen och raderna ur gits shortstat. Talen LÄSES ur git, de räknas inte fram."""
+    def number(pattern):
+        found = re.search(pattern, text or "")
+        return int(found.group(1)) if found else 0
+    return {"files": number(r"(\d+) files? changed"),
+            "added": number(r"(\d+) insertions?\(\+\)"),
+            "removed": number(r"(\d+) deletions?\(-\)")}
+
+
+def adf_plain(node) -> str:
+    """Beskrivningen som text. Bryggan kan läsa ADF; går den inte att importera läses
+    textnoderna rakt av -- en körning skall inte falla på en formatering."""
+    if isinstance(node, str):
+        return node.strip()
+    if not isinstance(node, dict):
+        return ""
+    try:
+        if str(BRIDGE_DIR) not in sys.path:
+            sys.path.insert(0, str(BRIDGE_DIR))
+        import jira_bridge  # noqa: PLC0415 -- samma lokala import som client() gör
+        return jira_bridge.adf_to_text(node).strip()
+    except Exception:  # noqa: BLE001 -- formen är någon annans, en krasch hjälper ingen
+        return " ".join(re.findall(r'"text":\s*"([^"]+)"', json.dumps(node)))
+
+
+def work_issue(client_, key: str):
+    """Ärendet körningen gäller: beskrivningen, läget, kommentarerna -- i ett anrop.
+
+    `fetch_one` duger inte här: den svarar bara för ostartat arbete och bär ingen
+    beskrivning. En körning mot ett ärende man inte ser är en körning mot ingenting.
+    """
+    issue = client_.get("/rest/api/3/issue/{}?fields=summary,description,status,assignee,"
+                        "priority,comment".format(key)) or {}
+    if not issue.get("key"):
+        return None
+    fields = issue.get("fields") or {}
+    said = []
+    for row_ in ((fields.get("comment") or {}).get("comments") or [])[-5:]:
+        body = row_.get("body")
+        said.append({"author": (row_.get("author") or {}).get("displayName") or "",
+                     "body": body if isinstance(body, str) else adf_plain(body)})
+    return {"key": issue["key"], "summary": fields.get("summary") or "",
+            "description": adf_plain(fields.get("description")) if fields.get("description") else "",
+            "status": (fields.get("status") or {}).get("name") or "",
+            "assignee": (fields.get("assignee") or {}).get("displayName") or "",
+            "comments": said}
+
+
+def scan_files_for(key: str, project: str) -> list:
+    """Filerna scanningen pekar på för ett ärende -- agentens första ledtråd.
+
+    Saknas scanningen är svaret tomt: en påhittad fil vore värre än ingen ledtråd.
+    """
+    wherever = SCAN_FILE / "scan-{}.json".format(project)
+    if not wherever.exists():
+        return []
+    try:
+        data = json.loads(wherever.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    for entry in data.get("map") or []:
+        if str(entry.get("key", "")).strip().upper() == str(key).strip().upper():
+            return [str(f) for f in (entry.get("files") or [])][:12]
+    return []
+
+
+def work_prompt(key: str, issue: dict, files: list, project: str, branch: str,
+                where: str) -> str:
+    """Vad agenten får: ärendet, ledtrådarna, och gränsen för uppdraget."""
+    lines = [
+        "You are doing one Jira issue, end to end, in a git worktree that is only yours.",
+        "",
+        "Issue {} in project {}: {}".format(key, project, issue.get("summary") or ""),
+        "Status: {}   Assignee: {}".format(issue.get("status") or "?", issue.get("assignee") or "(nobody)"),
+    ]
+    if issue.get("description"):
+        lines += ["", "What the issue says:", issue["description"].strip()[:4000]]
+    if issue.get("comments"):
+        lines += ["", "What has been said about it:"]
+        lines += ["- {}: {}".format(c.get("author") or "?", " ".join(str(c.get("body") or "").split())[:400])
+                  for c in issue["comments"]]
+    if files:
+        lines += ["", "Where in the code the issue seems to live -- GodJIRA's scan of the repo,"
+                      " a hint and not a rule:"]
+        lines += ["- " + f for f in files]
+    lines += [
+        "",
+        "The repository is checked out at {} on branch {}. That is your working directory.".format(where, branch),
+        "The GodJIRA MCP connection is locked to project {}: read and write that project, nothing else.".format(project),
+        "",
+        "Do the work:",
+        "- read the code before you change it, and follow the style that is already there",
+        "- run the repo's own tests or build if it has one, and say what you ran and what it answered",
+        "- commit with `git add <the files you touched>` -- never `git add -A` -- and a message that names {}".format(key),
+        "- do NOT push and do NOT open a pull request: GodJIRA does that from your commits",
+        "- if the issue cannot be done -- it is unclear, needs a decision, or would break something"
+        " else -- make no commits at all and say plainly what you need",
+        "",
+        "Answer with: what you changed and why, which files, what you ran, and what is left.",
+    ]
+    return "\n".join(lines)
+
+
+def work_receipt(key: str, branch: str, commits: list, stat: dict, pr: str = "",
+                 agent: str = "", note: str = "") -> str:
+    """Kvittot som går till ärendet. Grenen och commitarna ÄR svaret på vad som gjordes;
+    en sammanfattning i prosa hade varit en andra version av samma sak."""
+    lines = ["GodJIRA worked {}".format(key), "", "Branch: {}".format(branch)]
+    if pr:
+        lines.append("Pull request: {}".format(pr))
+    if agent:
+        lines.append("Agent: {}".format(agent))
+    if commits:
+        lines.append("Commits ({}):".format(len(commits)))
+        lines += ["- {} {}".format(c["sha"], c["subject"]) for c in commits[:10]]
+    else:
+        lines.append("No commits: the agent changed nothing.")
+    if stat.get("files"):
+        lines.append("Diff: {} files changed, +{} -{}".format(stat["files"], stat["added"], stat["removed"]))
+    if note:
+        lines += ["", note]
+    return "\n".join(lines)
+
+
+def runs_recent(limit: int = 20) -> list:
+    """Körningarna, nyast först. Filen är JSONL och läses i sin helhet -- en körning är
+    några rader, och en databas för det vore mer kod än den ersätter."""
+    if not RUNS_FILE.exists():
+        return []
+    rows = []
+    for line in RUNS_FILE.read_text(errors="replace").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line))
+        except ValueError:
+            continue
+    return rows[-limit:][::-1]
+
+
+def run_remember(entry: dict) -> None:
+    """En körning till i liggaren. Ett fel här får inte fälla körningen -- arbetet är
+    redan gjort när raden skrivs."""
+    entry = dict(entry)
+    entry.setdefault("at", datetime.now().isoformat(timespec="seconds"))
+    try:
+        RUNS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        RUNS_FILE.parent.chmod(0o700)
+        with RUNS_FILE.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        RUNS_FILE.chmod(0o600)
+    except OSError:
+        pass
+
+
+def git_do(root, *argv, timeout: int = 120) -> tuple:
+    """git som svarar med både koden och orden. En worktree som inte blev till skall säga
+    varför i stället för att se ut som att den finns."""
+    try:
+        done = subprocess.run(["git", "-C", str(root)] + [str(a) for a in argv],
+                              capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return 1, "{}: {}".format(type(exc).__name__, exc)
+    return done.returncode, (done.stdout + done.stderr).strip()
+
+
+def agent_name() -> str:
+    """Vem som svarade, som ett namn -- samma läsning som chatten gör."""
+    try:
+        return Path(agent_argv("")[0][0]).name
+    except RuntimeError:
+        return ""
+
+
+def cmd_work(client_, args) -> int:
+    """Ett ärende: egen worktree, agenten i den, gren + PR + kvitto tillbaka."""
+    key = (getattr(args, "key", "") or "").strip().upper()
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*-\d+", key):
+        message = "{!r} does not look like an issue key".format(getattr(args, "key", "") or "")
+        say(args, {"ok": False, "error": message}, ["jira_flow: " + message])
+        return 2
+    root = chosen_repo_dir(args)
+    if not root or not Path(root).is_dir():
+        message = "no local copy of the repo to work in -- link the repo, or pass --repo DIR"
+        say(args, {"ok": False, "error": message}, ["jira_flow: " + message])
+        return 2
+    if not Path(root, ".git").exists():
+        message = "{} is not a git repository, so there is no branch to work on".format(root)
+        say(args, {"ok": False, "error": message}, ["jira_flow: " + message])
+        return 2
+    project, source = link_project(args, root)
+    if not project:
+        message = "no Jira project for {} -- link the repo first: jira_flow link set <repo> <PROJECT>".format(root)
+        say(args, {"ok": False, "error": message}, ["jira_flow: " + message])
+        return 2
+    try:
+        branch = work_branch(key, getattr(args, "branch", "") or "")
+    except ValueError as exc:
+        say(args, {"ok": False, "error": str(exc)}, ["jira_flow: " + str(exc)])
+        return 2
+    issue = work_issue(client_, key)
+    if issue is None:
+        message = "{} is not an issue this account can see".format(key)
+        say(args, {"ok": False, "error": message, "project": project}, ["jira_flow: " + message])
+        return 2
+    where = work_dir(key)
+    prompt = work_prompt(key, issue, scan_files_for(key, project), project, branch, str(where))
+    base = git_out(root, "rev-parse", "--abbrev-ref", "HEAD") or "HEAD"
+    plan = {"ok": True, "dryRun": bool(args.dry_run), "key": key, "project": project,
+            "projectSource": source, "repo": root, "branch": branch, "base": base,
+            "worktree": str(where), "prompt": prompt,
+            "filesFromScan": scan_files_for(key, project)}
+
+    if args.dry_run:
+        # Läsvägen: visa uppdraget, skriv ingenting -- varken worktree, gren eller ärende.
+        say(args, plan, [prompt])
+        return 0
+
+    # 1. Arbetskopian. Finns grenen redan (en körning som kört förut) knyts katalogen till
+    #    den i stället för att fälla -- att återuppta är vad man vill den andra gången.
+    if str(where) not in git_out(root, "worktree", "list", "--porcelain"):
+        exists = bool(git_out(root, "rev-parse", "--verify", "--quiet", branch))
+        argv = ["worktree", "add"] + ([] if exists else ["-b", branch]) + [str(where), branch if exists else base]
+        code, out = git_do(root, *argv)
+        if code != 0:
+            message = "could not make the worktree: {}".format(out.splitlines()[-1] if out else code)
+            run_remember({"key": key, "project": project, "repo": root, "branch": branch,
+                          "ok": False, "note": message})
+            say(args, dict(plan, ok=False, error=message, dryRun=False), ["jira_flow: " + message])
+            return 2
+
+    # 2. Agenten, i arbetskopian. Kedjan är användarens egen (samma som chatten använder).
+    if (getattr(args, "agent", "") or "").strip():
+        global AGENT
+        AGENT = args.agent.strip()
+    tried = agent_name()
+    try:
+        answer = ask_agent(prompt, {"GODJIRA_MCP_PROJECT": project}, cwd=str(where))
+    except RuntimeError as exc:
+        run_remember({"key": key, "project": project, "repo": root, "branch": branch,
+                      "worktree": str(where), "agent": tried, "ok": False, "note": str(exc)})
+        say(args, dict(plan, ok=False, error=str(exc), dryRun=False),
+            ["jira_flow: the agent could not run: {}".format(exc)])
+        return 2
+
+    # 3. Vad som blev gjort: commitarna och diffen, lästa ur grenen -- inte ur agentens ord.
+    commits = parse_commits(git_out(where, "log", "--oneline", "{}..HEAD".format(base), timeout=60))
+    stat = parse_shortstat(git_out(where, "diff", "--shortstat", "{}..HEAD".format(base), timeout=60))
+    dirty = [line for line in git_out(where, "status", "--porcelain", timeout=60).splitlines() if line.strip()]
+    note = "{} files were left uncommitted in the worktree.".format(len(dirty)) if dirty else ""
+
+    # 4. Ut: grenen, PR:en, kvittot. Utan commit finns ingenting att skicka -- och då
+    #    skrivs ingenting på fjärren heller. Ett nej är ett svar.
+    pr, pushed = "", False
+    if commits and not args.no_push:
+        code, out = git_do(where, "push", "-u", "origin", branch, timeout=300)
+        pushed = code == 0
+        if not pushed:
+            note = (note + " " if note else "") + "the push failed: {}".format(out.splitlines()[-1] if out else code)
+        elif shutil.which("gh"):
+            body = work_receipt(key, branch, commits, stat, "", tried, note)
+            code, out = git_do(where, "diff", "--stat", "{}..HEAD".format(base), timeout=60)
+            try:
+                made = subprocess.run(
+                    ["gh", "pr", "create", "--title", "{} {}".format(key, issue["summary"])[:120],
+                     "--body", body + "\n\n```\n" + out[:2000] + "\n```", "--head", branch,
+                     "--base", base if base != "HEAD" else "", "--fill"],
+                    cwd=str(where), capture_output=True, text=True, timeout=120)
+                url = [line.strip() for line in (made.stdout or "").splitlines() if line.strip().startswith("http")]
+                if made.returncode == 0 and url:
+                    pr = url[-1]
+                else:
+                    note = (note + " " if note else "") + "the pull request was not opened: {}".format(
+                        ((made.stderr or "").strip().splitlines() or ["?"])[-1][:200])
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                note = (note + " " if note else "") + "the pull request was not opened: {}".format(exc)
+
+    receipt = work_receipt(key, branch, commits, stat, pr, tried, note)
+    client_.log("flow-work", key, "{}: {} commits{}".format(branch, len(commits), ", PR" if pr else ""),
+                ok=bool(commits))
+    if commits and not args.no_comment:
+        try:
+            client_.comment(key, receipt)
+        except (RuntimeError, SystemExit) as exc:
+            note = (note + " " if note else "") + "the issue was not commented: {}".format(exc)
+    run_remember({"key": key, "project": project, "repo": repo_slug_of_dir(root) or root,
+                  "branch": branch, "worktree": str(where), "agent": tried, "commits": len(commits),
+                  "files": stat["files"], "added": stat["added"], "removed": stat["removed"],
+                  "pushed": pushed, "pr": pr, "answer": " ".join((answer or "").split())[:600],
+                  "ok": bool(commits), "note": note})
+
+    if args.rm and commits and (pushed or args.no_push):
+        git_do(root, "worktree", "remove", "--force", str(where), timeout=120)
+
+    payload = dict(plan, dryRun=False, ok=bool(commits), commits=commits, diff=stat,
+                   pushed=pushed, pr=pr, agent=tried, note=note, answer=answer,
+                   worktreeRemoved=bool(args.rm and commits))
+    lines = ["{}: {} commit(s) on {}".format(key, len(commits), branch)] if commits else \
+            ["{}: the agent committed nothing -- nothing was pushed.".format(key)]
+    if stat["files"]:
+        lines.append("  {} files changed, +{} -{}".format(stat["files"], stat["added"], stat["removed"]))
+    lines += ["  " + c["sha"] + " " + c["subject"] for c in commits[:8]]
+    if pr:
+        lines.append("  PR: " + pr)
+    if note:
+        lines.append("  note: " + note)
+    lines.append("  worktree: " + str(where))
+    say(args, payload, lines)
+    return 0 if commits else 1
+
+
+def cmd_runs(args) -> int:
+    """Liggaren: vad körningarna gjorde. Panelen läser samma fil genom den här."""
+    rows = runs_recent(getattr(args, "limit", 20))
+    if args.json:
+        print(json.dumps({"ok": True, "runs": rows}, ensure_ascii=False))
+        return 0
+    if not rows:
+        print("inga körningar än ({})".format(RUNS_FILE))
+        return 0
+    for entry in rows:
+        print("{}  {}  {}  {} commit(s){}".format(
+            entry.get("at"), entry.get("key"), entry.get("branch"), entry.get("commits") or 0,
+            "  " + str(entry.get("pr")) if entry.get("pr") else ""))
+    return 0
+
+
 def is_epic(item: dict) -> bool:
     """En epic är en epic på sin typ, inte på sin plats i listan."""
     return (item.get("type") or "").strip().lower() == "epic"
@@ -2748,7 +3122,7 @@ def read_agent_reply(out: str) -> str:
     return "" if stream else out.strip()
 
 
-def ask_agent_stream(prompt: str, env: dict = None, on_event=None) -> str:
+def ask_agent_stream(prompt: str, env: dict = None, on_event=None, cwd: str = None) -> str:
     """Samma anrop som ask_agent, men varje händelse får passera medan den kommer.
 
     CLI:t skriver NDJSON (--format stream-json): texten i bitar, varje verktygsanrop och
@@ -2767,8 +3141,10 @@ def ask_agent_stream(prompt: str, env: dict = None, on_event=None) -> str:
     # texten ritas när den kommer och verktygen ritas medan de händer. Ett annat CLI som
     # skriver bitarna i sin egen takt får sin text strömmad utan ändring här.
     try:
+        # cwd finns för körningen (`work`): agenten skall stå i sin egen worktree, inte i
+        # den katalog panelen råkade startas från. Chatten lämnar den tom, som förut.
         proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, text=True, env=where)
+                                stderr=subprocess.PIPE, text=True, env=where, cwd=cwd)
     except FileNotFoundError:
         raise RuntimeError("{} is not installed".format(argv[0]))
     printed = []
@@ -2796,7 +3172,7 @@ def ask_agent_stream(prompt: str, env: dict = None, on_event=None) -> str:
     return read_agent_reply("".join(printed))
 
 
-def ask_agent(prompt: str, env: dict = None) -> str:
+def ask_agent(prompt: str, env: dict = None, cwd: str = None) -> str:
     """Prompten in, svaret ut. Hermes i grunden, sedan Antigravity; JIRA_FLOW_AGENT
     pekar på vilken CLI som helst som pratar stdin/stdout.
 
@@ -2804,7 +3180,7 @@ def ask_agent(prompt: str, env: dict = None) -> str:
     agenten startar sin MCP-koppling mot GodJIRA som underprocess och ärver variabeln,
     så kopplingen är låst till projektet utan att någon config behöver röras.
     """
-    return ask_agent_stream(prompt, env)
+    return ask_agent_stream(prompt, env, None, cwd)
 
 
 CHAT_CHARS = 12000      # sammanhanget agenten får. Mer än så slutar den läsa och börjar gissa.
@@ -4635,6 +5011,85 @@ def selftest() -> int:
         shutil.rmtree(ickegit, ignore_errors=True)
     checks += 1
 
+    # ---- körningen (`work`): grennamnet, katalogen, commitarna, diffen, uppdraget,
+    # kvittot och liggaren. Det som går att prova utan en agent provas här.
+    assert work_branch("scrum-42") == "godjira/SCRUM-42", work_branch("scrum-42")
+    assert work_branch("X-1", "feature/min-gren") == "feature/min-gren", "ett eget namn går före"
+    assert work_branch("X-1", "  min-gren  ") == "min-gren", "blanksteg runt namnet putsas bort"
+    for dåligt in ("-flagga", "har mellanslag", "punkt..punkt", "kolon:", "fråga?", "stjärna*",
+                   "klam[", "tilde~", "hatt^", "@{", "slut/", "back" + chr(92) + "slash",
+                   "ta" + chr(9) + "b", "rad" + chr(10) + "brytning"):
+        try:
+            work_branch("X-1", dåligt)
+        except ValueError:
+            continue
+        raise AssertionError("grennamnet {!r} skulle ha nekats".format(dåligt))
+    checks += 1
+    assert work_dir(" scrum-7 ") == RUNS_DIR / "SCRUM-7", work_dir(" scrum-7 ")
+    checks += 1
+    assert parse_commits("") == [] and parse_commits("\n  \n") == [], "tomt är tomt"
+    rader = parse_commits("a1b2c3 först\nd4e5f6 SCRUM-7: fixa saken\n")
+    assert len(rader) == 2 and rader[1]["sha"] == "d4e5f6"
+    assert rader[1]["subject"] == "SCRUM-7: fixa saken", rader
+    assert parse_shortstat("3 files changed, 42 insertions(+), 7 deletions(-)") == {
+        "files": 3, "added": 42, "removed": 7}
+    assert parse_shortstat("1 file changed, 2 insertions(+)") == {"files": 1, "added": 2, "removed": 0}
+    assert parse_shortstat("") == {"files": 0, "added": 0, "removed": 0}
+    checks += 1
+    uppdrag = work_prompt(
+        "SCRUM-42",
+        {"summary": "Boka avstämning", "description": "Gör X i Y", "status": "To Do",
+         "assignee": "Alex", "comments": [{"author": "Kim", "body": "tänk på Z"}]},
+        ["src/Bokning.java"], "SCRUM", "godjira/SCRUM-42", "/tmp/SCRUM-42")
+    for bit in ("SCRUM-42", "Boka avstämning", "Gör X i Y", "Kim", "src/Bokning.java",
+                "godjira/SCRUM-42", "/tmp/SCRUM-42", "never `git add -A`", "do NOT push",
+                "locked to project SCRUM"):
+        assert bit in uppdrag, (bit, uppdrag)
+    utan = work_prompt("SCRUM-1", {"summary": "s", "description": "", "status": "", "assignee": "",
+                                   "comments": []}, [], "SCRUM", "godjira/SCRUM-1", "/tmp/x")
+    assert "hint and not a rule" not in utan, "utan ledtrådar skall uppdraget inte låtsas ha några"
+    assert "do NOT push" in utan, "gränsen gäller även det tomma uppdraget"
+    checks += 1
+    kvitto = work_receipt("SCRUM-42", "godjira/SCRUM-42", [{"sha": "abc123", "subject": "SCRUM-42: fix"}],
+                          {"files": 2, "added": 10, "removed": 3}, "https://github.com/x/y/pull/1",
+                          "hermes", "en anteckning")
+    for bit in ("SCRUM-42", "godjira/SCRUM-42", "abc123", "pull/1", "hermes",
+                "2 files changed, +10 -3", "en anteckning"):
+        assert bit in kvitto, (bit, kvitto)
+    tomt = work_receipt("SCRUM-1", "b", [], {"files": 0}, "", "", "")
+    assert "No commits" in tomt and "Diff:" not in tomt, tomt
+    # Kommentaren: kroppen skall vara ADF (API v3 avvisar en vanlig sträng), en stycke-nod
+    # per rad. Fångas genom att låna request-vägen -- ingenting skickas i väg här.
+    fångat = {}
+    verklig = Http("exempel.atlassian.net", "a@b.c", "nyckel")
+    verklig.request = lambda method, path, body=None: fångat.update(
+        {"method": method, "path": path, "body": body}) or {}
+    verklig.comment("SCRUM-42", "GodJIRA worked SCRUM-42\n\nBranch: godjira/SCRUM-42")
+    assert fångat["method"] == "POST" and fångat["path"].endswith("/issue/SCRUM-42/comment"), fångat
+    doc = fångat["body"]["body"]
+    assert doc["type"] == "doc" and doc["version"] == 1, doc
+    assert all(n["type"] == "paragraph" for n in doc["content"]), doc
+    rader = [n["content"][0]["text"] for n in doc["content"]]
+    assert rader == ["GodJIRA worked SCRUM-42", "", "Branch: godjira/SCRUM-42"], rader
+    checks += 1
+    global RUNS_FILE          # utan raden blir namnet lokalt i hela funktionen (fällan)
+    kept_runs = RUNS_FILE
+    RUNS_FILE = Path(scratch) / "runs.jsonl"
+    try:
+        run_remember({"key": "SCRUM-1", "ok": True, "commits": 1})
+        run_remember({"key": "SCRUM-2", "ok": False, "commits": 0})
+        sedan = runs_recent(10)
+        assert [r["key"] for r in sedan] == ["SCRUM-2", "SCRUM-1"], "nyast först"
+        assert sedan[0]["at"], "tiden sätts när raden skrivs"
+        assert RUNS_FILE.stat().st_mode & 0o777 == 0o600, "liggaren är 0600"
+        RUNS_FILE.write_text(RUNS_FILE.read_text() + "skräp\n", encoding="utf-8")
+        assert len(runs_recent(10)) == 2, "en trasig rad hoppas över, den fäller inte läsningen"
+        RUNS_FILE.unlink()
+        assert runs_recent(10) == [], "en liggare som inte finns är tom, inte ett fel"
+    finally:
+        RUNS_FILE = kept_runs
+    checks += 1
+
     print("jira_flow self-check: {} checks, 0 failed".format(checks))
     return 0
 
@@ -4663,6 +5118,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_next.add_argument("--json", action="store_true", help="machine-readable result (for an agent)")
     p_next.add_argument("--expect", metavar="KEY", default="",
                         help="take exactly KEY, which a human confirmed (the second press)")
+    p_work = sub.add_parser("work", help="do one issue: worktree, agent, branch, PR")
+    p_work.add_argument("key", help="the issue key, e.g. SCRUM-42")
+    p_work.add_argument("--repo", default="", help="a local clone to work in")
+    p_work.add_argument("--repo-name", default="", help="a repo by name (owner/name)")
+    p_work.add_argument("--project", default="", help="override the project; default comes from the link")
+    p_work.add_argument("--branch", default="", help="the branch to work on (default godjira/<KEY>)")
+    p_work.add_argument("--agent", default="", help="the agent for this run (default: your own list)")
+    p_work.add_argument("--dry-run", action="store_true", help="show the assignment, write nothing")
+    p_work.add_argument("--no-push", action="store_true", help="keep the branch on this machine")
+    p_work.add_argument("--no-comment", action="store_true", help="write nothing on the issue")
+    p_work.add_argument("--rm", action="store_true", help="remove the worktree after a pushed run")
+    p_work.add_argument("--json", action="store_true", help="machine-readable result")
+    p_runs = sub.add_parser("runs", help="the run ledger: what the runs did")
+    p_runs.add_argument("--limit", type=int, default=20)
+    p_runs.add_argument("--json", action="store_true")
     p_chat = sub.add_parser("chat", help="ask your agent about the linked project (one turn)")
     p_chat.add_argument("question", nargs="?", help="the question; empty reads stdin")
     p_chat.add_argument("--repo", default="", help="a local clone to ask about")
@@ -4818,6 +5288,8 @@ def main(argv) -> int:
         return cmd_files(args)
     if args.cmd == "file":
         return cmd_file(args)
+    if args.cmd == "runs":
+        return cmd_runs(args)
     if args.cmd == "commits":
         return cmd_commits(args)
     if args.cmd == "flowmap":
@@ -4826,12 +5298,16 @@ def main(argv) -> int:
         return cmd_admin(args)
     # En plats för projektnyckeln: flaggan, annars länken, annars standarden. Nästa,
     # aktuellt och plan går alla genom den -- ingen av dem har en egen uppfattning.
+    # `work` lämnar raden i fred: den slår upp projektet själv med repot i hand, och en
+    # förifylld flagga fick svaret att säga "flaggan" om ett projekt som kom ur länken.
     if args.cmd in ("next", "current") and not (args.project or "").strip():
         args.project, args.project_source = link_project(args)
     jira = client()
     try:
         if args.cmd == "plan":
             return cmd_plan(jira, args)
+        if args.cmd == "work":
+            return cmd_work(jira, args)
         return cmd_next(jira, args) if args.cmd == "next" else cmd_current(jira, args)
     except (RuntimeError, OSError, KeyError, urllib.error.URLError) as exc:
         # Allt som går mot Jira går genom här: en trasig token, en tavla som inte
