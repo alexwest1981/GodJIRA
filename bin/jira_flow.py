@@ -3749,6 +3749,210 @@ def cmd_pick(args) -> int:
     return 0
 
 
+MINE_DIR = Path(os.path.expanduser("~/.config/jira-flow/mine"))
+MINE_FIELDS = "summary,status,issuetype,description,parent,priority,updated,assignee"
+
+MINE_PROMPT = """Du förklarar ETT Jira-ärende för utvecklaren som skall göra det. Hen kan kodbasen
+redan. Poängen med texten är att ingenting i den kan misstolkas: efter att ha läst den skall
+hen kunna börja arbeta utan att ställa en enda fråga.
+
+Ärende: {key} -- {summary}
+Typ: {typ}. Status: {status}.
+
+Kundens egna ord, ur kravet ärendet kommer från:
+{requirement}
+
+Det tavlan säger bevisar att det är klart:
+{proof}
+
+Koden som den ser ut i dag (repots filkarta och de närmaste filerna, lästa ur {repo}):
+{code}
+
+Svara på svenska, i exakt den här formen och ingenting annat:
+
+## Vad som skall göras
+En kort text: vad som ändras för användaren när det här är klart.
+
+## Steg för steg
+Numrerad lista, ett steg per rad, i den ordning de skall göras, skrivna som uppmaningar.
+Varje steg namnger den exakta filen (hel sökväg) och vad som händer i den. Skriv aldrig
+"uppdatera modellen" utan att säga vilken fil och vilket fält.
+
+## Klart när
+Punkter att pröva för hand i den körande appen, skrivna som "gör X, förvänta Y".
+
+## Att se upp med
+Bara om det finns en verklig fälla: något i koden som går sönder, ett val som är lätt att
+göra fel, eller något kravet lämnar öppet. Är du osäker på ett steg: skriv det här på en rad
+i stället för att skriva ett steg som låter säkert.
+"""
+
+
+def mine_parts(description: str) -> tuple:
+    """Kravet och beviset ur en beskrivning.
+
+    Ärendena i den här tavlan skriver "KRAV:" och "BEVIS:" i samma text (mätt 2026-10-05).
+    Finns ingen BEVIS-rad blir beviset tomt -- en påhittad bevisrad vore värre än ingen.
+    """
+    text = " ".join(str(description or "").split())
+    if not text:
+        return "", ""
+    bitar = re.split(r"\bBEVIS:\s*", text, maxsplit=1, flags=re.IGNORECASE)
+    return (re.sub(r"^KRAV:\s*", "", bitar[0], flags=re.IGNORECASE).strip(),
+            bitar[1].strip() if len(bitar) > 1 else "")
+
+
+def when_of(iso: str) -> float:
+    """Jiras tidsstämpel som epoch. Går den inte att läsa blir den 0, och då skrivs
+    förklaringen om -- hellre en onödig körning än en förklaring som blivit gammal."""
+    try:
+        return datetime.fromisoformat(
+            str(iso or "").strip().replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def cmd_mine(jira, args) -> int:
+    """Mina ärenden, och en förklaring steg för steg av dem.
+
+    "Kan du skapa en del i GodJIRA som drar hem alla scrums som är ens egna, och förklarar dem
+    steg för steg, detaljerat, så inget kan misstolkas?" (Alex 2026-10-05)
+
+    Listan är en sökning och kostar inget. Förklaringen kostar en agentkörning per ärende, så
+    den görs bara för de öppna, och bara när den inte redan finns för samma version av ärendet.
+    Allt som görs står som steg medan det händer.
+    """
+    streaming = bool(getattr(args, "stream", False))
+
+    def step(text):
+        if streaming:
+            say_step(text)
+
+    def fel(besked):
+        say(args, {"ok": False, "error": besked}, ["jira_flow: " + besked])
+        return 2
+
+    try:
+        me = jira.myself() or {}
+    except Exception as exc:  # noqa: BLE001 -- ett besked, inte en stacktrace
+        return fel("kunde inte läsa vem du är: {}: {}".format(type(exc).__name__, exc))
+    project = (getattr(args, "project", "") or "").strip()
+    if not project:
+        project, _källa = link_project(args)      # samma väg som planen: länken äger projektet
+    if not project:
+        return fel("inget projekt: koppla repot till ett, eller ge --project")
+    jql = ("project={} AND assignee = currentUser() ORDER BY statusCategory ASC, key ASC"
+           ).format(project)
+    try:
+        raw = jira.get("/rest/api/3/search/jql?jql={}&maxResults=100&fields={}".format(
+            urllib.parse.quote(jql), MINE_FIELDS)) or {}
+    except Exception as exc:  # noqa: BLE001
+        return fel("kunde inte läsa dina ärenden: {}: {}".format(type(exc).__name__, exc))
+
+    issues = []
+    for issue in (raw.get("issues") or []):
+        it, fields = row(issue), (issue.get("fields") or {})
+        krav, bevis = mine_parts(adf_plain(fields.get("description")))
+        it.update({"type": (fields.get("issuetype") or {}).get("name") or "",
+                   "requirement": krav, "proof": bevis,
+                   "updated": fields.get("updated") or "",
+                   "open": ((fields.get("status") or {}).get("statusCategory") or {}
+                            ).get("key") != "done",
+                   "file": str(MINE_DIR / "{}.md".format(it.get("key")))})
+        issues.append(it)
+    öppna = [i for i in issues if i["open"]]
+    step("{}: {} ärenden i {}, {} öppna".format(me.get("displayName") or "du", len(issues),
+                                                project, len(öppna)))
+
+    förklarade, misslyckade, hoppade = [], [], []
+    if getattr(args, "explain", False):
+        bara = (getattr(args, "key", "") or "").strip().upper()
+        att_göra = [i for i in issues if i["open"] and (not bara or i["key"] == bara)]
+        if not att_göra:
+            step("inget öppet ärende att förklara" if not bara
+                 else "{} finns inte bland dina öppna".format(bara))
+        repo_dir = plan_repo_dir(args)
+        if repo_dir and not (getattr(args, "repo", "") or "").strip():
+            speglad, spegelfel = main_mirror(repo_dir,
+                                             (getattr(args, "repo_name", "") or "").strip())
+            if speglad:
+                step("mäter mot main: {}".format(speglad))
+                repo_dir = speglad
+            elif spegelfel:
+                step("mäter mot den lokala kopian ({})".format(spegelfel))
+        try:
+            MINE_DIR.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            return fel("kunde inte skriva i {}: {}".format(MINE_DIR, exc))
+        for i in att_göra:
+            fil = Path(i["file"])
+            try:
+                färsk = fil.exists() and fil.stat().st_mtime >= when_of(i["updated"])
+            except OSError:
+                färsk = False
+            if färsk:
+                step("{}: förklaringen finns redan".format(i["key"]))
+                hoppade.append(i["key"])
+                continue
+            code_text = ""
+            if repo_dir:
+                step("{}: läser koden …".format(i["key"]))
+                try:
+                    code_text, _info = code_context(Path(repo_dir), code_words(
+                        "{} {}".format(i["summary"], i["requirement"])))
+                except (RuntimeError, OSError) as exc:
+                    step("{}: koden kunde inte läsas ({})".format(i["key"], str(exc)[:70]))
+
+            def emit(event):
+                if event.get("type") == "tool_use":
+                    step("verktyg: {}".format(str(event.get("name") or "")[:60]))
+
+            prompt = MINE_PROMPT.format(
+                key=i["key"], summary=i["summary"], typ=i["type"] or "?", status=i["status"] or "?",
+                requirement=i["requirement"] or "(ingen kravrad i beskrivningen)",
+                proof=i["proof"] or "(ingen bevisrad i beskrivningen)",
+                repo=repo_dir or "(ingen kopia anvisad)",
+                code=code_text[:20000] or "(ingen kod lästes)")
+            try:
+                svar = ask_agent_stream(prompt, None, emit, cwd=repo_dir or None)
+            except (RuntimeError, OSError) as exc:
+                step("{}: agenten svarade inte ({})".format(i["key"], str(exc)[:90]))
+                misslyckade.append(i["key"])
+                continue
+            try:
+                fil.write_text("# {} -- {}\n\n**Krav:** {}\n\n**Bevis:** {}\n\n{}\n".format(
+                    i["key"], i["summary"], i["requirement"] or "(ingen kravrad)",
+                    i["proof"] or "(ingen bevisrad)", (svar or "").strip()), encoding="utf-8")
+            except OSError as exc:
+                step("{}: kunde inte skriva förklaringen ({})".format(i["key"], str(exc)[:70]))
+                misslyckade.append(i["key"])
+                continue
+            step("{}: förklarad ({} tecken)".format(i["key"], len(svar or "")))
+            förklarade.append(i["key"])
+
+    try:
+        MINE_DIR.mkdir(parents=True, exist_ok=True)
+        (MINE_DIR / "mine.json").write_text(json.dumps(
+            {"me": me.get("displayName") or "", "project": project, "at": time.time(),
+             "issues": issues}, ensure_ascii=False, indent=1), encoding="utf-8")
+    except OSError:
+        pass      # indexet är för panelen; raderna nedan bär samma sak
+
+    rader = ["{}: {} ärenden i {} -- {} öppna".format(
+        me.get("displayName") or "du", len(issues), project, len(öppna))]
+    rader += ["  {}  {}  {}".format(i["key"], i["status"] or "-", i["summary"]) for i in öppna]
+    if förklarade:
+        rader.append("förklarade: " + ", ".join(förklarade))
+    if hoppade:
+        rader.append("fanns redan: " + ", ".join(hoppade))
+    if misslyckade:
+        rader.append("gick inte: " + ", ".join(misslyckade))
+    say(args, {"ok": True, "me": me.get("displayName") or "", "project": project,
+               "issues": issues, "open": len(öppna), "explained": förklarade,
+               "failed": misslyckade, "skipped": hoppade, "dir": str(MINE_DIR)}, rader)
+    return 0
+
+
 def cmd_plan(client_, args) -> int:
     """Kundens önskemål in, ärendeförslag ut. Ingenting skrivs förrän --create.
 
@@ -4715,6 +4919,16 @@ def selftest() -> int:
                      ' {"summary": "Uppgift", "type": "Story", "epic": "Servicepaket", "sprint": 1}]', varn2)
     assert len([i for i in två if is_epic(i)]) == 3, "en tvetydig referens blir en egen epic, inte en gissning"
 
+    # Krav- och bevisraden ur en beskrivning, och tidsstämpeln som avgör om en förklaring
+    # är färsk. Utan BEVIS-rad blir beviset tomt -- påhittas inget.
+    assert mine_parts("KRAV: punkt 1, ett paket. BEVIS: skapa ett paket med två tjänster.") == \
+        ("punkt 1, ett paket.", "skapa ett paket med två tjänster."), "krav och bevis delas"
+    assert mine_parts("KRAV: bara detta") == ("bara detta", ""), "utan BEVIS blir beviset tomt"
+    assert mine_parts("") == ("", ""), "tomt blir tomt"
+    assert mine_parts("krav: litet bevis: litet") == ("litet", "litet"), "små bokstäver läses också"
+    assert when_of("2026-10-05T15:48:00.000+0000") > 0, "Jiras tidsstämpel läses"
+    assert when_of("inte en tid") == 0.0, "en trasig tid blir noll, och då skrivs förklaringen om"
+
     # Sökvägarna i ett förslag kontrolleras mot repot: en väg som inte finns flaggas, en
     # kort väg som pekar rätt godtas, och en fil som bara delar namn (test.sh i roten mot
     # WigellAutoCore/autocore/test.sh) fångas -- det var den verkliga fällan (mätt).
@@ -5586,6 +5800,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_work.add_argument("--no-comment", action="store_true", help="write nothing on the issue")
     p_work.add_argument("--rm", action="store_true", help="remove the worktree after a pushed run")
     p_work.add_argument("--json", action="store_true", help="machine-readable result")
+    p_mine = sub.add_parser("mine", help="my issues, explained step by step")
+    p_mine.add_argument("--project", default="", help="override the project")
+    p_mine.add_argument("--repo", default="", help="a local clone to read the code from")
+    p_mine.add_argument("--repo-name", default="", help="a repo by name")
+    p_mine.add_argument("--explain", action="store_true", help="explain the open ones, step by step")
+    p_mine.add_argument("--key", default="", help="only this key")
+    p_mine.add_argument("--json", action="store_true")
+    p_mine.add_argument("--stream", action="store_true", help="each step as it happens")
     p_runs = sub.add_parser("runs", help="the run ledger: what the runs did")
     p_runs.add_argument("--limit", type=int, default=20)
     p_runs.add_argument("--json", action="store_true")
@@ -5770,6 +5992,8 @@ def main(argv) -> int:
             return cmd_plan(jira, args)
         if args.cmd == "work":
             return cmd_work(jira, args)
+        if args.cmd == "mine":
+            return cmd_mine(jira, args)
         return cmd_next(jira, args) if args.cmd == "next" else cmd_current(jira, args)
     except (RuntimeError, OSError, KeyError, urllib.error.URLError) as exc:
         # Allt som går mot Jira går genom här: en trasig token, en tavla som inte
