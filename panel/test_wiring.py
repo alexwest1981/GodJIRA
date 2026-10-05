@@ -393,6 +393,7 @@ console.log(bad.length ? "FEL " + bad.join(" | ") : "OK");
     # Flödeskartan: artefakten tar ritytans plats. "✎ ändra" byggdes förut inuti
     # ritytans rendering, så den försvann i samma stund som artefakten kom in.
     server = (HERE / "server.py").read_text(encoding="utf-8")
+    sites = (HERE.parent / "bin" / "jira_sites.py").read_text(encoding="utf-8")
     check("flowMapShow" in html and 'class="flowMap"' in html,
           "the flow map is drawn where the canvas was")
     # Kunskapsgrafen: samma arbetsdelning som kartan -- motorn bygger, panelen och
@@ -452,6 +453,10 @@ console.log(bad.length ? "FEL " + bad.join(" | ") : "OK");
     check("function driftRow(s)" in html and "const drift = driftRow(s);" in html
           and "return drift + spark(t.perDag)" in html,
           "den körande commiten står i sajtens detalj, inte bara för dem med trafik")
+    check("VAKTER = [" in sites and "def vakt_lage(" in sites and "\"vakter\": [dict(v, **vakt_lage" in sites,
+          "jobben som skall köra av sig själva läses med samma lätta anrop som det som körs")
+    check("\"vakter\"" in server and "backningen gick inte igenom" in server,
+          "kön får en rad för en backning som föll")
     check("def drift_read()" in server and '"drift": pool.submit' in server,
           "vad som körs läses i state (den lätta vägen), cachat")
     check("def ci_of(" in server and "def ci_state(" in server and "ov:stat:ci" in html,

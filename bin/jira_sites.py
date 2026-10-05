@@ -15,6 +15,7 @@ nagot ar en vy som kan gora skada klockan tre pa natten.
 import json
 import pathlib
 import re
+import time
 import subprocess
 import sys
 import urllib.error
@@ -57,6 +58,16 @@ SAJTER = [
 TJANSTER = [
     {"nyckel": "n8n", "namn": "n8n (flodena)", "enhet": "n8n.service"},
     {"nyckel": "omniroute", "namn": "OmniRoute (modellrouter)", "enhet": "omniroute.service"},
+]
+
+# Jobb som skall ha kört av sig själva: backningar och gallringar. Att de tystnar är den
+# dyraste sorten fel -- 2026-10-05 dog nattspeglingen efter 25 sekunder och det syntes
+# ingenstans förrän hubben fick en rad för det. max_hours är hur gammal den senaste
+# LYCKADE körningen får vara innan den räknas som tyst.
+VAKTER = [
+    {"enhet": "spara-allt.service", "namn": "Backningen", "max_hours": 30},
+    {"enhet": "momento-backup.service", "namn": "Momentos backning", "max_hours": 30},
+    {"enhet": "momento-gallring.service", "namn": "Momentos gallring", "max_hours": 30},
 ]
 
 POSTHOG_PROJEKT = 293765
@@ -317,6 +328,45 @@ def tjanst_lage(enhet, kor=None):
         return MISSLYCKAT
 
 
+def vakt_lage(enhet: str, kor=None, nu=None) -> dict:
+    """Senaste körningen av ett jobb som skall ha kört: resultat, när, hur länge sedan.
+
+    Epoch ur systemd (`--timestamp=unix`), inte text: en textstämpel beror på språket och
+    den här maskinen svarar på svenska ena dagen och engelska nästa. Tom tidsstämpel betyder
+    att enheten aldrig har kört -- `Result` är då "success" ändå, så resultatet ensamt duger
+    inte som svar på om jobbet har gjort sitt. `lage` (ActiveState) behövs för att en körning
+    som PÅGÅR nollställer tidsstämpeln: den får inte läsas som "har aldrig kört".
+    """
+    def standard(u):
+        return subprocess.run(["systemctl", "--user", "show", "--timestamp=unix",
+                               "-p", "Result", "-p", "ExecMainExitTimestamp", "-p", "ActiveState",
+                               u], capture_output=True, text=True, timeout=15)
+
+    kor = kor or standard
+    try:
+        # Nyckel=Värde, inte radposition: systemd lämnar egenskaperna i sin egen ordning --
+        # med --value hamnade epoken i "result" och "active" i "at" när tre egenskaper frågades.
+        fält = {}
+        for rad in (kor(enhet).stdout or "").splitlines():
+            nyckel, _, värde = rad.partition("=")
+            if värde or nyckel.endswith("Timestamp"):
+                fält[nyckel.strip()] = värde.strip()
+    except Exception:
+        return {"enhet": enhet, "lage": "okand", "result": "", "at": None, "age_h": None}
+    result = fält.get("Result", "")
+    stamp = fält.get("ExecMainExitTimestamp", "")
+    lage = fält.get("ActiveState", "")
+    at = None
+    if stamp.startswith("@"):
+        try:
+            at = int(stamp[1:])
+        except ValueError:
+            at = None
+    nu = int(time.time()) if nu is None else nu
+    return {"enhet": enhet, "lage": lage, "result": result, "at": at,
+            "age_h": round((nu - at) / 3600.0, 1) if at else None}
+
+
 def posthog_installerad(url, hamta=None):
     """Ligger PostHog-snutten pa sajten? Matt ur den serverade HTML:en, inte ur koden."""
     if hamta is None:
@@ -462,7 +512,8 @@ def drift_rapport() -> dict:
                    "lage": tjanst_lage(enhet),
                    "drift": drift_of(tjanst_katalog(enhet))})
     return {"genererad": datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M"),
-            "sajter": ut}
+            "sajter": ut,
+            "vakter": [dict(v, **vakt_lage(v["enhet"])) for v in VAKTER]}
 
 
 def sajt_rapport(sajt, dagar=14):
@@ -543,6 +594,32 @@ def selftest():
     d = drift_of("/var/www/minnoria", kor=git_svar)
     assert (d["commit"], d["behind"], d["dirty"]) == ("abc1234", 3, 1), d
     assert d["at"].startswith("2026-10-05") and d["subject"] == "Byt färg", d
+    # Jobben som skall köra av sig själva: epoch tolkas, och en tom tidsstämpel betyder
+    # ALDRIG KÖRT även om Result säger success -- plus att en körning som pågår inte får läsas
+    # som en gammal körning.
+    def vakt_svar(text):
+        return lambda u: subprocess.CompletedProcess([], 0, text)
+
+    nu = 1_800_000_000
+    def vakt_rader(result="success", stamp="", lage="inactive"):
+        return ("Result=%s\nExecMainExitTimestamp=%s\nActiveState=%s\n" % (result, stamp, lage))
+
+    gjord = vakt_lage("x.service", kor=vakt_svar(vakt_rader(stamp="@1799998000")), nu=nu)
+    assert (gjord["result"], gjord["age_h"]) == ("success", 0.6), gjord
+    trasig = vakt_lage("x.service", kor=vakt_svar(vakt_rader(result="exit-code",
+                                                           stamp="@1799908000")), nu=nu)
+    assert trasig["result"] == "exit-code" and trasig["age_h"] > 24, trasig
+    aldrig = vakt_lage("x.service", kor=vakt_svar(vakt_rader()), nu=nu)
+    assert aldrig["at"] is None and aldrig["age_h"] is None, aldrig
+    pagaende = vakt_lage("x.service", kor=vakt_svar(vakt_rader(lage="activating")), nu=nu)
+    assert pagaende["lage"] == "activating", pagaende
+    # Ordningen skall inte spela roll: epoken får inte hamna i "result"
+    omkastad = vakt_lage("x.service", kor=vakt_svar(
+        "ActiveState=inactive\nExecMainExitTimestamp=@1799998000\nResult=success\n"), nu=nu)
+    assert omkastad["result"] == "success" and omkastad["age_h"] == 0.6, omkastad
+    okand = vakt_lage("x.service", kor=vakt_svar(""), nu=nu)
+    assert okand["result"] == "" and okand["age_h"] is None, okand
+
     assert drift_of("")["ok"] is False
     assert drift_of("/tmp", kor=lambda a: subprocess.CompletedProcess(a, 128, ""))["ok"] is False
 

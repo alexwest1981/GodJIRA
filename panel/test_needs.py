@@ -113,6 +113,23 @@ check(sorter == [("deploy", "wait"), ("service", "block")],
 check([n for n in queue if n["kind"] == "deploy"][0]["detail"] == "Web · 3 efter origin/main",
       "raden säger vilken sajt och hur långt efter")
 
+# Jobben som skall köra av sig själva: en backning som föll blockerar, en som tystnat väntar,
+# en som kör just nu säger ingenting, och en i tid är tyst.
+vakter = {"sajter": [], "vakter": [
+    {"namn": "Backningen", "max_hours": 30, "lage": "inactive", "result": "exit-code", "age_h": 15.0},
+    {"namn": "Momentos backning", "max_hours": 30, "lage": "inactive", "result": "success", "age_h": 190.0},
+    {"namn": "Momentos gallring", "max_hours": 30, "lage": "activating", "result": "success", "age_h": None},
+    {"namn": "Frisk", "max_hours": 30, "lage": "inactive", "result": "success", "age_h": 2.0}]}
+queue = server.needs_list(dict(state_of(), drift=vakter))
+backuper = [n for n in queue if n["kind"] == "backup"]
+check(len(backuper) == 2, "bara de två trasiga backningarna hamnar i kön (fick %d)" % len(backuper))
+check(sorted(n["level"] for n in backuper) == ["block", "wait"],
+      "den som föll blockerar, den som tystnat väntar")
+check([n for n in backuper if n["level"] == "block"][0]["detail"] == "Backningen · exit-code · 15.0 h sedan",
+      "block-raden säger namn, resultat och hur länge sedan")
+check([n for n in backuper if n["level"] == "wait"][0]["detail"] == "Momentos backning · 7 dygn sedan",
+      "den väntande raden räknar dygn, inte timmar")
+
 # Nyckeln: ett okänt utgångsdatum säger ingenting; en räknad utgång larmar; ett avvisat svar
 # blockerar och hamnar först.
 check(not [n for n in server.needs_list(state_of(token={"present": True, "connected": True,

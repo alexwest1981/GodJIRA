@@ -1690,7 +1690,13 @@ DEMO_DRIFT = {"sajter": [
     {"nyckel": "api", "namn": "Api", "enhet": "demo-api.service", "lage": "failed",
      "drift": {"ok": True, "commit": "9f8e7d6", "at": "2026-10-01T08:00:00Z",
                "subject": "Första utgåvan", "branch": "main", "upstream": "origin/main",
-               "ahead": 0, "behind": 0, "dirty": 1}}]}
+               "ahead": 0, "behind": 0, "dirty": 1}}],
+    # En backning som föll och en som inte har hört av sig: båda raderna syns i provläget.
+    "vakter": [
+        {"enhet": "spara-allt.service", "namn": "Backningen", "max_hours": 30,
+         "lage": "inactive", "result": "exit-code", "at": 1759635000, "age_h": 15.0},
+        {"enhet": "momento-backup.service", "namn": "Momentos backning", "max_hours": 30,
+         "lage": "inactive", "result": "success", "at": 1759000000, "age_h": 190.0}]}
 
 DEMO_CI = {"repos": [{"repo": DEMO_LOGIN + "/web-platform", "state": "red", "branch": "main",
                       "workflow": "CI", "conclusion": "failure", "at": "2026-10-05T16:40:00Z",
@@ -1983,7 +1989,32 @@ def needs_list(state: dict, limit: int = 4) -> list:
                                     str(drift.get("upstream") or "uppströms"),
                           "view": "sites"})
 
-    # 5. Nyckeln. Utgångsdatumet finns inte i något API, så ett okänt datum säger ingenting
+    # 5. Jobben som skall köra av sig själva. En tyst backning är den dyraste sorten fel --
+    #    nattspeglingen kan ha varit trasig i månader utan att någon märkt det, för ingen
+    #    tittar i en rapportfil på en annan disk. En körning som PÅGÅR nollställer
+    #    tidsstämpeln, så den får varken larma eller läsas som "har aldrig kört".
+    for vakt in ((state.get("drift") or {}).get("vakter") or []):
+        namn = str(vakt.get("namn") or vakt.get("enhet") or "")
+        if str(vakt.get("lage") or "") in ("activating", "active"):
+            continue
+        ålder = vakt.get("age_h")
+        resultat = str(vakt.get("result") or "")
+        if resultat and resultat != "success":
+            needs.append({"kind": "backup", "level": "block", "count": 1,
+                          "label": "backningen gick inte igenom",
+                          "detail": namn + " · " + resultat +
+                                    ("" if ålder is None else " · " + str(ålder) + " h sedan"),
+                          "view": "sites"})
+        elif ålder is None:
+            needs.append({"kind": "backup", "level": "wait", "count": 1,
+                          "label": "backningen har inte kört", "detail": namn, "view": "sites"})
+        elif ålder > float(vakt.get("max_hours") or 30):
+            needs.append({"kind": "backup", "level": "wait", "count": 1,
+                          "label": "backningen har inte kört på länge",
+                          "detail": namn + " · " + str(int(ålder // 24)) + " dygn sedan",
+                          "view": "sites"})
+
+    # 6. Nyckeln. Utgångsdatumet finns inte i något API, så ett okänt datum säger ingenting
     #    -- bara Jiras eget svar (alert/note) eller en räknad utgång larmar.
     if token.get("present") and not token.get("connected"):
         needs.append({"kind": "key", "level": "block", "count": 1, "label": "nyckeln svarar inte",
