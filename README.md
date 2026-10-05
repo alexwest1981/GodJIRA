@@ -340,6 +340,16 @@ says exactly what it will do — `Skapa 4 ärenden i SCRUM (skarpt läge)`. Unti
 wrong, press it, confirm the count, and *then* the flow writes. Nothing is sent to Jira
 by the parse step, so a bad proposal costs a second parse, not a cleanup.
 
+A parse also writes the **distribution** out as a paper: `Fördelningen (PDF)` sits next to
+the buttons and downloads an A4 sheet with an overview of the sprints, then each sprint with
+its issues under it. That is the thing a customer or a team reads, instead of a list in a
+window. Every issue comes back with a sprint number for exactly that reason, so the proposal
+says how the work is divided and not only what it is. The sheet is drawn from the same list
+the screen shows, never from a second answer to the agent, and it lives as long as the
+approval does (an hour, or until the issues are written). The CLI writes the same document:
+`jira_flow plan --pdf fordelning.pdf --lang sv` — `--lang` picks the language of the frame
+around it (Swedish, or English for anything else); the issues keep the customer's language.
+
 Two server-side rules make that stick (`panel/server.py`):
 
 * the client may only send **which** of the proposed items to write, by number —

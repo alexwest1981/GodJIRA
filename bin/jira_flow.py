@@ -26,7 +26,7 @@ Commands
         their own and nobody's choice depends on someone else's. Shipped list:
         hermes, then agy. JIRA_FLOW_AGENT overrides it for one run.
     plan [--text TEXT | --file PATH] [--context PATH|URL]... [--repo DIR]
-         [--create] [--json] [--project KEY]
+         [--create] [--json] [--project KEY] [--pdf PATH] [--lang CODE]
         Hands the customer's wish to the agent you have chosen (JIRA_FLOW_AGENT,
         "claude -p" by default -- any CLI that reads a prompt on stdin and answers
         with JSON works) and gets issue proposals back. GodJIRA never calls a model
@@ -36,6 +36,13 @@ Commands
         text, or a folder of them) and --repo the project's own history (branch,
         recent commits, open PRs and issues via gh when the remote is GitHub), so
         the issues land where the project actually is instead of beside it.
+        Every issue comes back with a sprint number, so the proposal says how the
+        work is divided and not just what it is. --pdf writes that division out as
+        an A4 document (Overview first, then each sprint with its issues): the
+        paper a customer or a team reads instead of a list in a window. It is
+        drawn from exactly the list that was just proposed, never from a second
+        answer, and --lang picks the language of the frame around it (sv, or
+        English for anything else -- the issues keep the customer's language).
     current
         The key of the item you are on right now (the commit hook reads this).
     install [repo] [--project KEY]
@@ -76,7 +83,7 @@ import tempfile
 import urllib.request
 import zipfile
 from base64 import b64encode
-from html import unescape
+from html import escape, unescape
 from pathlib import Path
 from datetime import datetime, timezone
 from pathlib import Path
@@ -124,6 +131,89 @@ MEMORY_TURNS = 20       # turer som får plats i prompten
 MEMORY_CHARS = 4000     # och hur mycket de får kosta, sammanlagt
 PLAN_EPICS = int(os.environ.get("JIRA_FLOW_PLAN_EPICS", "3"))
 PLAN_MAX = int(os.environ.get("JIRA_FLOW_PLAN_MAX", "10"))
+PLAN_SPRINTS = int(os.environ.get("JIRA_FLOW_PLAN_SPRINTS", "3"))
+
+# Ramen runt pappret som importen lägger fram. Uppgifterna står som de skrevs, i kundens
+# eget språk -- bara ramen översätts, och bara sv och en finns: ett annat panelspråk får
+# den engelska ramen i stället för en halvöversatt svensk.
+PLAN_WORDS = {
+    "sv": {
+        "title": "Fördelningen av uppgifterna",
+        "wish": "kundens önskemål",
+        "project": "Projekt",
+        "documents": "dokument", "document": "dokument", "chars": "tecken",
+        "overview": "Översikt",
+        "sprint": "Sprint", "issue": "uppgift", "issues": "uppgifter",
+        "holds": "Innehåller", "under": "under", "empty": "inget i den här sprinten",
+        "note": "Det här är ett förslag. Ingenting är skrivet till Jira än. När det skrivs "
+                "är det exakt den här listan, ingenting annat.",
+        "source": "tolkat ur underlaget av {}",
+    },
+    "en": {
+        "title": "How the work is divided",
+        "wish": "what the customer asked for",
+        "project": "Project",
+        "documents": "documents", "document": "document", "chars": "characters",
+        "overview": "Overview",
+        "sprint": "Sprint", "issue": "task", "issues": "tasks",
+        "holds": "Holds", "under": "under", "empty": "nothing in this sprint",
+        "note": "This is a proposal. Nothing is written to Jira yet. When it is, it is "
+                "exactly this list and nothing else.",
+        "source": "read from the papers by {}",
+    },
+}
+
+PLAN_HTML = """<!doctype html>
+<html lang="{lang}">
+<head><meta charset="utf-8"><title>{title}</title><style>{css}</style></head>
+<body>
+<h1>{title}</h1>
+<p class="meta">{meta}</p>
+{wish}
+<h2 class="block">{overview}</h2>
+<table class="over">
+<thead><tr><th>{head}</th><th>#</th><th>{holds}</th></tr></thead>
+<tbody>{rows}</tbody>
+</table>
+<p class="kinds">{kinds}</p>
+{body}
+<p class="note">{note}</p>
+{source}
+</body>
+</html>
+"""
+
+PLAN_CSS = """
+@page { size: A4; margin: 17mm 16mm; }
+* { box-sizing: border-box; }
+body { font-family: "DejaVu Sans", "Noto Sans", system-ui, sans-serif;
+       font-size: 10pt; line-height: 1.45; color: #1a1e1d; margin: 0; }
+h1 { font-size: 16pt; margin: 0 0 1mm; letter-spacing: -0.2pt; }
+p.meta { color: #5b6360; font-size: 8.5pt; margin: 0 0 4mm; }
+p.wishlab { font-size: 8.5pt; color: #5b6360; margin: 0 0 1mm; }
+p.wish { margin: 0 0 5mm; padding: 0 0 0 3mm; border-left: 2px solid #cfd6d3;
+         white-space: pre-wrap; }
+h2.block { font-size: 11pt; margin: 0 0 2mm; }
+table.over { width: 100%; border-collapse: collapse; margin: 0 0 1.5mm; font-size: 9pt; }
+table.over th { text-align: left; font-weight: 600; border-bottom: 1px solid #cfd6d3;
+                padding: 0 3mm 1mm 0; color: #5b6360; font-size: 8.5pt; }
+table.over td { padding: 1mm 3mm 1mm 0; border-bottom: 1px solid #eceeed; vertical-align: top; }
+table.over td:nth-child(2) { width: 12mm; }
+p.kinds { color: #5b6360; font-size: 8.5pt; margin: 0 0 6mm; }
+section.sprint { border-top: 1px solid #00775c; padding-top: 3mm; margin: 0 0 7mm;
+                 break-inside: avoid; }
+section.sprint h2 { font-size: 12pt; margin: 0 0 3mm; color: #00775c; }
+section.sprint h2 span.count { color: #5b6360; font-size: 9pt; font-weight: 400;
+                               margin-left: 3mm; }
+div.item { margin: 0 0 3mm; padding: 0 0 0 3mm; border-left: 2px solid #eceeed; }
+div.item.nested { margin-left: 6mm; border-left-color: #cfd6d3; }
+span.type { display: inline-block; min-width: 16mm; color: #5b6360; font-size: 8.5pt; }
+span.sum { font-weight: 600; }
+span.prio, span.beside { color: #5b6360; font-size: 8.5pt; margin-left: 2mm; }
+div.desc { white-space: pre-wrap; color: #3c4340; margin-top: 1mm; }
+p.note { margin: 8mm 0 1mm; padding-top: 3mm; border-top: 1px solid #cfd6d3; font-size: 9pt; }
+p.source { color: #7c8481; font-size: 8pt; margin: 0; }
+"""
 
 # Underlaget agenten får utöver själva önskemålet. Taken finns för att en agent
 # som får 300 000 tecken slutar läsa och börjar gissa; allt som klipps bort sägs
@@ -159,14 +249,22 @@ Issue types that exist in this project: {types}.
 Shape the work as scrum: one epic (type "Epic") per coherent piece of the wish, with its tasks
 under it. A task names its epic in "epic" -- exactly the epic's summary. A wish that is one small
 thing needs no epic at all. Put every epic before its own tasks in the array.
+Spread the issues over the sprints: every issue gets a "sprint" number, and sprint 1 is what the
+team builds first. Keep a sprint to what the team gets through in two weeks, keep work that depends
+on other work in the same sprint as it or a later one, and never use more than {sprints} sprints.
+
+Write the way the team talks, not the way a brochure does: plain words, active voice, short
+sentences. Say what to build and how you know it is done; leave out the pitch, the filler and the
+enthusiasm -- the person reading this is the one doing the work.
 
 Answer with one JSON array of objects and nothing else -- no prose, no explanation,
-no code fences. Every object has exactly these five fields:
+no code fences. Every object has exactly these six fields:
   "summary"       a short imperative for this project, at most 80 characters
   "type"          one of the issue types listed above ("Epic" for an epic)
   "epic"          the summary of the epic this issue belongs to, "" for an epic itself
   "description"   what to build, how to know it is done, and which files it touches
   "priority"      one of: Highest, High, Medium, Low
+  "sprint"        which sprint it is planned for: 1 for the first one
 Write them in the language the customer wrote in -- a Swedish wish gets Swedish
 issues, because that is the language the team reads on the board.
 
@@ -2182,6 +2280,14 @@ def is_epic(item: dict) -> bool:
     return (item.get("type") or "").strip().lower() == "epic"
 
 
+def sprint_of(item: dict) -> int:
+    """Sprintnumret ur agentens rad. Skräp blir 1: en rad utan planerad sprint hör till
+    den första, och ett påhittat nummer skall inte fälla ett förslag som är bra annars.
+    Siffran letas upp i texten, för en agent skriver lika gärna "sprint 2" som 2."""
+    found = re.search(r"\d+", str(item.get("sprint") or ""))
+    return max(1, int(found.group())) if found else 1
+
+
 def parse_plan(text: str):
     """Ärendena ur agentens svar. Hel array eller inget: en halv lista blir aldrig
     några ärenden, och skräp ger fel i stället för halvskrivna tavlor."""
@@ -2230,7 +2336,8 @@ def parse_plan(text: str):
                     "description": str(item.get("description") or "").strip(),
                     "priority": str(item.get("priority") or "").strip(),
                     # Vilken epic uppgiften hör till, som epikens sammanfattning.
-                    "epic": str(item.get("epic") or "").strip()[:250]})
+                    "epic": str(item.get("epic") or "").strip()[:250],
+                    "sprint": sprint_of(item)})
     if not out:
         raise ValueError("the agent proposed no issues at all")
     if len(out) > PLAN_MAX:
@@ -2249,6 +2356,149 @@ def parse_plan(text: str):
             raise ValueError("an issue named an epic that is not in the list: {!r}".format(
                 item["epic"][:60]))
     return out
+
+
+def plan_words(lang: str) -> dict:
+    """Ramen runt pappret. Svensk ram för svenska, engelsk för allt annat -- uppgifterna
+    står som de skrevs, i kundens eget språk, och översätts aldrig här."""
+    code = (lang or "sv").strip().lower()[:2]
+    return PLAN_WORDS["sv"] if code == "sv" else PLAN_WORDS["en"]
+
+
+def plan_sprints(items: list) -> list:
+    """Fördelningen: sprintarna i tur och ordning, med uppgifterna som hör till dem.
+
+    Ren funktion, så panelen och pappret räknar samma tal ur samma lista och ett prov kan
+    mata den med en handgjord lista. Ordningen inom en sprint är förslagets egen.
+    """
+    def number(item: dict) -> int:
+        return int(item.get("sprint") or 1)
+
+    return [{"sprint": sprint, "items": [i for i in items if number(i) == sprint]}
+            for sprint in sorted({number(i) for i in items})]
+
+
+def sprint_holds(items: list, words: dict) -> str:
+    """Vad en sprint rymmer, i en rad: epikerna i den, annars de första uppgifterna."""
+    names = []
+    for item in items:
+        if is_epic(item) and item["summary"] not in names:
+            names.append(item["summary"])
+    if not names:
+        names = [i["summary"] for i in items[:2]]
+    return ", ".join(names[:3]) or words["empty"]
+
+
+def plan_document(items: list, meta: dict, lang: str = "") -> str:
+    """Fördelningen som en A4-sida HTML: översikt över sprintarna, sedan varje sprint med
+    sina uppgifter. Ren funktion -- inget anrop, ingen fil, ingenting skrivet."""
+    words = plan_words(lang)
+    sprints = plan_sprints(items)
+    agent = str(meta.get("agent") or "").strip()
+    kinds = {}
+    for item in items:
+        name = str(item.get("type") or "Task")
+        kinds[name] = kinds.get(name, 0) + 1
+    meta_line = " · ".join(x for x in [
+        meta.get("project") and "{} {}".format(words["project"], escape(str(meta["project"]))),
+        meta.get("repo") and escape(str(meta["repo"])),
+        escape(str(meta.get("date") or "")),
+        meta.get("documents") and "{} {} · {} {}".format(
+            len(meta["documents"]),
+            words["documents"] if len(meta["documents"]) > 1 else words["document"],
+            sum(n.get("chars") or 0 for n in meta["documents"]), words["chars"]),
+    ] if x)
+
+    rows = []
+    for group in sprints:
+        seen = set()
+        body = []
+        for item in group["items"]:
+            nested = bool(item.get("epic")) and item["epic"] in seen
+            seen.add(item["summary"])
+            body.append(
+                '<div class="item{nested}">'
+                '<span class="type">{type}</span>'
+                '<span class="sum">{summary}</span>'
+                '{priority}{beside}{desc}</div>'.format(
+                    nested=" nested" if nested else "",
+                    type=escape(str(item.get("type") or "Task")),
+                    summary=escape(str(item.get("summary") or "")),
+                    priority=(' <span class="prio">{}</span>'.format(
+                        escape(str(item["priority"]))) if item.get("priority") else ""),
+                    beside=(' <span class="beside">{} {}</span>'.format(
+                        words["under"], escape(str(item["epic"]))) if item.get("epic") else ""),
+                    desc=('<div class="desc">{}</div>'.format(escape(str(item["description"])))
+                          if item.get("description") else "")))
+        rows.append(
+            '<section class="sprint"><h2>{words[sprint]} {n}'
+            '<span class="count">{c} {what}</span></h2>{body}</section>'.format(
+                words=words, n=group["sprint"], c=len(group["items"]),
+                what=words["issues"] if len(group["items"]) != 1 else words["issue"],
+                body="".join(body)))
+
+    overview = "".join(
+        "<tr><td><b>{} {}</b></td><td>{}</td><td>{}</td></tr>".format(
+            escape(words["sprint"]), group["sprint"], len(group["items"]),
+            escape(sprint_holds(group["items"], words))) for group in sprints)
+
+    return PLAN_HTML.format(
+        lang="sv" if plan_words(lang) is PLAN_WORDS["sv"] else "en",
+        css=PLAN_CSS,
+        title=escape(words["title"]),
+        meta=meta_line,
+        wish=('<p class="wishlab">{}</p><p class="wish">{}</p>'.format(
+            escape(words["wish"]), escape(str(meta.get("wish") or "")))
+            if (meta.get("wish") or "").strip() else ""),
+        overview=escape(words["overview"]),
+        head=escape(words["sprint"]),
+        holds=escape(words["holds"]),
+        rows=overview,
+        kinds=escape(" · ".join("{} {}".format(name, count) for name, count in kinds.items())),
+        body="".join(rows),
+        note=escape(words["note"]),
+        source=('<p class="source">{}</p>'.format(escape(words["source"].format(agent)))
+                if agent else ""),
+    )
+
+
+def pdf_browser() -> str:
+    """Vilken webbläsare som gör pappret. Chromium skriver PDF ur vanlig HTML, så
+    dokumentet är samma markup som allt annat här i huset i stället för ännu ett
+    PDF-bibliotek att hålla reda på (mätt: ~1 s för en A4-sida)."""
+    for name in ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable",
+                 "brave", "brave-browser"):
+        found = shutil.which(name)
+        if found:
+            return found
+    raise RuntimeError("no chromium on PATH to write the PDF with (install chromium)")
+
+
+def plan_pdf(items: list, meta: dict, out_path, lang: str = "") -> str:
+    """Skriver fördelningen till out_path och svarar med sökvägen. Kastar om filen inte
+    blev något: ett tomt papper skall säga det, inte se ut som ett som gick bra."""
+    out = Path(out_path).expanduser()
+    folder = Path(tempfile.mkdtemp(prefix="jira-flow-pdf-"))
+    source = folder / "plan.html"
+    source.write_text(plan_document(items, meta, lang), encoding="utf-8")
+    done = subprocess.run(
+        [pdf_browser(), "--headless=new", "--disable-gpu", "--no-pdf-header-footer",
+         "--user-data-dir=" + str(folder / "profile"), "--print-to-pdf=" + str(out),
+         source.as_uri()],
+        capture_output=True, text=True, timeout=180)
+    if not out.is_file() or not out.stat().st_size:
+        raise RuntimeError("the PDF was not written ({}): {}".format(
+            done.returncode, (done.stderr or done.stdout or "no output").strip()[-200:]))
+    shutil.rmtree(folder, ignore_errors=True)
+    return str(out)
+
+
+def agent_label(answered_by) -> str:
+    """Vem som svarade, som ett namn. Provet skrev answered_by[0] -- för en sökväg blir
+    det första tecknet, alltså "/" i stället för agentens namn."""
+    if isinstance(answered_by, str):
+        return os.path.basename(answered_by) or answered_by
+    return (answered_by or ["(no agent answered)"])[0]
 
 
 def agents_from(config, override: str = ""):
@@ -2797,7 +3047,7 @@ def cmd_plan(client_, args) -> int:
             return 2
     else:
         # Agenten får hela underlaget: önskemålet, dokumenten och repot.
-        prompt = PLAN_PROMPT.format(project=project, limit=PLAN_MAX,
+        prompt = PLAN_PROMPT.format(project=project, limit=PLAN_MAX, sprints=PLAN_SPRINTS,
                                     types=", ".join(client_.types(project)) or "Story, Task, Bug",
                                     context=build_context(docs_text, repo_text, docs_notes,
                                                           link_context(client_, args)),
@@ -2829,11 +3079,29 @@ def cmd_plan(client_, args) -> int:
     context_note = {"documents": docs_notes, "repo": repo_info}
     if approved:
         context_note["approved"] = approved
+    # Fördelningen som papper: ur exakt den lista som just blev förslaget, aldrig ur ett
+    # andra varv hos agenten (den svarar olika varje gång). Ett papper som inte blev
+    # något får inte fälla förslaget -- felet sägs högt i stället.
+    pdf_path, pdf_error = "", ""
+    if getattr(args, "pdf", ""):
+        try:
+            pdf_path = plan_pdf(items, {"wish": (getattr(args, "text", "") or wish).strip(),
+                                        "documents": docs_notes, "project": project,
+                                        "repo": getattr(args, "repo_name", "")
+                                                or os.path.basename(repo_dir or ""),
+                                        # En godkänd lista har ingen agent bakom sig, och
+                                        # då skall raden inte hitta på en.
+                                        "agent": "" if approved else agent_label(answered_by),
+                                        "date": time.strftime("%Y-%m-%d")},
+                                args.pdf, getattr(args, "lang", ""))
+        except (RuntimeError, OSError) as exc:
+            pdf_error = str(exc)
     if args.json and not args.create:
         # Med --create kommer ett enda dokument, längst ner, med både förslaget och
         # nycklarna: en maskinläsare ska inte behöva tolka två JSON-dokument i rad.
         print(json.dumps({"ok": True, "created": False, "proposal": items,
                           "project": project, "projectSource": project_source, "agent": answered_by,
+                          "pdf": pdf_path, "pdfError": pdf_error,
                           "context": context_note}, ensure_ascii=False))
     elif not args.json:
         if docs_notes or repo_info:
@@ -2845,13 +3113,20 @@ def cmd_plan(client_, args) -> int:
                 print("  {}{}{}".format(note["path"], "" if not note.get("error") else " — " + note["error"],
                                         " [{} of {} chars]".format(note["chars"], note["documentChars"])
                                         if note.get("truncated") else ""))
-        print("{} issue(s) proposed for {} ({}):".format(len(items), project, answered_by[0]))
+        print("{} issue(s) proposed for {} ({}):".format(len(items), project, agent_label(answered_by)))
         print("  project from: {}".format(project_source))
         for number, item in enumerate(items, 1):
             print("  {}. [{}] {}{}  ({})".format(
                 number, item["type"], item["summary"],
                 "  — under: " + item["epic"][:44] if item.get("epic") else "",
                 item["priority"] or "no priority"))
+        for group in plan_sprints(items):
+            print("  sprint {}: {}".format(
+                group["sprint"], ", ".join(i["summary"][:36] for i in group["items"])))
+        if pdf_path:
+            print("the division as a PDF: {}".format(pdf_path))
+        if pdf_error:
+            print("the PDF was not written: {}".format(pdf_error))
     if not args.create:
         if not args.json:
             print("nothing written. again with --create writes exactly this list.")
@@ -2897,6 +3172,7 @@ def cmd_plan(client_, args) -> int:
         client_.log("flow-plan", entry["key"], entry["summary"][:80])
     say(args, {"ok": True, "created": created, "proposal": items, "project": project,
                "projectSource": project_source,
+               "pdf": pdf_path, "pdfError": pdf_error,
                "agent": answered_by, "context": context_note}, [])
     return 0
 
@@ -3570,10 +3846,10 @@ def selftest() -> int:
         except ValueError:
             pass
     checks += 1
-    prompt = PLAN_PROMPT.format(project="SCRUM", limit=PLAN_MAX, types="Story, Task",
-                                context="", wish="kunden vill boka")
+    prompt = PLAN_PROMPT.format(project="SCRUM", limit=PLAN_MAX, sprints=PLAN_SPRINTS,
+                                types="Story, Task", context="", wish="kunden vill boka")
     assert "SCRUM" in prompt and "kunden vill boka" in prompt, "prompten bär projekt och önskemål"
-    for filler in ("{project}", "{wish}", "{limit}", "{context}", "{types}"):
+    for filler in ("{project}", "{wish}", "{limit}", "{context}", "{types}", "{sprints}"):
         assert filler not in prompt, "ofylld platshållare: " + filler
     checks += 1
 
@@ -3597,6 +3873,28 @@ def selftest() -> int:
         raise AssertionError("fler epics än taket skulle ha vägrats")
     except ValueError as exc:
         assert "epics" in str(exc), exc
+    checks += 1
+
+    # Fördelningen: sprintnumret ur agentens rad, grupperingen, och pappret som ritas ur
+    # den. Papperet är en ren funktion -- provet rör ingen webbläsare och ingen fil.
+    planned = parse_plan('[{"summary": "Boka tid", "type": "Story", "sprint": 2}, '
+                         '{"summary": "Bekräfta", "type": "Task"}, '
+                         '{"summary": "Rensa", "type": "Task", "sprint": "sprint 2"}]')
+    assert [i["sprint"] for i in planned] == [2, 1, 2], planned
+    groups = plan_sprints(planned)
+    assert [g["sprint"] for g in groups] == [1, 2], groups
+    assert [len(g["items"]) for g in groups] == [1, 2], groups
+    page = plan_document(planned, {"wish": "kunden vill boka", "project": "SCRUM",
+                                   "repo": "shop", "agent": "hermes", "date": "2026-10-05",
+                                   "documents": [{"path": "krav.pdf", "chars": 1200}]}, "sv")
+    assert "Fördelningen av uppgifterna" in page, page[:120]
+    assert "Sprint 1" in page and "Sprint 2" in page and "Boka tid" in page, page
+    body = page.split("</style>", 1)[1]
+    assert "{" not in body and "}" not in body, "ofylld platshållare i pappret"
+    assert "How the work is divided" in plan_document(planned, {}, "en"), "engelska ramen"
+    assert "&lt;script&gt;" in plan_document(
+        [{"summary": "<script>alert(1)</script>", "type": "Task", "sprint": 1,
+          "description": "a & b"}], {}, "sv"), "texten ur underlaget escapas"
     checks += 1
 
     # Kodkontexten: filkartan ur git, filen närmast önskemålet i sin helhet, och
@@ -3834,7 +4132,7 @@ def selftest() -> int:
         assert build_context("", "", notes) == "", "inget underlag ger inget block"
         block = build_context(docs, "", notes)
         assert "knappen ska spara kunden" in block, "blocket bär underlaget"
-        filled = PLAN_PROMPT.format(project="S", limit=1, types="T", context=block, wish="w")
+        filled = PLAN_PROMPT.format(project="S", limit=1, sprints=2, types="T", context=block, wish="w")
         assert "knappen ska spara kunden" in filled, "underlaget hamnar i prompten"
         assert "Context for the project as it stands" in filled, filled[:200]
     checks += 1
@@ -4310,6 +4608,10 @@ def build_parser() -> argparse.ArgumentParser:
                              "issue and local copy")
     p_plan.add_argument("--proposal", default="", metavar="PATH",
                         help="an already-approved list of issues: skips the agent (the panel sends this)")
+    p_plan.add_argument("--pdf", default="", metavar="PATH",
+                        help="write the division of the issues (sprint by sprint) as a PDF here")
+    p_plan.add_argument("--lang", default="", metavar="CODE",
+                        help="the language of the PDF's frame: sv, or English for anything else")
     p_ins.add_argument("repo", nargs="?", help="repository root (default: here)")
     p_ins.add_argument("--project", default=DEFAULT_PROJECT)
     p_ins.add_argument("--dry-run", action="store_true")

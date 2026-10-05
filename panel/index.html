@@ -889,6 +889,7 @@ const TEXT = {
   diffSide: "sida vid sida", diffUnified: "en kolumn",
   paketet: "paketet", visaAlla: "visa alla", visaFärre: "visa färre", stäng: "stäng",
   n8nCanvas: "n8n:s egen tavla", under: "under", readCode: "läst ur repot",
+  sprint: "sprint", planPdf: "Fördelningen (PDF)",
   none: "utan",
 };
 // Flikarna: nycklarna här, markupen i vyn. Deklarationerna måste ligga före allt som
@@ -3491,7 +3492,8 @@ function renderRepos() {
 // ticked off what should be there. The panel sends back only *which* of the
 // proposed items to write -- never issue text of its own.
 const IMP = { files: [], plan: [], token: "", spent: false, keep: new Set(), busy: false,
-              note: "", bad: false, created: [], project: "", projectSource: "", repo: "" };
+              note: "", bad: false, created: [], project: "", projectSource: "", repo: "",
+              pdf: false, pdfError: "" };
 const projectKey = () => (board() || {}).projectKey || "SCRUM";
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const jiraMode = () => (STATE && STATE.jira.mode === "real" ? "skarpt läge" : "provläge");
@@ -3579,6 +3581,7 @@ function renderImport() {
         <input type="checkbox" data-keep="${i}" ${IMP.keep.has(i) ? "checked" : ""}>
         <span><span class="key">${esc(item.type || "Task")}</span> ${esc(item.summary || "")}
           ${item.priority ? `<span class="meta">${esc(item.priority)}</span>` : ""}
+          ${item.sprint ? `<span class="meta">${esc(TEXT.sprint)} ${esc(String(item.sprint))}</span>` : ""}
           ${item.epic ? `<span class="meta">${esc(TEXT.under)} ${esc(item.epic)}</span>` : ""}
           ${item.description ? `<div class="t2">${esc(String(item.description).slice(0, 300))}</div>` : ""}
         </span>
@@ -3587,6 +3590,7 @@ function renderImport() {
         <button class="chip" data-act="imp-all">bocka alla</button>
         <button class="chip" data-act="imp-none">bocka av alla</button>
         <span class="grow"></span>
+        ${IMP.pdf ? `<a class="chip" href="/api/import/pdf?token=${encodeURIComponent(IMP.token)}" download>${TEXT.planPdf}</a>` : ""}
         <button class="chip on" data-act="imp-apply" ${IMP.keep.size && !IMP.busy && !IMP.spent && mayCreateIssues().ok ? "" : "disabled"}>
           Skapa ${plural(IMP.keep.size, "ärende", "ärenden")} i ${esc(IMP.project || projectKey())} (${jiraMode()})
         </button>
@@ -3610,6 +3614,7 @@ async function impParse() {
   const wish = document.getElementById("impWish").value.trim();
   if (!IMP.files.length || IMP.busy) return;
   IMP.busy = true; IMP.bad = false; IMP.plan = []; IMP.token = ""; IMP.spent = false;
+  IMP.pdf = false; IMP.pdfError = "";
   IMP.note = "tolkar underlaget — det tar några sekunder"; renderImport();
   try {
     const files = [];
@@ -3623,9 +3628,13 @@ async function impParse() {
     // Vad agenten faktiskt läste: underlaget OCH koden. Utan den raden ser ett
     // förslag lika självsäkert ut när det bara har gissat.
     IMP.context = answer.context || null;
+    // Fördelningen följde med förslaget. Ett papper som inte blev något sägs högt --
+    // tyst borta ser ut som att det aldrig var meningen att det skulle finnas.
+    IMP.pdf = !!answer.pdf; IMP.pdfError = answer.pdfError || "";
     IMP.keep = new Set(IMP.plan.map((_, i) => i));
     IMP.note = `${IMP.plan.length} förslag ur ${IMP.files.length} dokument till ` +
-               `${IMP.project || projectKey()} — bocka av det du inte vill ha`;
+               `${IMP.project || projectKey()} — bocka av det du inte vill ha` +
+               (IMP.pdfError ? ` · fördelningen kunde inte skrivas: ` + IMP.pdfError.slice(0, 120) : "");
   } catch (e) {
     IMP.bad = true; IMP.note = "kunde inte tolka: " + e.message;
   } finally { IMP.busy = false; renderImport(); }
@@ -3644,7 +3653,7 @@ async function impApply() {
     IMP.created = answer.created || [];
     IMP.spent = true;                       // one approval, used once -- also when it failed
     if (answer.ok) {
-      IMP.plan = []; IMP.keep = new Set();
+      IMP.plan = []; IMP.keep = new Set(); IMP.pdf = false;   // godkännandet är förbrukat, och pappret med det
       IMP.bad = false; IMP.note = `${plural(IMP.created.length, "ärende", "ärenden")} skapade i ${project}`;
       load(false);                          // the board changed: read it again
     } else {

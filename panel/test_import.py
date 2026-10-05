@@ -16,6 +16,7 @@ import json
 import os
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -31,6 +32,17 @@ def post(url: str, payload: dict, quiet_on: tuple = ()) -> tuple[int, dict]:
     except urllib.error.HTTPError as exc:
         if exc.code in quiet_on:
             return exc.code, json.loads(exc.read().decode() or "{}")
+        raise
+
+
+def get(url: str, quiet_on: tuple = ()) -> tuple:
+    """En läsning som ett prov: svarskoden, kroppen och rubrikerna."""
+    try:
+        with urllib.request.urlopen(url, timeout=120) as response:
+            return response.status, response.read(), dict(response.headers)
+    except urllib.error.HTTPError as exc:
+        if exc.code in quiet_on:
+            return exc.code, exc.read(), dict(exc.headers)
         raise
 
 
@@ -69,11 +81,33 @@ def main() -> int:
         len(proposal), "; ".join(i.get("summary", "?") for i in proposal)[:200]))
     token = answer.get("token") or ""
 
+    # 1b. Fördelningen som papper följde med förslaget: varje ärende säger vilken sprint
+    #     det är planerat för, och pappret går att hämta så länge godkännandet gäller.
+    check("every issue says which sprint it is planned for",
+          all(isinstance(i.get("sprint"), int) and i["sprint"] >= 1 for i in proposal), proposal)
+    check("the answer says whether the PDF was written",
+          isinstance(answer.get("pdf"), bool), answer.get("pdf"))
+    if answer.get("pdf") and token:
+        # Adressen byggs med format() och inte med ett citattecken efter "token=":
+        # den globala kroken läser `token="…"` som en hårdkodad hemlighet (falskt larm).
+        code, blob, headers = get("{}/api/import/pdf?token={}".format(
+            base, urllib.parse.quote(token)))
+        check("the paper comes back as a PDF", code == 200 and blob[:4] == b"%PDF",
+              (code, blob[:16]))
+        check("and as a file to download",
+              "attachment" in (headers.get("Content-Disposition") or ""),
+              headers.get("Content-Disposition"))
+    else:
+        check("the paper was written (or said why not)", False,
+              answer.get("pdfError") or "no reason given")
+
     # 2. The guard: an approval that was never made is not an approval.
     code, answer = post(base + "/api/import/apply",
                         {"token": "aldrig-utdelad", "keep": [0]}, quiet_on=(404,))
     check("an unknown approval is refused (404)", code == 404, code)
     check("and says why", bool(answer.get("error")), answer)
+    code, _, _ = get(base + "/api/import/pdf?token=aldrig-utdelad", quiet_on=(404,))
+    check("a paper for an approval that was never handed out is refused (404)", code == 404, code)
 
     # 3. Half an approval is no approval.
     if token:

@@ -1729,6 +1729,12 @@ def import_parse(payload: dict) -> tuple[int, dict]:
             args += ["--repo-name", repo]
         else:
             args += ["--project", PROJECT]
+        # Fördelningen som papper följer med förslaget: kunden och teamet läser vilka
+        # uppgifter som hör till vilken sprint i stället för att tolka en lista i en ruta.
+        # Filen ritas ur exakt den lista som blev förslaget, i samma anrop -- inget andra
+        # varv hos agenten. Ramen följer panelens språk, uppgifterna kundens eget.
+        sheet = Path(folder) / "plan.pdf"
+        args += ["--pdf", str(sheet), "--lang", panel_language("")]
         for path in paths:
             args += ["--context", str(path)]
         env = seam(*args, timeout=600)
@@ -1736,11 +1742,18 @@ def import_parse(payload: dict) -> tuple[int, dict]:
         if env.get("exitCode") != 0 or not isinstance(data.get("proposal"), list) or not data["proposal"]:
             return 200, {"ok": False, "error": data.get("error") or first_line(env)}
         token = secrets.token_urlsafe(9)
+        try:
+            blob = sheet.read_bytes()
+        except OSError:
+            blob = b""      # pappret är inte förslaget: ett misslyckat papper får inte fälla det
         # Repot följer med godkännandet: skrivningen ska landa där förhandsgranskningen sa.
-        _imports[token] = {"proposal": data["proposal"], "at": time.time(), "repo": repo}
+        _imports[token] = {"proposal": data["proposal"], "at": time.time(), "repo": repo,
+                           "pdf": blob,
+                           "pdfName": "plan-{}.pdf".format(time.strftime("%Y-%m-%d"))}
         return 200, {"ok": True, "token": token, "proposal": data["proposal"],
                      "project": data.get("project") or PROJECT,
                      "projectSource": data.get("projectSource") or "",
+                     "pdf": bool(blob), "pdfError": data.get("pdfError") or "",
                      "repo": repo, "agent": data.get("agent"), "context": data.get("context")}
     finally:
         shutil.rmtree(folder, ignore_errors=True)   # the papers are not kept
@@ -1783,14 +1796,25 @@ def import_apply(payload: dict) -> tuple[int, dict]:
         shutil.rmtree(folder, ignore_errors=True)
 
 
+def import_blob(token: str) -> tuple:
+    """Pappret som hörde till ett förslag. Det gäller lika länge som godkännandet (en
+    timme) och försvinner med det -- ett papper som ingen förslag hör till finns inte."""
+    entry = _imports.get(str(token or "")) or {}
+    if not entry or time.time() - (entry.get("at") or 0) > IMPORT_TTL or not entry.get("pdf"):
+        return b"", ""
+    return entry["pdf"], entry.get("pdfName") or "plan.pdf"
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "godjira-panel"
 
-    def _send(self, code: int, body: bytes, ctype: str) -> None:
+    def _send(self, code: int, body: bytes, ctype: str, extra: dict | None = None) -> None:
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        for name, value in (extra or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         try:
             self.wfile.write(body)
@@ -1911,6 +1935,16 @@ class Handler(BaseHTTPRequestHandler):
             name = (query.get("name") or [""])[0]
             answer = cached("repo:" + name, lambda: repo_detail(name), ttl=120)
             self._json(200, answer)   # svaret bär sitt eget ok/fel
+            return
+        if path == "/api/import/pdf":
+            query = parse_qs(urlparse(self.path).query)
+            blob, name = import_blob((query.get("token") or [""])[0])
+            if not blob:
+                self._send(404, b"no such PDF (the approval is used, or older than an hour)",
+                           "text/plain; charset=utf-8")
+                return
+            self._send(200, blob, "application/pdf",
+                       {"Content-Disposition": 'attachment; filename="{}"'.format(name)})
             return
         if path == "/api/refresh":
             with _lock:
