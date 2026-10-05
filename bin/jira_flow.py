@@ -4598,11 +4598,15 @@ def selftest() -> int:
     assert is_epic(items[0]) and items[0]["epic"] == "", items[0]
     assert [i["epic"] for i in items[1:]] == ["Bokning i butik"] * 2, items
     assert is_epic({"type": "EPIC"}) and not is_epic({"type": "episkt"}), "typen avgör, inte ordet"
-    try:
-        parse_plan('[{"summary": "Boka", "type": "Task", "epic": "Ingen sådan epic"}]')
-        raise AssertionError("en uppgift under en epic som inte finns skulle ha vägrats")
-    except ValueError as exc:
-        assert "not in the list" in str(exc), exc
+    # En epic agenten pekade på men glömde lista läggs till, inte kastas (mätt 2026-10-05:
+    # 19 ärenden försvann på den formaliteten). Varningen skall säga det, och epiken stå
+    # först -- ett barn före sin rot blir ett träd utan rot.
+    saknade_varn = []
+    med_ny = parse_plan('[{"summary": "Boka", "type": "Task", "epic": "Ingen sådan epic"}]',
+                        saknade_varn)
+    assert [i["summary"] for i in med_ny] == ["Ingen sådan epic", "Boka"], med_ny
+    assert is_epic(med_ny[0]) and med_ny[1]["epic"] == "Ingen sådan epic", med_ny
+    assert saknade_varn and "Ingen sådan epic" in saknade_varn[0], saknade_varn
     too_many = "[" + ",".join('{{"summary": "E{}", "type": "Epic"}}'.format(n)
                               for n in range(PLAN_EPICS + 1)) + "]"
     try:
