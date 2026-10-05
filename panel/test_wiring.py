@@ -66,7 +66,7 @@ def main() -> int:
           "the Backlog row shows the backlog, not the board")
     check('if (repo) { show("repos"); return repoOpen(repo.dataset.repo); }' in html,
           "the row also switches the main window to the repo")
-    # Listan bor i sidofältet, för 59 rader i huvudrutan blev lång skroll innan
+    # Listan bor i sidofältet, för 59 lines i huvudrutan blev lång skroll innan
     # detaljen. Sökningen filtrerar raderna på plats (ingen omritning = inget tappat
     # fokus), och huvudrutan ritar bara det valda repot.
     check("id=\"repoSearch\"" in html and "function repoRows()" in html,
@@ -85,7 +85,7 @@ def main() -> int:
     # Ett oavslutat skriptblock tystar hela panelen (mätt: "show is not defined").
     # Starten bor sist i filen. En patch som "äter till slutet" tar med sig
     # load(), pollningen och hashändringen -- då står panelen tom utan ett ord
-    # (mätt: STATE förblev null i webbläsaren, inga fel i konsolen).
+    # (mätt: STATE förblev null i webbläsaren, inga bad i konsolen).
     check("load(false);" in html and "setInterval(() => load(false), 60000);" in html,
           "the panel starts itself and keeps reading every minute")
     check("show(readHash());" in html and 'addEventListener("hashchange"' in html,
@@ -150,7 +150,7 @@ def main() -> int:
     # stod rutorna kvar på filens plats medan vägarna pekade någon helt annanstans.
     check("n8n:s egen tavla" in html, "the view says whether the drawing is n8n's own")
     # Klicket är hela poängen med inspektören: noden berättar vad den är och vad den
-    # gör, med de parametrar den faktiskt körs med (mätt: "Report to the panel", 10 rader).
+    # gör, med de parametrar den faktiskt körs med (mätt: "Report to the panel", 10 lines).
     check('id="flowNode"' in html and "flowNodeShow(drag.key)" in html,
           "a node opens in an inspector when clicked")
     check("flowVal" in html and "pkey" in html, "the inspector draws the node's settings")
@@ -219,11 +219,11 @@ console.log(JSON.stringify(got) === JSON.stringify(want) ? "OK" : "FEL " + JSON.
     if fn and kind:
         with _tf.NamedTemporaryFile("w", suffix=".js", delete=False, encoding="utf-8") as fh:
             fh.write(fn.group(0) + "\n" + kind.group(0) + "\n" + rader_fn.group(0) + """
-const rader = ["diff --git a/x/F.java b/x/F.java", "index 1..2 100644", "--- a/x/F.java",
+const lines = ["diff --git a/x/F.java b/x/F.java", "index 1..2 100644", "--- a/x/F.java",
                "+++ b/x/F.java", "@@ -1 +1 @@", "-gammal", "+ny", " oförändrad"];
-const kind = rader.map(diffKind);
+const kind = lines.map(diffKind);
 const want = ["", "meta", "meta", "meta", "hunk", "del", "add", ""];
-// Radbrytningen byggs med fromCharCode: en escape i provet blir två lager fel.
+// Radbrytningen byggs med fromCharCode: en escape i provet blir två lager bad.
 const tx = ["diff --git a/x/F.java b/x/F.java", "+a",
             "diff --git a/y/G.java b/y/G.java", "+b"].join(String.fromCharCode(10));
 const filer = diffFiles(tx).map(f => f.vag);
@@ -278,21 +278,21 @@ const g = {
   ],
 };
 const namn = xs => (xs || []).map(e => e.name).sort().join(",");
-const fel = [];
+const bad = [];
 const p = graphView(g, "paket:a");
-if (!p) fel.push("paket:a saknas");
-if (namn(p.pointedAtBy["ligger-i"]) !== "Bar.java,Foo.java") fel.push("paketets filer: " + namn(p.pointedAtBy["ligger-i"]));
-if (namn(p.pointedAtBy["använder"]) !== "b,c") fel.push("paketets användare: " + namn(p.pointedAtBy["använder"]));
-if (p.pointsAt["ligger-i"]) fel.push("paketet skall inte ligga i något");
-if (namn(graphIssues(g, "paket:a")) !== "P-1,P-2") fel.push("paketets ärenden: " + namn(graphIssues(g, "paket:a")));
-if (namn(graphIssues(g, "fil:a/Foo.java")) !== "P-1") fel.push("filens ärenden: " + namn(graphIssues(g, "fil:a/Foo.java")));
-if (namn(graphIssues(g, "paket:b")) !== "P-1") fel.push("grannpaketets ärenden läckte in: " + namn(graphIssues(g, "paket:b")));
+if (!p) bad.push("paket:a saknas");
+if (namn(p.pointedAtBy["ligger-i"]) !== "Bar.java,Foo.java") bad.push("paketets filer: " + namn(p.pointedAtBy["ligger-i"]));
+if (namn(p.pointedAtBy["använder"]) !== "b,c") bad.push("paketets användare: " + namn(p.pointedAtBy["använder"]));
+if (p.pointsAt["ligger-i"]) bad.push("paketet skall inte ligga i något");
+if (namn(graphIssues(g, "paket:a")) !== "P-1,P-2") bad.push("paketets ärenden: " + namn(graphIssues(g, "paket:a")));
+if (namn(graphIssues(g, "fil:a/Foo.java")) !== "P-1") bad.push("filens ärenden: " + namn(graphIssues(g, "fil:a/Foo.java")));
+if (namn(graphIssues(g, "paket:b")) !== "P-1") bad.push("grannpaketets ärenden läckte in: " + namn(graphIssues(g, "paket:b")));
 const f = graphView(g, "fil:a/Foo.java");
-if (namn(f.pointsAt["ligger-i"]) !== "a") fel.push("filens paket: " + namn(f.pointsAt["ligger-i"]));
-if (!graphView(g, "ärende:P-1").pointsAt["nämner"].length) fel.push("ärendet pekar inte på några filer");
-if (graphView(g, "finns-inte")) fel.push("okänt id gav en vy");
-if (graphView({}, "a")) fel.push("tom graf gav en vy");
-console.log(fel.length ? "FEL " + fel.join(" | ") : "OK");
+if (namn(f.pointsAt["ligger-i"]) !== "a") bad.push("filens paket: " + namn(f.pointsAt["ligger-i"]));
+if (!graphView(g, "ärende:P-1").pointsAt["nämner"].length) bad.push("ärendet pekar inte på några filer");
+if (graphView(g, "finns-inte")) bad.push("okänt id gav en vy");
+if (graphView({}, "a")) bad.push("tom graf gav en vy");
+console.log(bad.length ? "FEL " + bad.join(" | ") : "OK");
 """)
             graph_js = fh.name
         graph_run = _sp.run(["node", graph_js], capture_output=True, text=True)
@@ -322,9 +322,9 @@ const fall = [[null, 0], ["[]", 0], ['["ov:stats"]', 1], ['["ov:stats","ov:stats
   ['["ov:stats","view:karta"]', 2], ["trasigt", 0], ['{"a":1}', 0], ['[1,"view:karta"]', 1],
   ['["admin:all","ov:stats;"]', 0], ['["view:"]', 0], ['["ov:stat:jira"]', 1],
   ['["ov:stat:jira","ov:stat:jira"]', 1], ['["ov:stat:JIRA"]', 0], ['["ov:stat:"]', 0]];
-const fel = fall.filter(([raw, n]) => hiddenPrefs(raw).length !== n)
+const bad = fall.filter(([raw, n]) => hiddenPrefs(raw).length !== n)
   .map(([raw, n]) => raw + " -> " + JSON.stringify(hiddenPrefs(raw)));
-console.log(fel.length ? "FEL " + fel.join(" | ") : "OK");
+console.log(bad.length ? "FEL " + bad.join(" | ") : "OK");
 """)
             prefs_js = fh.name
         prefs_run = _sp.run(["node", prefs_js], capture_output=True, text=True)
@@ -344,9 +344,9 @@ const ids = ["a", "b", "c"];
 const fall = [[null, "a,b,c"], ["[]", "a,b,c"], ['["c"]', "c,a,b"], ['["c","c"]', "c,a,b"],
   ['["x","b"]', "b,a,c"], ["trasigt", "a,b,c"], ['{"a":1}', "a,b,c"], ['[1,"b"]', "b,a,c"],
   ['["b","c","a"]', "b,c,a"]];
-const fel = fall.filter(([raw, want]) => orderOf(raw, ids).join(",") !== want)
+const bad = fall.filter(([raw, want]) => orderOf(raw, ids).join(",") !== want)
   .map(([raw, want]) => raw + " -> " + orderOf(raw, ids).join(",") + " (ville " + want + ")");
-console.log(fel.length ? "FEL " + fel.join(" | ") : "OK");
+console.log(bad.length ? "FEL " + bad.join(" | ") : "OK");
 """)
             order_js = fh.name
         order_run = _sp.run(["node", order_js], capture_output=True, text=True)
@@ -435,9 +435,18 @@ console.log(fel.length ? "FEL " + fel.join(" | ") : "OK");
           "panelens palett läggs på flödeskartan")
 
     # Kön och bygget: ett block som ingen renderare når är en tom plats som ser ut som ett
-    # fel, och talen hör i servern (de går att prova), inte i ritningen.
+    # bad, och talen hör i servern (de går att prova), inte i ritningen.
     check('data-ov="needs"' in html and "function renderNeeds()" in html and "renderNeeds();" in html,
           "kön har ett block och ritas på Översikt")
+
+    # Lyssnare hör hemma bland de globala, inte inuti en annan vys ritare: sökningens
+    # koppling låg först i renderChat(), alltså kopplades den när man besökte Agenten --
+    # och fram till dess hände ingenting när man skrev (mätt i webbläsaren).
+    chatt = re.search(r"function renderChat\(\) \{.*?\n\}", html, re.S)
+    check(bool(chatt) and "findInput" not in chatt.group(0),
+          "sökningens lyssnare ligger inte inuti en annan vys ritare")
+    check(html.count("const findInput = document.getElementById") == 1,
+          "sökningens lyssnare kopplas på ett ställe")
     check('answer["needs"] = needs_list(answer)' in server and "def needs_list(" in server,
           "kön räknas i servern ur state-svaret")
     check("def ci_of(" in server and "def ci_state(" in server and "ov:stat:ci" in html,
@@ -447,13 +456,61 @@ console.log(fel.length ? "FEL " + fel.join(" | ") : "OK");
     # den andra hamnar texten i en nod som inte ritas. Importen hade "impFiles" på både
     # filväljaren och etiketten, så raden stod kvar på "inga filer valda" hur många filer
     # man än valde (mätt i webgläsaren). Provet fångar nästa dubbelt använda id.
+    # (Ingen lokal import av re här: i Python blir namnet lokalt i HELA funktionen, och
+    # en rad ovanför som använder det dör med UnboundLocalError.)
     import collections
-    import re as _re
-    idn = _re.findall(r'\bid="([A-Za-z0-9_.:-]+)"', html)
-    dubbla = sorted(k for k, v in collections.Counter(idn).items() if v > 1)
-    check(not dubbla, "inget id används två gånger", ", ".join(dubbla))
+    ids = re.findall(r'\bid="([A-Za-z0-9_.:-]+)"', html)
+    dupes = sorted(k for k, v in collections.Counter(ids).items() if v > 1)
+    check(not dupes, "inget id används två gånger", ", ".join(dupes))
     check('id="impFilesNote"' in html and 'getElementById("impFilesNote").textContent' in html,
           "importens etikett har ett eget id (inputen äger sitt)")
+
+    # Sökningen: en ruta över allt. Funktionen är ren (fråga, state), så den körs i node mot
+    # ett handgjort svar -- tillsammans med EXAKT de parts den använder (board/pickedBoard/
+    # boardItems), för då bevisas att backloggen kommer från samma källa som tablan och inte
+    # från en egen kopia som glider isär.
+    parts = []
+    for pattern in (r"const F = \{[^\n]*\};", r"const board = \(st\) =>[^\n]*\n",
+                    r"const issues = \(st\) =>[^\n]*\n", r"const backlog = \(st\) =>[^\n]*\n",
+                    r"function pickedBoard\(st\) \{.*?\n\}", r"function boardItems\(st\) \{.*?\n\}",
+                    r"function findHits\(q, state\) \{.*?\n\}"):
+        m = re.search(pattern, html, re.S)
+        check(bool(m), "sökningens parts går att läsa: " + pattern[:26])
+        if m:
+            parts.append(m.group(0))
+    if len(parts) == 7:
+        with _tf.NamedTemporaryFile("w", suffix=".js", delete=False, encoding="utf-8") as fh:
+            fh.write("\n".join(parts) + """
+var TEXT = { views: { items: ["Uppgifter", "▤"], settings: ["Inställningar", "⚙"] } };
+const state = { jira: { boards: [{ issues: [{ key: "SCRUM-1", summary: "Byt färg", statusName: "To Do" }],
+                                        backlog: [{ key: "SCRUM-9", summary: "Gammal grej", statusName: "To Do" }] }] },
+                github: { repos: [{ name: "AutoCore", description: "skolprojekt", visibility: "PRIVATE" }],
+                          pullRequests: [{ number: 4, title: "Byt färg i tavlan", url: "u",
+                                           repository: { nameWithOwner: "mig/AutoCore" } }], issues: [] },
+                runs: { runs: [{ key: "SCRUM-101", branch: "godjira/SCRUM-101", ok: false, pr: "" }] },
+                flows: [{ id: "Dv5", name: "AutoCore — flödet" }] };
+const lines = [];
+const t = (namn, ok) => lines.push((ok ? "OK " : "FEL ") + namn);
+const h = (q, villkor) => findHits(q, state).some(villkor);
+t("nyckeln", h("SCRUM-1", v => v.key === "SCRUM-1"));
+t("sammanfattningen", h("färg", v => v.key === "SCRUM-1"));
+t("backloggen (samma källa som tablan)", h("Gammal", v => v.key === "SCRUM-9"));
+t("repot", h("(x", v => false) === false && h("AutoCore", v => v.kind === "repo"));
+t("körningen", h("SCRUM-101", v => v.kind === "run"));
+t("vyn", h("inställ", v => v.kind === "view"));
+t("ärendet går till uppgifterna", (findHits("SCRUM-1", state)[0] || {}).go.view === "items");
+t("en bokstav är ingen fråga", findHits("S", state).length === 0);
+t("taket står vid tjugo", findHits("e", { jira: { boards: [{ issues: Array.from({ length: 30 },
+    (_, i) => ({ key: "K-" + i, summary: "ett ärende" })) }] } }).length <= 20);
+console.log(lines.join("\\n"));
+""")
+            search_js = fh.name
+        search = _sp.run(["node", search_js], capture_output=True, text=True)
+        _os.unlink(search_js)
+        lines = [r for r in search.stdout.strip().splitlines() if r.strip()]
+        bad = [r for r in lines if not r.startswith("OK")]
+        check(len(lines) == 9 and not bad, "sökningen hittar rätt sak och går till rätt ställe",
+              (bad or [search.stderr.strip()[:120]])[0] if (bad or search.stderr.strip()) else "")
     print()
     if failed:
         print("FAILED: " + ", ".join(failed))

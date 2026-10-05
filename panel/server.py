@@ -1802,15 +1802,17 @@ def ci_of(runs: list, branch: str) -> dict:
     Bara huvudgrenen räknas: ett rött bygge på en gren du jobbar i är inte "bygget är
     rött", och en körning som inte är klar är inget svar än.
     """
-    på = [r for r in (runs or []) if not branch or str(r.get("headBranch") or "") == branch]
-    if not på:
+    head = [r for r in (runs or []) if not branch or str(r.get("headBranch") or "") == branch]
+    if not head:
         return {"state": "none", "branch": branch}
-    senaste = max(på, key=lambda r: str(r.get("createdAt") or ""))
-    status, slut = str(senaste.get("status") or ""), str(senaste.get("conclusion") or "")
-    lage = "running" if status != "completed" else ("green" if slut in ("success", "neutral", "skipped") else "red")
-    return {"state": lage, "branch": senaste.get("headBranch") or branch,
-            "workflow": senaste.get("workflowName") or "", "conclusion": slut,
-            "at": senaste.get("createdAt") or "", "url": senaste.get("url") or ""}
+    latest = max(head, key=lambda r: str(r.get("createdAt") or ""))
+    status = str(latest.get("status") or "")
+    conclusion = str(latest.get("conclusion") or "")
+    verdict = "running" if status != "completed" else (
+        "green" if conclusion in ("success", "neutral", "skipped") else "red")
+    return {"state": verdict, "branch": latest.get("headBranch") or branch,
+            "workflow": latest.get("workflowName") or "", "conclusion": conclusion,
+            "at": latest.get("createdAt") or "", "url": latest.get("url") or ""}
 
 
 def ci_runs(full: str) -> list:
@@ -1829,20 +1831,20 @@ def ci_state(links: dict, login: str) -> dict:
     """Byggstatus per kopplat repo."""
     if demo():
         return dict(DEMO_CI, ok=True)
-    repon = [str((l or {}).get("repo") or "") for l in ((links or {}).get("links") or [])]
-    repon = [r for r in dict.fromkeys(repon) if r][:3]
-    if not repon:
+    names = [str((l or {}).get("repo") or "") for l in ((links or {}).get("links") or [])]
+    names = [n for n in dict.fromkeys(names) if n][:3]
+    if not names:
         return {"ok": True, "repos": [], "note": "ingen koppling"}
     if not login:
         return {"ok": False, "repos": [], "error": "ingen GitHub-inloggning"}
-    ut = []
-    for namn in repon:
-        full = namn if "/" in namn else login + "/" + namn
-        gren = cached("ci-gren:" + full, lambda f=full: ci_branch(f), ttl=1800)
-        ut.append(dict(ci_of(cached("ci:" + full, lambda f=full: ci_runs(f), ttl=CI_TTL),
-                             gren), repo=full))
-    return {"ok": True, "repos": ut,
-            "error": "" if any(r.get("state") != "none" for r in ut) else "inga byggen hittades"}
+    out = []
+    for name in names:
+        full = name if "/" in name else login + "/" + name
+        branch = cached("ci-branch:" + full, lambda f=full: ci_branch(f), ttl=1800)
+        out.append(dict(ci_of(cached("ci:" + full, lambda f=full: ci_runs(f), ttl=CI_TTL),
+                              branch), repo=full))
+    return {"ok": True, "repos": out,
+            "error": "" if any(r.get("state") != "none" for r in out) else "inga byggen hittades"}
 
 
 # ---------------------------------------------------------------- kön
@@ -1909,17 +1911,18 @@ def needs_list(state: dict, limit: int = 4) -> list:
 
     # 2. Ärenden som bär ditt namn och inte är klara, och de som inte har någon alls --
     #    den som ingen äger väntar på ett beslut, inte på arbete.
-    öppna = [i for i in issues if (i.get("statusCategory") or "") != "done"]
-    mina = sorted([i for i in öppna if is_mine(i, account)], key=lambda i: -(i.get("updatedMs") or 0))
-    if mina:
-        needs.append({"kind": "issues", "level": "info", "count": len(mina),
-                      "keys": [str(i.get("key") or "") for i in mina[:limit]],
+    open_items = [i for i in issues if (i.get("statusCategory") or "") != "done"]
+    mine = sorted([i for i in open_items if is_mine(i, account)],
+                  key=lambda i: -(i.get("updatedMs") or 0))
+    if mine:
+        needs.append({"kind": "issues", "level": "info", "count": len(mine),
+                      "keys": [str(i.get("key") or "") for i in mine[:limit]],
                       "label": "ärenden hos dig", "view": "items"})
-    ingen = sorted([i for i in öppna if not (i.get("assigneeName") or i.get("assigneeEmail"))],
-                   key=lambda i: -(i.get("updatedMs") or 0))
-    if ingen:
-        needs.append({"kind": "unowned", "level": "info", "count": len(ingen),
-                      "keys": [str(i.get("key") or "") for i in ingen[:limit]],
+    unowned = sorted([i for i in open_items if not (i.get("assigneeName") or i.get("assigneeEmail"))],
+                     key=lambda i: -(i.get("updatedMs") or 0))
+    if unowned:
+        needs.append({"kind": "unowned", "level": "info", "count": len(unowned),
+                      "keys": [str(i.get("key") or "") for i in unowned[:limit]],
                       "label": "utan ansvarig", "view": "items"})
 
     # 3. PR:er och ärenden som ligger öppna på ditt GitHub-konto.

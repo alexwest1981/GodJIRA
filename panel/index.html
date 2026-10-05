@@ -359,6 +359,15 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
        i stället för att flytta ned till nästa rad. */
     flex-wrap: wrap; row-gap: 8px;
   }
+  /* Sökningen: rutan i huvudet med listan hängande under. Raderna och luften lånas av
+     appens .wl/.r-block -- bara behållaren och hovringen är ny. */
+  .find { position: relative; }
+  .find .inp { width: 230px; }
+  .findList { position: absolute; top: 34px; left: 0; z-index: 30; width: 470px; max-width: 80vw;
+    background: var(--card); border: 1px solid var(--line-3); border-radius: 9px;
+    box-shadow: var(--shadow); overflow: hidden; }
+  .findList .r { cursor: pointer; padding: 7px 11px; }
+  .findList .r:hover { background: var(--card-hi); }
   .crumbs { display: flex; align-items: center; gap: 7px; font-size: 13px; }
   .crumbs .sep { color: var(--muted); }
   .crumbs b { font-weight: 600; }
@@ -631,6 +640,10 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
 <main>
   <header class="top">
     <div class="crumbs" id="crumbs"></div>
+    <div class="find">
+      <input class="inp" id="findInput" type="search" autocomplete="off" aria-label="sök">
+      <div class="findList" id="findList" hidden></div>
+    </div>
     <span class="grow"></span>
     <button class="ghost warn" id="tokenWarn" hidden title="Jira-nyckeln"></button>
     <div class="seg" id="seg"></div>
@@ -976,6 +989,7 @@ const TEXT = {
   allTasks: "Alla uppgifter", sources: "Jira + GitHub",
   agentWindow: "senaste {days} dygnen", sessions: "sessioner", tokens: "tokens", cost: "kostnad",
   calls: "anrop", toolCalls: "verktygsanrop", messages: "meddelanden",
+  findNone: "inget hittat",
   ciState: { green: "grön", red: "röd", running: "kör", none: "inget bygge" },
   run: "kör", runGoing: "körningen går", runDone: "körningen är klar",
   runFailed: "körningen gick inte igenom", runTooltip: "låt agenten göra ärendet i en egen worktree",
@@ -1041,6 +1055,8 @@ async function loadStrings(code) {
     STRINGS = data.strings || {};
     LANGS = data.available || [];
     buildKeys();
+    const fält = document.getElementById("findInput");
+    if (fält) fält.placeholder = t("sök allt — ärende, repo, körning, vy");
   } catch (e) {
     STRINGS = {};   // utan tabell står svenskan kvar: sämre, men inte trasigt
   }
@@ -1171,20 +1187,23 @@ function avatar(name, small) {
 }
 
 /* --------------------------------------------------------------- data ---- */
-const board = () => (STATE.jira.boards || [])[0] || null;
-const issues = () => (board() || {}).issues || [];
-const backlog = () => (board() || {}).backlog || [];
+// Hjälparna tar ett state-argument med flit (annars STATE): sökningen måste kunna fråga
+// "vad finns i DET HÄR svaret" när den provas i node, och då finns ingen global STATE.
+const board = (st) => (((st || STATE).jira || {}).boards || [])[0] || null;
+const issues = (st) => (board(st) || {}).issues || [];
+const backlog = (st) => (board(st) || {}).backlog || [];
 // The board endpoint keeps the settled work and the backlog keeps the live work
 // (no active sprint). Same keys never appear in both -- measured 0 of 93+38 -- so
 // the board is shown the way the flow sees it.
 // Högen Uppgifter arbetar med. Projektet kommer ur väljaren -- man kan ha flera
 // Jira-kopplingar samtidigt -- och utan val är det standardtavlan, som förut.
-function pickedBoard() {
-  if (!F.project) return board();
-  return (((STATE || {}).jira || {}).boards || []).find(b => b && b.projectKey === F.project) || board();
+function pickedBoard(st) {
+  const src = st || STATE;
+  if (!F.project) return board(src);
+  return (((src || {}).jira || {}).boards || []).find(b => b && b.projectKey === F.project) || board(src);
 }
-function boardItems() {
-  const b = pickedBoard() || {};
+function boardItems(st) {
+  const b = pickedBoard(st) || {};
   const seen = new Set();
   return (b.issues || []).concat(b.backlog || []).filter(i => !seen.has(i.key) && seen.add(i.key));
 }
@@ -1878,6 +1897,97 @@ function flowNodeShow(key) {
 // ett uppslag i taget. Ett paket visar sina filer, en fil vilka ärenden som nämner den, ett
 // ärende vilka filer det rör. Det är djupet, och det behöver ingen egen tavla.
 const GRAPH = { repo: null, data: null, error: "" };
+/* ------------------------------------------------------------- sökningen --- */
+// En ruta över allt panelen REDAN har: ärendena (tavlan + backloggen, samma källa som
+// tablan), GitHub-posterna, repon, körningarna, flödena och vyerna. Inga nya anrop --
+// allt ligger i svaret, så sökningen kostar ingenting och kan inte hinna ikapp sig själv.
+// Sajterna står utanför: de kommer ur sitt eget anrop (/api/sites), inte ur state.
+// Ren funktion (fråga, state), så test_wiring kan köra den i node mot ett handgjort svar.
+const FIND = { hits: [], none: false };
+
+function findHits(q, state) {
+  const needle = (q || "").trim().toLowerCase();
+  if (needle.length < 2) return [];
+  const hits = [], seen = new Set();
+  const add = (kind, key, title, sub, go) => {
+    const id = kind + "|" + key;
+    if (seen.has(id) || hits.length >= 20) return;
+    seen.add(id);
+    hits.push({ kind: kind, key: String(key || ""), title: String(title || ""),
+                sub: String(sub || ""), go: go || {} });
+  };
+  const hasText = (...parts) => parts.some(d => String(d || "").toLowerCase().includes(needle));
+  const repoName = p => ((p || {}).repository || {}).nameWithOwner || ((p || {}).repository || {}).name || "";
+
+  boardItems(state).forEach(i => {
+    if (hasText(i.key, i.summary)) add("issue", i.key, i.summary, i.statusName,
+                                       { view: "items", filter: q.trim() });
+  });
+  const github = state.github || {};
+  (github.pullRequests || []).forEach(p => {
+    if (hasText("#" + p.number, p.title, repoName(p)))
+      add("pr", "#" + p.number, p.title, repoName(p), { url: p.url });
+  });
+  (github.issues || []).forEach(p => {
+    if (hasText("#" + p.number, p.title, repoName(p)))
+      add("gh", "#" + p.number, p.title, repoName(p), { url: p.url });
+  });
+  (github.repos || []).forEach(r => {
+    if (hasText(r.name, r.description)) add("repo", r.name, r.description, r.visibility, { repo: r.name });
+  });
+  ((state.runs || {}).runs || []).forEach(r => {
+    if (hasText(r.key, r.repo, r.branch))
+      add("run", r.key, r.branch || r.repo, r.pr ? "PR" : (r.ok === false ? "gick inte igenom" : ""),
+          { view: "overview" });
+  });
+  (state.flows || []).forEach(f => {
+    if (hasText(f.name, f.id, f.file)) add("flow", f.name || f.id, f.name || f.file, "flöde", { map: "flow" });
+  });
+  Object.keys(TEXT.views).forEach(v => {
+    if ((TEXT.views[v][0] || "").toLowerCase().includes(needle)) add("view", v, TEXT.views[v][0], "", { view: v });
+  });
+  return hits;
+}
+
+// Ett klick (eller Enter) går DIT fyndet hör: en adress öppnas, ett repo öppnas, ett ärende
+// visas -- och filtren nollas på vägen, för ett aktivt filter skulle kunna gömma raden man
+// just sökte fram, och då ser sökningen trasig ut.
+function findGo(go) {
+  if (!go) return;
+  if (go.url) { window.open(go.url, "_blank", "noopener"); return; }
+  if (go.repo) { show("repos"); repoOpen(go.repo); return; }
+  if (go.map) { location.hash = "#karta?kalla=" + encodeURIComponent(go.map); show(readHash()); return; }
+  if (go.view === "items") {
+    // Ett aktivt filter eller en vald hög skulle kunna gömma raden man just sökte fram.
+    F.pool = ""; F.scope = "all"; F.prio = new Set();
+    show("items");
+    document.getElementById("filter").value = go.filter || "";
+    render();
+    return;
+  }
+  show(go.view || "overview");
+}
+
+function renderFind() {
+  const input = document.getElementById("findInput"), list = document.getElementById("findList");
+  if (!input || !list) return;
+  const query = input.value;
+  FIND.hits = findHits(query, STATE || {});
+  FIND.none = query.trim().length > 1 && !FIND.hits.length;
+  if (!FIND.hits.length && !FIND.none) { list.hidden = true; list.innerHTML = ""; return; }
+  list.innerHTML = '<div class="wl">' + (FIND.hits.length
+    ? FIND.hits.map((h, i) => '<div class="r" data-find="' + i + '"><span class="key">' + esc(h.key) + "</span>" +
+        '<span class="t">' + esc(h.title) + "</span>" +
+        (h.sub ? '<span class="tside">' + esc(h.sub) + "</span>" : "") + "</div>").join("")
+    : '<div class="r"><span class="t meta">' + esc(TEXT.findNone) + "</span></div>") + "</div>";
+  list.hidden = false;
+}
+
+function findClose() {
+  const list = document.getElementById("findList");
+  if (list) { list.hidden = true; list.innerHTML = ""; }
+}
+
 const GRAF = { id: "", expand: false, hist: [] };
 
 async function graphOf(repo) {
@@ -3058,12 +3168,12 @@ function runNote() {
   const box = document.getElementById("runNote");
   if (!box) return;
   if (RUN.state === "idle") { box.hidden = true; box.innerHTML = ""; return; }
-  const min = Math.floor(RUN.secs / 60), sec = RUN.secs % 60;
-  const klocka = min ? min + " min " + sec + " s" : sec + " s";
+  const minutes = Math.floor(RUN.secs / 60), seconds = RUN.secs % 60;
+  const clock = minutes ? minutes + " min " + seconds + " s" : seconds + " s";
   box.hidden = false;
   box.innerHTML = RUN.state === "running"
     ? '<span class="spin" style="width:11px;height:11px;display:inline-block"></span> ' +
-      esc(TEXT.runGoing) + ' <span class="key">' + esc(RUN.key) + "</span> · " + klocka
+      esc(TEXT.runGoing) + ' <span class="key">' + esc(RUN.key) + "</span> · " + clock
     : RUN.state === "done"
       ? '<span class="okdot">✓</span> ' + esc(TEXT.runDone) + ' <span class="key">' + esc(RUN.key) +
         "</span> · " + esc(RUN.tail) + (RUN.error ? " · " + esc(RUN.error) : "")
@@ -3071,24 +3181,25 @@ function runNote() {
 }
 
 async function runPoll() {
-  const varIgång = RUN.state === "running";
+  const wasRunning = RUN.state === "running";
   try {
-    const svar = await fetch("/api/work", { cache: "no-store" });
-    const d = await svar.json();
-    if (d.state === "running") {
-      RUN.state = "running"; RUN.key = d.key || RUN.key; RUN.secs = d.seconds || RUN.secs + 5;
+    const answer = await (await fetch("/api/work", { cache: "no-store" })).json();
+    if (answer.state === "running") {
+      RUN.state = "running"; RUN.key = answer.key || RUN.key;
+      RUN.secs = answer.seconds || RUN.secs + 5;
       runNote();
       clearTimeout(RUN.timer);
       RUN.timer = setTimeout(runPoll, 5000);
       return;
     }
-    if (d.state === "done" || d.state === "failed") {
-      RUN.state = d.state; RUN.key = d.key || RUN.key; RUN.error = d.error || "";
-      RUN.tail = (d.commits || 0) > 0
-        ? d.commits + " " + TEXT.changes + (d.pr ? " · PR" : "")
+    if (answer.state === "done" || answer.state === "failed") {
+      RUN.state = answer.state; RUN.key = answer.key || RUN.key;
+      RUN.error = answer.error || "";
+      RUN.tail = (answer.commits || 0) > 0
+        ? answer.commits + " " + TEXT.changes + (answer.pr ? " · PR" : "")
         : TEXT.noChange;
       runNote();
-      if (varIgång) load(true);      // Körningar-kortet fick en ny rad
+      if (wasRunning) load(true);      // Körningskortet fick en ny rad
       return;
     }
     RUN.state = "idle"; runNote();
@@ -3101,11 +3212,11 @@ async function runStart(key) {
   if (RUN.state === "running") return;
   RUN.state = "running"; RUN.key = key; RUN.secs = 0; runNote();
   try {
-    const svar = await fetch("/api/work", { method: "POST",
-      headers: { "content-type": "application/json" }, body: JSON.stringify({ key: key }) });
-    const d = await svar.json();
-    if (!d.ok) { RUN.state = "failed"; RUN.error = d.error || ""; runNote(); return; }
-    RUN.key = d.key || key;
+    const answer = await (await fetch("/api/work", { method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ key: key }) })).json();
+    if (!answer.ok) { RUN.state = "failed"; RUN.error = answer.error || ""; runNote(); return; }
+    RUN.key = answer.key || key;
     clearTimeout(RUN.timer);
     RUN.timer = setTimeout(runPoll, 2000);
   } catch (err) {
@@ -3999,10 +4110,10 @@ function renderChat() {
   renderChat.wired = true;
   // Kön: en rad öppnar det den handlar om (PR-adressen om den har en, annars vyn).
   document.getElementById("needsBox").addEventListener("click", e => {
-    const rad = e.target.closest("[data-need]");
-    if (!rad) return;
-    if (rad.dataset.url) { window.open(rad.dataset.url, "_blank", "noopener"); return; }
-    if (rad.dataset.need) show(rad.dataset.need);
+    const row = e.target.closest("[data-need]");
+    if (!row) return;
+    if (row.dataset.url) { window.open(row.dataset.url, "_blank", "noopener"); return; }
+    if (row.dataset.need) show(row.dataset.need);
   });
   document.getElementById("chatSend").addEventListener("click", chatSend);
   document.getElementById("chatClear").addEventListener("click", () => {
@@ -4148,9 +4259,9 @@ function renderNeeds() {
   const panel = box.closest(".panel");
   const rows = (STATE && STATE.needs) || [];
   if (!rows.length) { panel.hidden = true; return; }
-  const antal = rows.reduce((n, r) => n + (r.count > 1 ? r.count : 1), 0);
+  const total = rows.reduce((sum, r) => sum + (r.count > 1 ? r.count : 1), 0);
   panel.hidden = false;
-  document.getElementById("needsMeta").textContent = antal + (antal === 1 ? " sak" : " saker");
+  document.getElementById("needsMeta").textContent = total + (total === 1 ? " sak" : " saker");
   box.innerHTML = '<div class="wl">' + rows.map(n =>
     '<div class="r need ' + esc(n.level || "info") + '" data-need="' + esc(n.view || "") + '"' +
     (n.url ? ' data-url="' + esc(n.url) + '"' : "") + '>' +
@@ -4519,6 +4630,31 @@ document.getElementById("impProposal").addEventListener("change", e => {
   const i = Number(box.dataset.keep);
   if (box.checked) IMP.keep.add(i); else IMP.keep.delete(i);
   renderImport();
+});
+// Sökningen: rutan i huvudet letar i det panelen redan har och går dit fyndet hör.
+// Här, bland de globala lyssnarna -- låg den inuti renderChat() kopplades den först när
+// man besökt Agenten, och en sökruta som ingenting händer i ser trasig ut (mätt).
+// (Platshållaren sätts i loadStrings -- markup-attribut översätts inte av translateTree,
+// som bara går på textnoder.)
+const findInput = document.getElementById("findInput");
+findInput.addEventListener("input", renderFind);
+findInput.addEventListener("focus", renderFind);
+findInput.addEventListener("blur", () => setTimeout(findClose, 120));   // hinner klicka
+findInput.addEventListener("keydown", e => {
+  if (e.key === "Escape") { findInput.value = ""; findClose(); findInput.blur(); }
+  else if (e.key === "Enter" && FIND.hits.length) {
+    const h = FIND.hits[0];
+    findInput.value = ""; findClose(); findGo(h.go);
+  }
+});
+// mousedown, inte click: blur hinner före click, och då är listan redan stängd.
+document.getElementById("findList").addEventListener("mousedown", e => {
+  const row = e.target.closest("[data-find]");
+  if (!row) return;
+  e.preventDefault();
+  const h = FIND.hits[Number(row.dataset.find)];
+  findInput.value = ""; findClose();
+  if (h) findGo(h.go);
 });
 document.getElementById("filter").addEventListener("input", render);
 // Sökningen filtrerar raderna i sidofältet direkt -- ingen omritning, så markören
