@@ -450,6 +450,13 @@ console.log(bad.length ? "FEL " + bad.join(" | ") : "OK");
           "sökningens lyssnare kopplas på ett ställe")
     check('answer["needs"] = needs_list(answer)' in server and "def needs_list(" in server,
           "kön räknas i servern ur state-svaret")
+    check('id="impTeamPeople"' in html and 'id="impTeamRoles"' in html
+          and 'id="impTeamWeeks"' in html and 'data-act="imp-team-save"' in html
+          and "def team_save(payload: dict)" in server and '"/api/team": team_save' in server,
+          "teamet går att ange: antal, roller och sprintlängd, och sparas i panelens fil")
+    check('"--team-people"' in server and '"--team-roles"' in server
+          and '"team": pool.submit(team_read)' in server,
+          "teamet följer med varje körning in i motorn")
     check('id="impLog"' in html and "function impEvent(line)" in html
           and "stream: true }) });" in html and "def import_stream(payload: dict)" in server
           and 'handler is import_parse and payload.get("stream")' in server,

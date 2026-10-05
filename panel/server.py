@@ -2047,6 +2047,8 @@ def state() -> dict:
                     "github": pool.submit(github_state),
                     "project": pool.submit(project_of_the_link, flow),
                     "automation": pool.submit(automation_state),
+                    # Teamet är panelens egen lilla inställning: ingen cache, ingen motor.
+                    "team": pool.submit(team_read),
                     "links": pool.submit(links_state),
                     "token": pool.submit(token_read),
                     "journal": pool.submit(journal, 10),
@@ -2074,6 +2076,48 @@ def state() -> dict:
         answer["needs"] = needs_list(answer)
         return answer
     return dict(cached("state", build))
+
+
+TEAM_KEYS = ("people", "roles", "sprint_weeks")
+
+
+def team_read() -> dict:
+    """Teamet ur panelens egen fil: antal, roller och sprintlängd.
+
+    Panelen äger fälten (de skrivs i samma 0600-fil som resten av panelens inställningar)
+    och skickar dem med varje körning. Motorn kan samma sak ur sin egen konfiguration, så
+    den som kör CLI:t behöver inte panelen -- och tvärtom.
+    """
+    try:
+        data = json.loads(PANEL_KONFIG.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    team = (data or {}).get("team") if isinstance(data, dict) else {}
+    return {k: team.get(k) for k in TEAM_KEYS if team.get(k) not in (None, "")} if isinstance(team, dict) else {}
+
+
+def team_save(payload: dict) -> tuple:
+    """Spara teamet. Siffror kontrolleras (de hamnar i argv), rollerna kapas."""
+    def heltal(värde, tak: int):
+        text = str(värde or "").strip()
+        return int(text) if text.isdigit() and 0 <= int(text) <= tak else None
+
+    people = heltal(payload.get("people"), 99)
+    veckor = heltal(payload.get("sprint_weeks"), 52)
+    if people is None or veckor is None:
+        return 400, {"ok": False, "error": "antal personer och sprintveckor skall vara siffror"}
+    team = {"people": people, "roles": str(payload.get("roles") or "").strip()[:200],
+            "sprint_weeks": veckor}
+    try:
+        data = json.loads(PANEL_KONFIG.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    data = data if isinstance(data, dict) else {}
+    data["team"] = team
+    PANEL_KONFIG.parent.mkdir(parents=True, exist_ok=True)
+    PANEL_KONFIG.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    PANEL_KONFIG.chmod(0o600)
+    return 200, {"ok": True, "team": team}
 
 
 def import_parse(payload: dict, on_line=None) -> tuple[int, dict]:
@@ -2128,6 +2172,17 @@ def import_parse(payload: dict, on_line=None) -> tuple[int, dict]:
         # varv hos agenten. Ramen följer panelens språk, uppgifterna kundens eget.
         sheet = Path(folder) / "plan.pdf"
         args += ["--pdf", str(sheet), "--lang", panel_language("")]
+        # Teamet: siffrorna är kontrollerade (de hamnar i argv), rollerna kapas. Utan
+        # team blir raden i prompten tom -- motorn hittar inte på ett team åt någon.
+        team = payload.get("team") if isinstance(payload.get("team"), dict) else {}
+        for nyckel, flagga, tak in (("people", "--team-people", 99),
+                                    ("sprint_weeks", "--sprint-weeks", 52)):
+            text = str(team.get(nyckel) or "").strip()
+            if text.isdigit() and 0 < int(text) <= tak:
+                args += [flagga, str(int(text))]
+        roller = str(team.get("roles") or "").strip()[:200]
+        if roller:
+            args += ["--team-roles", roller]
         for path in paths:
             args += ["--context", str(path)]
         data = {}
@@ -2421,6 +2476,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         handler = {"/api/import": import_parse, "/api/import/apply": import_apply,
                    "/api/link": link_set, "/api/automation": automation_report,
+                   "/api/team": team_save,
                    "/api/scan": scan_start, "/api/work": run_start, "/api/token": token_save,
                    "/api/github": github_save, "/api/language": language_save,
                    "/api/admin/people": admin_people, "/api/chat": chat_ask,

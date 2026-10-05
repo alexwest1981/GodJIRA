@@ -747,6 +747,13 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
             <span class="grow"></span>
           </div>
           <div class="improw">
+            <label class="meta" for="impTeamPeople" style="min-width:74px">teamet</label>
+            <input class="inp" id="impTeamPeople" type="number" min="0" max="99" placeholder="antal" style="width:70px">
+            <input class="inp" id="impTeamRoles" type="text" maxlength="200" placeholder="roller, t.ex. en på UI, två på backend" style="flex:1; min-width:160px">
+            <input class="inp" id="impTeamWeeks" type="number" min="1" max="52" placeholder="sprintveckor" style="width:110px">
+            <button class="chip" data-act="imp-team-save" id="impTeamSave">spara teamet</button>
+          </div>
+          <div class="improw">
             <label class="chip impfile"><input type="file" id="impFiles" multiple hidden accept=".pdf,.docx,.odt,.xlsx,.pptx,.txt,.md,.csv,.json,.xml,.rst,.log,.html,.htm">välj filer</label>
             <span class="meta" id="impFilesNote">inga filer valda</span>
             <span class="grow"></span>
@@ -4009,6 +4016,14 @@ function renderImport() {
     log.textContent = IMP.log.join("\n");
     log.scrollTop = log.scrollHeight;
   }
+  // Teamet: panelens egen inställning. Bara tomma fält fylls -- en osparad ändring skall
+  // inte skrivas över av en omritning (kryssrutorna ritar om vyn).
+  const team = (STATE && STATE.team) || {};
+  for (const [id, varde] of [["impTeamPeople", team.people], ["impTeamRoles", team.roles],
+                             ["impTeamWeeks", team.sprint_weeks]]) {
+    const el = document.getElementById(id);
+    if (el && !el.value && varde !== undefined && varde !== null) el.value = varde;
+  }
   const note = document.getElementById("impNote");
   note.className = "meta" + (IMP.note ? (IMP.bad ? " err" : "") : "");
   note.textContent = IMP.note ||
@@ -4123,6 +4138,9 @@ async function impParse() {
     // verktygsanrop, förslaget), så väntan syns i terminalen i stället för att bara räknas.
     const r = await fetch("/api/import", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ wish, files, repo: (document.getElementById("impRepo") || {}).value || "",
+                             team: { people: (document.getElementById("impTeamPeople") || {}).value || "",
+                                     roles: (document.getElementById("impTeamRoles") || {}).value || "",
+                                     sprint_weeks: (document.getElementById("impTeamWeeks") || {}).value || "" },
                              stream: true }) });
     if (!r.ok || !r.body) throw new Error("importen gick inte fram");
     const reader = r.body.getReader();
@@ -4745,6 +4763,24 @@ function renderTheme() {
     `<button class="chip ${now === mode ? "on" : ""}" data-mode="${mode}">${esc(label)}</button>`).join("") + `</div>`;
 }document.getElementById("impRepo").addEventListener("change", () => {
   document.getElementById("impTarget").textContent = impTargetText();
+});
+// Teamet sparas i panelens egen fil. Utan det vet fördelningen inte hur många som skall
+// göra jobbet: prompten säger då inget om teamet i stället för att gissa.
+document.getElementById("impTeamSave").addEventListener("click", async () => {
+  const kropp = { people: (document.getElementById("impTeamPeople") || {}).value || "",
+                  roles: (document.getElementById("impTeamRoles") || {}).value || "",
+                  sprint_weeks: (document.getElementById("impTeamWeeks") || {}).value || "" };
+  try {
+    const r = await fetch("/api/team", { method: "POST", headers: { "content-type": "application/json" },
+                                         body: JSON.stringify(kropp) });
+    const svar = await r.json();
+    if (!svar.ok) throw new Error(svar.error || "gick inte att spara");
+    STATE.team = svar.team;
+    IMP.note = "teamet sparat: " + svar.team.people + " personer, sprint " + svar.team.sprint_weeks + " veckor";
+  } catch (fel) {
+    IMP.note = "teamet kunde inte sparas: " + ((fel && fel.message) || fel);
+  }
+  renderImport();
 });
 document.getElementById("impFiles").addEventListener("change", e => {
   IMP.files = [...e.target.files]; IMP.note = ""; renderImport();

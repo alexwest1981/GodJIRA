@@ -256,13 +256,14 @@ The repository text is what the code already does. Read it before you propose an
 is already in the code is not work, and a description that names the files to touch is worth ten
 that do not. Say in the description which files the work lands in, taken from the repository text.
 {context}
-Only what the wish actually asks for. Do not invent scope, at most {limit} issues.
+Only what the wish actually asks for. Do not invent scope, at most {limit} issues. Every issue's
+description says either which existing board key it builds on, or that the work is new.
 Issue types that exist in this project: {types}.
 Shape the work as scrum: one epic (type "Epic") per coherent piece of the wish, with its tasks
 under it. A task names its epic in "epic" -- exactly the epic's summary. A wish that is one small
 thing needs no epic at all. Put every epic before its own tasks in the array.
 Spread the issues over the sprints: every issue gets a "sprint" number, and sprint 1 is what the
-team builds first. Keep a sprint to what the team gets through in two weeks, keep work that depends
+team builds first. Keep a sprint to what the team gets through in one sprint, keep work that depends
 on other work in the same sprint as it or a later one, and never use more than {sprints} sprints.
 
 Write the way the team talks, not the way a brochure does: plain words, active voice, short
@@ -1895,6 +1896,87 @@ def plan_repo_dir(args) -> str:
     return local_clone(name) if name else ""
 
 
+DEFAULT_TEAM = {"people": 0, "roles": "", "sprint_weeks": 2}
+
+
+def team_of(config: dict, args=None) -> dict:
+    """Teamet: hur många, vilka roller, och hur lång en sprint är.
+
+    Ur användarens konfiguration (config.json), med körningens argument överst. Utan ett
+    team blir raden tom och prompten säger ingenting om det -- en påhittad gissning om
+    teamet vore värre än tystnad, för då planeras det för ett team ingen har.
+    """
+    team = dict(DEFAULT_TEAM)
+    saved = (config or {}).get("team") or {}
+    if isinstance(saved, dict):
+        for key in ("people", "roles", "sprint_weeks"):
+            if saved.get(key) not in (None, ""):
+                team[key] = saved[key]
+    for attr, key in (("team_people", "people"), ("team_roles", "roles"),
+                      ("sprint_weeks", "sprint_weeks")):
+        value = getattr(args, attr, None) if args is not None else None
+        if value not in (None, "", 0):
+            team[key] = value
+    try:
+        team["people"] = int(team["people"] or 0)
+    except (TypeError, ValueError):
+        team["people"] = 0
+    try:
+        team["sprint_weeks"] = int(team["sprint_weeks"] or 2)
+    except (TypeError, ValueError):
+        team["sprint_weeks"] = 2
+    team["roles"] = str(team["roles"] or "").strip()
+    return team
+
+
+def team_text(team: dict) -> str:
+    """Teamet som en rad i prompten (engelska: prompten är engelsk). Tom utan team."""
+    people, roles = (team or {}).get("people") or 0, (team or {}).get("roles") or ""
+    veckor = (team or {}).get("sprint_weeks") or 2
+    if not people and not roles:
+        return ""
+    vilka = "The team is {} people".format(people) if people else "The team"
+    if roles:
+        vilka += " ({})".format(roles)
+    return ("{}: the plan has to fit what THIS team gets through in a sprint of {} weeks -- "
+            "not what a bigger or faster team would. Count the work the same way the team "
+            "does.".format(vilka, veckor))
+
+
+def board_text(client_, project: str, limit: int = 200) -> tuple[str, str, int]:
+    """Vad som redan står på tavlan: (texten till prompten, varför den är tom, antalet).
+
+    Utan det här hänger jämförelsen med det befintliga på att agenten själv råkar anropa
+    tavlan. Med det står de befintliga korten i prompten, och varje förslag kan säga vilket
+    kort det bygger på -- eller att det är nytt. Felet lämnas tillbaka i stället för att
+    sväljas: en tom tavla och en trasig sökning ser annars likadana ut.
+    """
+    if not project:
+        return "", "inget projekt att läsa tavlan för", 0
+    try:
+        # Samma väg som resten av motorn (find): den kodar JQL:en och använder
+        # /rest/api/3/search/jql -- Atlassians gamla /rest/api/3/search svarar 410 Gone
+        # sedan migreringen (mätt 2026-10-05), och en rå JQL i URL:en ger InvalidURL.
+        issues = find(client_, "project={} ORDER BY key ASC".format(project), limit)
+    except Exception as exc:  # noqa: BLE001 -- tavlan är sammanhang, inte ett krav
+        return "", "{}: {}".format(type(exc).__name__, str(exc)[:160]), 0
+    rader = []
+    for issue in issues:
+        fields = issue.get("fields") or {}
+        rader.append("{} [{}] {}".format(
+            issue.get("key") or "?", (fields.get("status") or {}).get("name") or "",
+            str(fields.get("summary") or "")[:110]))
+    if not rader:
+        return "", "", 0
+    # /search/jql ger högst en sida (100) -- står det "100" utan förbehåll ser tavlan
+    # mindre ut än den är, och det är samma sorts tysta underdrift som ett klippt underlag.
+    fler = " (the first page of {}, there may be more)".format(len(rader)) \
+        if len(rader) >= min(limit, 100) else ""
+    return ("{} issue(s) already on the board{} -- build on these where they fit, and do not "
+            "propose the same work again:\n".format(len(rader), fler) + "\n".join(rader),
+            "", len(rader))
+
+
 def link_context(client_, args) -> str:
     """Jira-sidan av länken, som text till agenten. Tom när inget är länkat."""
     link = link_for(getattr(args, "repo_name", "") or repo_slug_of_dir(getattr(args, "repo", "") or ""))
@@ -1916,14 +1998,24 @@ def link_context(client_, args) -> str:
     return "\n".join(parts) + "\n"
 
 
-def build_context(docs_text: str, repo_text: str, notes, link_text: str = "") -> str:
-    """Kontextblocket i prompten. Tomt när inget underlag gavs."""
-    if not (docs_text or repo_text or link_text):
+def build_context(docs_text: str, repo_text: str, notes, link_text: str = "",
+                  team_line: str = "", board_line: str = "") -> str:
+    """Kontextblocket i prompten. Tomt när inget underlag gavs.
+
+    Teamet och tavlan hör hit: det är sammanhanget fördelningen skall passa in i, och båda
+    kommer ur samma ställe som resten -- inga nya platshållare i prompten, som hade krävt
+    att varje anropare kom ihåg dem.
+    """
+    if not (docs_text or repo_text or link_text or team_line or board_line):
         return ""
     parts = ["Context for the project as it stands — read it before you split the wish:",
              "build on what is already there, and let each description say what it rests on."]
+    if team_line:
+        parts += ["", team_line]
     if link_text:
         parts += ["", "The Jira side the repo is tied to:", "", link_text]
+    if board_line:
+        parts += ["", board_line]
     if docs_text:
         parts += ["", "Papers handed in with the wish:", "", docs_text]
     if repo_text:
@@ -3559,11 +3651,22 @@ def cmd_plan(client_, args) -> int:
             say(args, {"ok": False, "error": message}, ["jira_flow: " + message])
             return 2
     else:
-        # Agenten får hela underlaget: önskemålet, dokumenten och repot.
+        # Agenten får hela underlaget: önskemålet, dokumenten, repot, teamet och tavlan.
+        # Teamet: antal, roller och sprintlängd -- ur konfigurationen, med argumenten överst.
+        team = team_of(load_flow_config(), args)
+        step(team_text(team) or "inget team angett — fördelningen vet inte hur många som skall göra det")
+        # Tavlan: de befintliga korten som text, så jämförelsen inte hänger på att agenten
+        # själv råkar anropa tavlan.
+        på_tavlan, tavlefel, tavlantal = board_text(client_, project)
+        if på_tavlan:
+            step("tavlan: {} befintliga ärenden lästa".format(tavlantal))
+        elif tavlefel:
+            step("tavlan kunde inte läsas: " + tavlefel)
         prompt = PLAN_PROMPT.format(project=project, limit=PLAN_MAX, sprints=PLAN_SPRINTS,
                                     types=", ".join(client_.types(project)) or "Story, Task, Bug",
                                     context=build_context(docs_text, repo_text, docs_notes,
-                                                          link_context(client_, args)),
+                                                          link_context(client_, args),
+                                                          team_text(team), på_tavlan),
                                     wish=wish.strip())
         answered_by, answer, items = ["(no agent answered)"], "", []
         try:
@@ -5332,6 +5435,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_plan.add_argument("--sprints", action="store_true",
                         help="with --create: also make one sprint per sprint number and put "
                              "the issues in them (a write to the board)")
+    p_plan.add_argument("--team-people", type=int, default=0, metavar="N",
+                        help="how many people the plan has to fit (0 = from the config)")
+    p_plan.add_argument("--team-roles", default="", metavar="TEXT",
+                        help="who they are, e.g. 'one on UI, two on backend'")
     p_plan.add_argument("--sprint-weeks", type=int, default=2, metavar="N",
                         help="how long a sprint is (default 2)")
     p_plan.add_argument("--sprint-start", default="", metavar="YYYY-MM-DD",
