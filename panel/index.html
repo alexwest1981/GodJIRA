@@ -2343,7 +2343,11 @@ const SITES = { data: null, error: "", valt: "" };
 async function siteLoad() {
   if (SITES.data) return;
   try {
-    const a = await (await fetch("/api/sites")).json();
+    // Kolla svarskoden först: en rutt som inte finns svarar "not found" som text, och
+    // JSON.parse hade då gett "Unexpected token 'o'" i stället för det som faktiskt hände.
+    const svar = await fetch("/api/sites");
+    if (!svar.ok) throw new Error("HTTP " + svar.status);
+    const a = await svar.json();
     if (!a.ok) throw new Error(a.error || "inget svar");
     SITES.data = a;
     SITES.error = "";
