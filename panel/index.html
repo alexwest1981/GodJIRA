@@ -596,6 +596,8 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   .bars .bar span { color: var(--text-2); font-size: 12px; }
   .bars .bar i { height: 7px; border-radius: 4px; background: var(--accent); display: block; }
   .bars .bar u { text-decoration: none; color: var(--muted); font-size: 11.5px; text-align: right; font-variant-numeric: tabular-nums; }
+  .runNote { padding: 0 13px 12px; color: var(--text-2); font-size: 12px; }
+  .runNote .okdot { color: var(--green); }
   .cockpit .facts { margin-top: 14px; }
   .cockpit .bars { margin-top: 14px; }
   @media (prefers-reduced-motion: no-preference) {
@@ -657,6 +659,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
         <div class="panel" data-ov="flow">
           <h3>Flödets nästa <span class="meta">jira_flow.py next --dry-run</span></h3>
           <div class="body" id="flowPick"></div>
+          <div class="runNote" id="runNote" hidden></div>
         </div>
         <div class="panel" data-ov="journal">
           <h3>Flödets egna skrivningar <span class="meta">journal</span></h3>
@@ -959,6 +962,8 @@ const TEXT = {
   allTasks: "Alla uppgifter", sources: "Jira + GitHub",
   agentWindow: "senaste {days} dygnen", sessions: "sessioner", tokens: "tokens", cost: "kostnad",
   calls: "anrop", toolCalls: "verktygsanrop", messages: "meddelanden",
+  run: "kör", runGoing: "körningen går", runDone: "körningen är klar",
+  runFailed: "körningen gick inte igenom", runTooltip: "låt agenten göra ärendet i en egen worktree",
   changes: "ändringar", noChange: "ingen ändring", pushed: "skickad", localOnly: "bara lokalt",
   noRuns: "inga körningar än — flödet tar ett ärende, körningen gör det",
   scope: { all: "Alla", shared: "Gemensamma", mine: "Egna" },
@@ -3006,12 +3011,81 @@ function renderFlowPick() {
       <div class="c1">${typeGlyph("Task")}<span class="key">${esc(p.key)}</span><span class="grow"></span>${prio(p.priority)}</div>
       <div class="t">${esc(p.summary)}</div>
       <div class="c2">${statePill("new", p.status || "")}
-        ${p.assignee ? `<span class="pill">${avatar(p.assignee, true)}${esc(p.assignee)}</span>` : `<span class="pill">oassignerat</span>`}</div>
+        ${p.assignee ? `<span class="pill">${avatar(p.assignee, true)}${esc(p.assignee)}</span>` : `<span class="pill">oassignerat</span>`}
+        <span class="grow"></span><button class="chip" data-run="${esc(p.key)}" title="${esc(TEXT.runTooltip)}">${esc(TEXT.run)}</button></div>
     </div>
     ${f.someoneElses ? `<div class="empty" style="margin-top:9px"><span class="key">${esc(f.someoneElses.key)}</span> ${TEXT.someoneElses}</div>` : ""}
     ${(f.runnersUp || []).length ? `<div class="wl" style="margin-top:10px"><div class="empty">${TEXT.runnersUp}</div>
       ${f.runnersUp.map(i => `<div class="r">${typeGlyph("Task")}<span class="key">${esc(i.key)}</span>
         <span class="t">${esc(i.summary)}</span><span class="tside">${esc(i.priority || "")}</span></div>`).join("")}</div>` : ""}`;
+  const knapp = host.querySelector("[data-run]");
+  if (knapp) knapp.addEventListener("click", () => runStart(knapp.dataset.run));
+  if (!RUN.peeked) { RUN.peeked = true; runPoll(); }
+}
+
+// ---- körningen ---------------------------------------------------------------
+// En körning är en agent som läser ett repo: minuter, inte millisekunder. Panelen sätter
+// i gång jobbet och frågar efter läget -- servern håller jobbet (en körning i taget), och
+// liggaren på disk är facit. Körningar-kortet får sin rad när körningen är klar.
+const RUN = { key: "", state: "idle", timer: null, secs: 0, tail: "", error: "", peeked: false };
+
+function runNote() {
+  const box = document.getElementById("runNote");
+  if (!box) return;
+  if (RUN.state === "idle") { box.hidden = true; box.innerHTML = ""; return; }
+  const min = Math.floor(RUN.secs / 60), sec = RUN.secs % 60;
+  const klocka = min ? min + " min " + sec + " s" : sec + " s";
+  box.hidden = false;
+  box.innerHTML = RUN.state === "running"
+    ? '<span class="spin" style="width:11px;height:11px;display:inline-block"></span> ' +
+      esc(TEXT.runGoing) + ' <span class="key">' + esc(RUN.key) + "</span> · " + klocka
+    : RUN.state === "done"
+      ? '<span class="okdot">✓</span> ' + esc(TEXT.runDone) + ' <span class="key">' + esc(RUN.key) +
+        "</span> · " + esc(RUN.tail) + (RUN.error ? " · " + esc(RUN.error) : "")
+      : '<span class="err">✗</span> ' + esc(RUN.error || TEXT.runFailed) + " " + esc(RUN.key);
+}
+
+async function runPoll() {
+  const varIgång = RUN.state === "running";
+  try {
+    const svar = await fetch("/api/work", { cache: "no-store" });
+    const d = await svar.json();
+    if (d.state === "running") {
+      RUN.state = "running"; RUN.key = d.key || RUN.key; RUN.secs = d.seconds || RUN.secs + 5;
+      runNote();
+      clearTimeout(RUN.timer);
+      RUN.timer = setTimeout(runPoll, 5000);
+      return;
+    }
+    if (d.state === "done" || d.state === "failed") {
+      RUN.state = d.state; RUN.key = d.key || RUN.key; RUN.error = d.error || "";
+      RUN.tail = (d.commits || 0) > 0
+        ? d.commits + " " + TEXT.changes + (d.pr ? " · PR" : "")
+        : TEXT.noChange;
+      runNote();
+      if (varIgång) load(true);      // Körningar-kortet fick en ny rad
+      return;
+    }
+    RUN.state = "idle"; runNote();
+  } catch (err) {
+    RUN.state = "idle"; runNote();
+  }
+}
+
+async function runStart(key) {
+  if (RUN.state === "running") return;
+  RUN.state = "running"; RUN.key = key; RUN.secs = 0; runNote();
+  try {
+    const svar = await fetch("/api/work", { method: "POST",
+      headers: { "content-type": "application/json" }, body: JSON.stringify({ key: key }) });
+    const d = await svar.json();
+    if (!d.ok) { RUN.state = "failed"; RUN.error = d.error || ""; runNote(); return; }
+    RUN.key = d.key || key;
+    clearTimeout(RUN.timer);
+    RUN.timer = setTimeout(runPoll, 2000);
+  } catch (err) {
+    RUN.state = "failed"; RUN.error = String(err); runNote();
+  }
 }
 
 function renderJournal() {

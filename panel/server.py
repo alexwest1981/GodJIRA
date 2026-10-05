@@ -1302,6 +1302,66 @@ def scan_start(payload: dict) -> tuple[int, dict]:
     return 200, {"ok": True, "started": True, "repo": repo or None}
 
 
+# Körningen från panelen: samma jobb som `jira_flow work <KEY>` kör, i en tråd. Panelen
+# svarar med en gång och frågar sedan efter läget -- en körning är en agent som läser ett
+# repo, alltså minuter, och en knapp som står och väntar ser trasig ut.
+_run_lock = threading.Lock()
+_run_job: dict = {}
+
+
+def run_start(payload: dict) -> tuple[int, dict]:
+    """Sätt i gång en körning. En i taget: agenten är tung och liggaren är gemensam.
+
+    ponytail: en körning i taget för hela panelen. En kö (flera samtidigt, avbryt) behövs
+    först när det finns något som faktiskt kör flera -- tills dess är två agenter i samma
+    liggare bara två sanningar om vad som hände.
+    """
+    key = str(payload.get("key") or "").strip().upper()
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*-\d+", key):
+        return 400, {"ok": False, "error": "nyckeln såg inte ut som en ärendenyckel"}
+    repo = str(payload.get("repo") or "").strip()
+    if repo and not re.fullmatch(r"[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)?", repo):
+        return 400, {"ok": False, "error": "repot såg inte ut som ett namn"}
+    with _run_lock:
+        if _run_job.get("state") == "running":
+            return 200, {"ok": True, "running": True, "key": _run_job.get("key"),
+                         "secondsAgo": round(time.time() - float(_run_job.get("started") or 0))}
+        _run_job.clear()
+        _run_job.update({"state": "running", "key": key, "started": time.time(),
+                         "answer": None, "error": ""})
+
+    def work() -> None:
+        args = ["flow", "work", key, "--json"]
+        if repo:
+            args += ["--repo-name", repo]
+        env = seam(*args, timeout=7200)
+        answer = env.get("payload") if isinstance(env.get("payload"), dict) else {}
+        with _run_lock:
+            _run_job.update({"state": "done" if env.get("exitCode") == 0 else "failed",
+                             "answer": answer,
+                             "error": "" if env.get("exitCode") == 0 else (
+                                 answer.get("error") or first_line(env) or "körningen gick inte igenom"),
+                             "ended": time.time()})
+
+    threading.Thread(target=work, daemon=True).start()
+    return 200, {"ok": True, "started": True, "key": key}
+
+
+def run_read() -> dict:
+    """Läget: körningen som kör, annars den senaste. Ligger i minnet (en panelomstart
+    glömmer den) -- liggaren på disk är facit för vad som faktiskt blev gjort."""
+    with _run_lock:
+        job = dict(_run_job)
+    if not job:
+        return {"ok": True, "state": "idle"}
+    answer = job.get("answer") or {}
+    return {"ok": True, "state": job.get("state"), "key": job.get("key"),
+            "seconds": round(float(job.get("ended") or time.time()) - float(job.get("started") or 0)),
+            "branch": answer.get("branch") or "", "pr": answer.get("pr") or "",
+            "commits": len(answer.get("commits") or []), "note": answer.get("note") or "",
+            "error": job.get("error") or "", "answer": str(answer.get("answer") or "")[:2000]}
+
+
 def links_state() -> dict:
     """Vilket repo som hör till vilket Jira-projekt. Registret bor i CLI:t."""
     env = seam("flow", "link", "--json", timeout=60)
@@ -1941,6 +2001,9 @@ class Handler(BaseHTTPRequestHandler):
             query = parse_qs(urlparse(self.path).query)
             self._json(200, scan_read((query.get("repo") or [""])[0]))
             return
+        if path == "/api/work":
+            self._json(200, run_read())
+            return
         if path == "/api/flowmap":
             query = parse_qs(urlparse(self.path).query)
             wid = (query.get("flow") or [""])[0][:64]
@@ -2032,7 +2095,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         handler = {"/api/import": import_parse, "/api/import/apply": import_apply,
                    "/api/link": link_set, "/api/automation": automation_report,
-                   "/api/scan": scan_start, "/api/token": token_save,
+                   "/api/scan": scan_start, "/api/work": run_start, "/api/token": token_save,
                    "/api/github": github_save, "/api/language": language_save,
                    "/api/admin/people": admin_people, "/api/chat": chat_ask,
                    "/api/publish": publish_flow, "/api/posthog": posthog_save,
