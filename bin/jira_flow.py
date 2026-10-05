@@ -464,6 +464,26 @@ def gh_open(root, what: str, limit: int = 10):
                    "--json", "number,title,updatedAt", root=root) or []
 
 
+def compare_lines(jämför, head: str) -> list:
+    """GitHubs jämförelse som rader till underlaget.
+
+    ahead_by räknas mot grenen på GitHub och behind_by mot basen (klonen), så de läses som
+    "saknas här" respektive "finns bara här". Vänds de blir mätningen en lögn -- vilket den
+    var först (mätt 2026-10-05: AutoCore-klonen saknade 215 commits och påstods ha dem).
+    """
+    if not isinstance(jämför, dict) or jämför.get("status") not in ("ahead", "behind", "diverged"):
+        return []
+    saknas = jämför.get("ahead_by") or 0        # på githubs gren, inte i klonen
+    egna = jämför.get("behind_by") or 0         # i klonen, inte på githubs gren
+    rader = []
+    if saknas:
+        rader.append("github is {} commit(s) ahead of this clone -- the code read here is "
+                     "older than the tip (a git pull in the clone is the fix)".format(saknas))
+    if egna:
+        rader.append("this clone has {} commit(s) github does not have (unpushed)".format(egna))
+    return rader
+
+
 def repo_context(raw) -> tuple:
     """Var projektet står: gren, senaste commitarna, öppna PR:er och ärenden.
 
@@ -500,6 +520,17 @@ def repo_context(raw) -> tuple:
             lines += ["  #{} {}{}".format(r.get("number"), r.get("title") or "",
                                           " ({})".format((r.get("updatedAt") or "")[:10]))
                       for r in rows]
+        # Klonen hämtas aldrig (någon annans träd rörs inte), så koden planen läser kan vara
+        # äldre än den som ligger på GitHub. Det skall stå i underlaget, inte upptäckas i
+        # efterhand (mätt 2026-10-05: AutoCore-klonen stod på 46b474a2 medan GitHubs main var
+        # 4731438 -- planen jämförde mot en äldre kod än den som finns).
+        head = git_out(root, "rev-parse", "HEAD")
+        väg = "repos/{owner}/{repo}/compare/" + head + "..." + (branch or "HEAD")
+        jämför, _fel = gh_soft("api", väg, root=root) if head else (None, "")
+        lines += compare_lines(jämför, head)
+        if isinstance(jämför, dict):
+            info["githubAhead"] = jämför.get("ahead_by") or 0
+            info["cloneAhead"] = jämför.get("behind_by") or 0
     elif remote:
         lines.append("remote is not github.com ({}) — local history only".format(remote))
     return "\n".join(lines), info
@@ -1943,7 +1974,12 @@ def team_text(team: dict) -> str:
             "does.".format(vilka, veckor))
 
 
-def board_text(client_, project: str, limit: int = 200) -> tuple[str, str, int]:
+# Taket för hur mycket av tavlan som skrivs in i prompten. En tavla på 148 ryms helt; en på
+# tusentals gör prompten till en tavla i sig. Taket nämns i texten när det nås.
+BOARD_MAX = 400
+
+
+def board_text(client_, project: str, limit: int = BOARD_MAX) -> tuple[str, str, int]:
     """Vad som redan står på tavlan: (texten till prompten, varför den är tom, antalet).
 
     Utan det här hänger jämförelsen med det befintliga på att agenten själv råkar anropa
@@ -1968,10 +2004,9 @@ def board_text(client_, project: str, limit: int = 200) -> tuple[str, str, int]:
             str(fields.get("summary") or "")[:110]))
     if not rader:
         return "", "", 0
-    # /search/jql ger högst en sida (100) -- står det "100" utan förbehåll ser tavlan
-    # mindre ut än den är, och det är samma sorts tysta underdrift som ett klippt underlag.
-    fler = " (the first page of {}, there may be more)".format(len(rader)) \
-        if len(rader) >= min(limit, 100) else ""
+    # Taket nämns bara när det nås: står det "100" utan förbehåll ser tavlan mindre ut än
+    # den är, och det är samma sorts tysta underdrift som ett klippt underlag.
+    fler = " (the first {} of a longer board)".format(len(rader)) if len(rader) >= limit else ""
     return ("{} issue(s) already on the board{} -- build on these where they fit, and do not "
             "propose the same work again:\n".format(len(rader), fler) + "\n".join(rader),
             "", len(rader))
@@ -2304,9 +2339,26 @@ def client():
 # --------------------------------------------------------------- commands
 
 def find(client_, jql: str, limit: int = 4):
-    path = "/rest/api/3/search/jql?jql={}&maxResults={}&fields=summary,status,assignee,priority".format(
-        urllib.parse.quote(jql), limit)
-    return (client_.get(path) or {}).get("issues", [])
+    """Ärenden ur en JQL. Fler än en sida hämtas sida för sida.
+
+    /search/jql ger högst 100 per sida och är markörsbaserad (mätt 2026-10-05): en tavla på
+    148 ärenden svarade "100" utan ett ord om resten, och jämförelsen mot det befintliga såg
+    därför en mindre tavla än den är. Den som ber om fler får fler -- sida för sida, tills
+    taket är nått eller tavlan tar slut.
+    """
+    rader, token, kvar = [], "", max(1, int(limit))
+    while kvar > 0:
+        path = ("/rest/api/3/search/jql?jql={}&maxResults={}"
+                "&fields=summary,status,assignee,priority&nextPageToken={}"
+                ).format(urllib.parse.quote(jql), min(kvar, 100), token)
+        svar = client_.get(path) or {}
+        sida = svar.get("issues") or []
+        rader += sida
+        token = svar.get("nextPageToken") or ""
+        kvar -= len(sida)
+        if svar.get("isLast") or not token or not sida:
+            break
+    return rader[:limit]
 
 
 def fetch_one(client_, key: str):
@@ -3667,6 +3719,14 @@ def cmd_plan(client_, args) -> int:
                 repo_info["code"] = code_info
                 step("koden: {} filer i {}".format(
                     code_info.get("files") or 0, repo_info.get("repo") or os.path.basename(str(repo_dir))))
+                # Klonen läses från disk och hämtas aldrig: ligger GitHub före skall det synas
+                # här, annars jämför planen mot äldre kod utan att någon vet det.
+                if repo_info.get("githubAhead"):
+                    step("github: klonen ligger {} commits efter grenen på GitHub".format(
+                        repo_info["githubAhead"]))
+                elif repo_info.get("cloneAhead"):
+                    step("github: {} commits i klonen finns inte på GitHub".format(
+                        repo_info["cloneAhead"]))
                 if code_text:
                     repo_text = "{}\n\n{}".format(repo_text, code_text) if repo_text else code_text
         except (RuntimeError, OSError) as exc:
@@ -4552,6 +4612,26 @@ def selftest() -> int:
                      ' {"summary": "Servicepaket för båtar", "type": "Epic", "epic": "", "sprint": 1},'
                      ' {"summary": "Uppgift", "type": "Story", "epic": "Servicepaket", "sprint": 1}]', varn2)
     assert len([i for i in två if is_epic(i)]) == 3, "en tvetydig referens blir en egen epic, inte en gissning"
+
+    # Riktningen i GitHubs jämförelse: ahead_by räknas mot grenen på GitHub, behind_by mot
+    # klonen. Vänds de blir raden om vem som ligger före en lögn (mätt 2026-10-05: 215).
+    assert compare_lines({"status": "ahead", "ahead_by": 215, "behind_by": 0}, "abc") == \
+        ["github is 215 commit(s) ahead of this clone -- the code read here is older than the "
+         "tip (a git pull in the clone is the fix)"], "klonen ligger efter, och det skall stå så"
+    assert compare_lines({"status": "behind", "ahead_by": 0, "behind_by": 3}, "abc") == \
+        ["this clone has 3 commit(s) github does not have (unpushed)"], "egna commits är det omvända"
+    assert compare_lines({"status": "identical", "ahead_by": 0, "behind_by": 0}, "abc") == [], "i fas säger inget"
+    assert compare_lines(None, "abc") == [], "utan svar sägs inget"
+
+    # Tavlan läses sida för sida: 100 var förr taket utan att någon sade det (mätt
+    # 2026-10-05: 148 ärenden, 2 sidor). Markören får bara lova vad den läst.
+    klass = type("K", (), {"get": lambda self, vag: {"issues": [
+        {"key": "S-{}".format(n), "fields": {"summary": "A"}} for n in range(100)],
+        "nextPageToken": "t2", "isLast": False} if "nextPageToken=&" in vag or vag.endswith("nextPageToken=")
+        else {"issues": [{"key": "S-{}".format(n), "fields": {"summary": "A"}} for n in range(48)],
+              "isLast": True}})()
+    assert len(find(klass, "project=SCRUM", 400)) == 148, "två sidor blir 148 ärenden"
+    assert len(find(klass, "project=SCRUM", 30)) == 30, "taket hålls"
 
     # Markören för klippt underlag: siffrorna med, och tom när inget klipptes. Ett kravdokument
     # på 7999 tecken tappade sina sista 1999 med den gamla budgeten, och "klippt" utan siffror
