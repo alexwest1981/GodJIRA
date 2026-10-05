@@ -38,6 +38,9 @@ ROOT = Path(__file__).resolve().parent.parent
 SEAM = ROOT / "n8n" / "bin" / "flow-call.sh"
 UI = Path(__file__).resolve().parent / "index.html"
 LOGO = Path(__file__).resolve().parent.parent / "assets" / "godjira.svg"
+# Panelens egna inställningar (PostHog-nyckeln m.fl.). Hemligheter bor hos användaren i en
+# 0600-fil -- aldrig i repot, och aldrig i ett svar till webbläsaren.
+PANEL_KONFIG = Path.home() / ".config" / "godjira" / "panel.json"
 PORT = int(os.environ.get("PANEL_PORT", "8788"))
 # Panelen visar din Jira-data med din nyckel i ryggen: den lyssnar på den egna maskinen
 # om ingen sagt något annat. PANEL_BIND=0.0.0.0 öppnar den i nätet, medvetet.
@@ -1597,6 +1600,69 @@ def sites_read() -> dict:
     return dict(payload, ok=True)
 
 
+def posthog_read() -> dict:
+    """Vad PostHog-inställningen är: satt, vilket projekt, och om den svarar.
+
+    Nyckeln följer aldrig med i svaret -- varken hit eller vidare till webbläsaren. Panelen
+    får veta om den finns och vad den svarar, inte vad den är.
+    """
+    env = seam("sites", "--posthog", timeout=120)
+    payload = env.get("payload")
+    if not isinstance(payload, dict):
+        return {"ok": False, "error": (env.get("raw") or "motorn svarade inget")[:300]}
+    return dict(payload, ok=True)
+
+
+def posthog_save(payload: dict) -> tuple:
+    """Spara PostHog-inställningen i panelens egen fil (0600) -- men bara om den svarar.
+
+    Ordningen är med flit: skriv, fråga PostHog, och lägg tillbaka den gamla om svaret inte
+    kom. En nyckel som ligger kvar och är fel ser ut som en panel som mäter noll trafik --
+    det är samma fälla som gjorde att sajterna lästes som nere.
+    """
+    forra = {}
+    try:
+        läst = json.loads(PANEL_KONFIG.read_text(encoding="utf-8"))
+        forra = läst if isinstance(läst, dict) else {}
+    except (OSError, ValueError):
+        forra = {}
+    ny = dict(forra)
+    ph = dict(ny.get("posthog") or {})
+    if str(payload.get("nyckel") or "").strip():
+        ph["nyckel"] = str(payload["nyckel"]).strip()
+    if str(payload.get("projekt") or "").strip():
+        ph["projekt"] = str(payload["projekt"]).strip()
+    if str(payload.get("vard") or "").strip() in ("eu", "us"):
+        ph["vard"] = str(payload["vard"]).strip()
+    if not ph.get("nyckel"):
+        return 400, {"ok": False, "error": "ingen nyckel att spara"}
+    ny["posthog"] = ph
+    try:
+        PANEL_KONFIG.parent.mkdir(parents=True, exist_ok=True)
+        os.chmod(PANEL_KONFIG.parent, 0o700)
+        PANEL_KONFIG.write_text(json.dumps(ny, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        os.chmod(PANEL_KONFIG, 0o600)
+    except OSError as exc:
+        return 500, {"ok": False, "error": "kunde inte skriva {}: {}".format(PANEL_KONFIG, exc)}
+
+    svar = posthog_read()
+    if not svar.get("ok") or svar.get("fel"):
+        # Tillbaka med det gamla: en felaktig nyckel skall inte ligga kvar och se ut som en sanning.
+        try:
+            if forra:
+                PANEL_KONFIG.write_text(json.dumps(forra, ensure_ascii=False, indent=2) + "\n",
+                                        encoding="utf-8")
+                os.chmod(PANEL_KONFIG, 0o600)
+            else:
+                PANEL_KONFIG.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return 400, {"ok": False, "error": svar.get("fel") or svar.get("error") or "nyckeln svarade inte",
+                     "provat": {"projekt": ph.get("projekt"), "vard": ph.get("vard")},
+                     "atervand": bool(forra)}
+    return 200, dict(svar, sparad=True)
+
+
 def state() -> dict:
     """En läsning: flödet räknar ut projektet, projektet läser ur registret, resten är Jira, GitHub och journalen."""
     def build() -> dict:
@@ -1761,6 +1827,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/sites":
             self._json(200, cached("sites", sites_read, ttl=120))
             return
+        if path == "/api/posthog":
+            # Med flit utan cache: vyn finns for att koppla pa och se svaret direkt.
+            self._json(200, posthog_read())
+            return
         if path == "/api/admin":
             self._json(200, cached("admin", admin_read, ttl=180))
             return
@@ -1863,7 +1933,7 @@ class Handler(BaseHTTPRequestHandler):
                    "/api/scan": scan_start, "/api/token": token_save,
                    "/api/github": github_save, "/api/language": language_save,
                    "/api/admin/people": admin_people, "/api/chat": chat_ask,
-                   "/api/publish": publish_flow,
+                   "/api/publish": publish_flow, "/api/posthog": posthog_save,
                    "/api/agent": agent_state}.get(self.path.split("?")[0])
         if not handler:
             self._send(404, b"not found", "text/plain")

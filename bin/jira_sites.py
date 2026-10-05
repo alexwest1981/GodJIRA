@@ -59,6 +59,10 @@ TJANSTER = [
 
 POSTHOG_PROJEKT = 293765
 
+# Panelens egna installningar (PostHog-nyckel, projekt, vard). Utan den har filen lases
+# .env som forut -- panelen skall kunna kopplas pa i sin egen vy, utan att ga via mig.
+PANEL_KONFIG = HEM / ".config/godjira/panel.json"
+
 
 def ur_fil(vag, nyckel):
     """Laser en hemlighet ur en nyckel=värde-fil. Vardet skrivs aldrig ut."""
@@ -72,8 +76,82 @@ def ur_fil(vag, nyckel):
     return None
 
 
+def panel_konfig(vag=None):
+    """Panelens egna installningar. Hemligheter bor har (0600), aldrig i repot."""
+    try:
+        return json.loads(pathlib.Path(vag or PANEL_KONFIG).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def posthog_uppgifter(vag=None, env=None):
+    """(nyckel, projekt, bas, varifran). Panelens installning forst, .env som forut.
+
+    Nyckeln lamnar aldrig funktionen i ett svar: panelen far veta om den finns och om
+    den svarar, inte vad den ar.
+    """
+    k = panel_konfig(vag).get("posthog") or {}
+    if not isinstance(k, dict):
+        k = {}
+    egen = (k.get("nyckel") or "").strip()
+    nyckel = egen or ur_fil(env or (HEM / ".hermes/.env"), "POSTHOG_PERSONAL_KEY")
+    kalla = "panelens installning" if egen else (".env" if nyckel else "ingen")
+    try:
+        projekt = int(k.get("projekt") or POSTHOG_PROJEKT)
+    except (TypeError, ValueError):
+        projekt = POSTHOG_PROJEKT
+    vard = "us" if str(k.get("vard") or "eu").lower().startswith("us") else "eu"
+    return nyckel, projekt, "https://%s.posthog.com" % vard, kalla
+
+
 def posthog_nyckel():
-    return ur_fil(HEM / ".hermes/.env", "POSTHOG_PERSONAL_KEY")
+    return posthog_uppgifter()[0]
+
+
+def feltext(exc):
+    """En rad att visa for den som kopplade: tjanstens egen forklaring, inte var."""
+    if isinstance(exc, urllib.error.HTTPError):
+        try:
+            kropp = exc.read().decode("utf-8", "replace")[:200].strip()
+        except Exception:  # noqa: BLE001 -- en feltext far aldrig bli ett nytt fel
+            kropp = ""
+        return "HTTP %d %s" % (exc.code, kropp)
+    return "%s: %s" % (type(exc).__name__, exc)
+
+
+def posthog_mot(bas, projekt, nyckel):
+    """Fragar PostHog sjalv: vad heter projektet, och hur manga handelser senaste sju dygnen?
+
+    Tva fragor, for de svarar pa olika saker: namnet visar att nyckeln hor till det projekt
+    som star i rutan, siffran visar att den ocksa far lasa. En nyckel som bara svarar pa det
+    ena ar fel nyckel for panelen.
+    """
+    req = urllib.request.Request(bas + "/api/projects/%d/" % projekt,
+                                 headers={"Authorization": "Bearer " + nyckel})
+    with urllib.request.urlopen(req, timeout=45) as s:
+        namn = (json.load(s).get("name") or "").strip()
+    rader = hogql_med(nyckel, bas, projekt,
+                      "SELECT count() FROM events WHERE timestamp > now() - INTERVAL 7 DAY")
+    antal = int((rader[0] or [0])[0]) if rader else 0
+    return namn, antal
+
+
+def posthog_lage(vag=None, mata=None, env=None):
+    """Svarar nyckeln, och pa vilket projekt? Det ar vad panelen visar i installningarna."""
+    nyckel, projekt, bas, kalla = posthog_uppgifter(vag, env)
+    ut = {"satt": bool(nyckel), "projekt": projekt, "vard": bas.split("//")[-1].split(".")[0],
+          "kalla": kalla}
+    if not nyckel:
+        ut["fel"] = "ingen nyckel"
+        return ut
+    try:
+        namn, antal = (mata or posthog_mot)(bas, projekt, nyckel)
+        if namn:
+            ut["namn"] = namn
+        ut["handelser"] = antal
+    except (urllib.error.URLError, OSError, ValueError, KeyError, IndexError, TypeError) as exc:
+        ut["fel"] = feltext(exc) if isinstance(exc, urllib.error.HTTPError) else str(exc)
+    return ut
 
 
 def stripe_nyckel():
@@ -87,12 +165,16 @@ def stripe_nyckel():
 
 
 def hogql(sql):
-    """En HogQL-fraga. Kastar vidare -- anroparen satter det tredje tillstandet."""
-    nyckel = posthog_nyckel()
+    """En HogQL-fraga mot panelens installning. Kastar vidare -- anroparen satter tillstandet."""
+    nyckel, projekt, bas, _ = posthog_uppgifter()
     if not nyckel:
         return None
+    return hogql_med(nyckel, bas, projekt, sql)
+
+
+def hogql_med(nyckel, bas, projekt, sql):
     req = urllib.request.Request(
-        "https://eu.posthog.com/api/projects/%d/query/" % POSTHOG_PROJEKT,
+        bas + "/api/projects/%d/query/" % projekt,
         data=json.dumps({"query": {"kind": "HogQLQuery", "query": sql}}).encode(),
         headers={"Authorization": "Bearer " + nyckel, "Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=45) as s:
@@ -368,6 +450,45 @@ def selftest():
     assert posthog_installerad("http://x", hamta=lambda u: "<html></html>") is False
     assert posthog_installerad("http://x", hamta=kastar) == MISSLYCKAT
 
+    # PostHog-installningen: panelens egen fil raknas forst, och nyckeln foljer aldrig med ut
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        saknas = pathlib.Path(tmp) / "panel.json"
+        _, _, _, kalla_tom = posthog_uppgifter(str(saknas))
+        assert kalla_tom in (".env", "ingen"), kalla_tom
+
+        saknas.write_text(json.dumps({"posthog": {"nyckel": "phx_prov", "projekt": "4711",
+                                                 "vard": "us"}}))
+        nyckel, projekt, bas, kalla = posthog_uppgifter(str(saknas))
+        assert (nyckel, projekt, bas) == ("phx_prov", 4711, "https://us.posthog.com"), bas
+        assert kalla == "panelens installning"
+
+        # Skrap i rutan ar inte en krasch: vardet faller tillbaka pa standarden
+        saknas.write_text(json.dumps({"posthog": {"nyckel": "x", "projekt": "inte-ett-tal",
+                                                  "vard": "mars"}}))
+        _, projekt, bas, _ = posthog_uppgifter(str(saknas))
+        assert (projekt, bas) == (POSTHOG_PROJEKT, "https://eu.posthog.com"), (projekt, bas)
+
+        # Laget: nyckeln star inte i svaret, och ett svar fran tjansten ar inte ett natfel
+        ut = posthog_lage(str(saknas), mata=lambda b, p, n: ("Min nuna", 12))
+        assert "phx_prov" not in json.dumps(ut), ut
+        assert ut["namn"] == "Min nuna" and ut["handelser"] == 12 and "fel" not in ut
+
+        # En nyckel som avvisas blir tjanstens egen mening, inte en nolla
+        def avvisar(b, p, n):
+            raise urllib.error.HTTPError("u", 401, "Unauthorized", None, None)
+
+        ut = posthog_lage(str(saknas), mata=avvisar)
+        assert "HTTP 401" in ut.get("fel", ""), ut
+        assert "handelser" not in ut, ut
+
+    # Utan nyckel: sagt rakt ut, aldrig som noll handelser
+    tom = pathlib.Path(tempfile.gettempdir()) / "godjira-ingen-nyckel.json"
+    tom.unlink(missing_ok=True)
+    utan = posthog_lage(str(tom), env=str(tom) + ".env")
+    assert utan["satt"] is False and utan["fel"] == "ingen nyckel", utan
+
     print("selftest: OK")
 
 
@@ -376,5 +497,7 @@ if __name__ == "__main__":
         selftest()
     elif "--json" in sys.argv:
         print(json.dumps(rapport(), ensure_ascii=False))
+    elif "--posthog" in sys.argv:
+        print(json.dumps(posthog_lage(), ensure_ascii=False))
     else:
         skriv_ut(rapport())

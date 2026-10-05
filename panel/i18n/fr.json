@@ -396,5 +396,14 @@
  "mest besökta": "les plus visitées",
  "varifrån": "depuis",
  "kassan är inte kopplad": "la caisse n'est pas reliée",
- "provkörningar uteslutna": "essais exclus"
+ "provkörningar uteslutna": "essais exclus",
+ "Koppla på PostHog": "Connecter PostHog",
+ "trafiken hämtas ur ditt eget projekt": "le trafic vient de votre propre projet",
+ "ansluten": "connecté",
+ "inte ansluten": "non connecté",
+ "händelser senaste sju dygnen": "événements ces sept derniers jours",
+ "källan": "source",
+ "Testa anslutningen": "Tester la connexion",
+ "sparat": "enregistré",
+ "testar …": "test en cours …"
 }

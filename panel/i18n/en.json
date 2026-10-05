@@ -396,5 +396,14 @@
  "mest besökta": "most visited",
  "varifrån": "from",
  "kassan är inte kopplad": "the checkout is not connected",
- "provkörningar uteslutna": "test runs excluded"
+ "provkörningar uteslutna": "test runs excluded",
+ "Koppla på PostHog": "Connect PostHog",
+ "trafiken hämtas ur ditt eget projekt": "the traffic is read from your own project",
+ "ansluten": "connected",
+ "inte ansluten": "not connected",
+ "händelser senaste sju dygnen": "events in the last seven days",
+ "källan": "source",
+ "Testa anslutningen": "Test the connection",
+ "sparat": "saved",
+ "testar …": "testing …"
 }

@@ -833,6 +833,10 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
           </div>
         </div>
         <div class="panel">
+          <h3>Koppla på PostHog <span class="meta">trafiken hämtas ur ditt eget projekt</span></h3>
+          <div class="body"><div id="phBox">läser …</div></div>
+        </div>
+        <div class="panel">
           <h3>Utseende <span class="meta">följer skrivbordet tills du väljer</span></h3>
           <div class="body"><div id="themeBox" class="meta">…</div></div>
         </div>
@@ -2146,6 +2150,82 @@ function tokenRows(t) {
   </div>`;
 }
 
+async function posthogSave(body) {
+  const note = document.getElementById("phNote");
+  if (note) note.textContent = "testar …";
+  try {
+    const r = await fetch("/api/posthog", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body) });
+    const a = await r.json();
+    if (!r.ok || !a.ok) {
+      POSTHOG.data = a;
+      POSTHOG.error = "";
+      renderPosthog();
+      const kvar = a.atervand ? " (den förra nyckeln ligger kvar)" : "";
+      const host = document.getElementById("phBox");
+      if (host) host.insertAdjacentHTML("afterbegin",
+        `<div class="meta err">${esc(a.error || ("HTTP " + r.status))}${esc(kvar)}</div>`);
+      return;
+    }
+    POSTHOG.data = a;
+    POSTHOG.error = "";
+    renderPosthog();
+    const klart = document.getElementById("phNote");
+    if (klart) klart.textContent = "sparat";
+  } catch (e) {
+    POSTHOG.error = "kunde inte spara: " + e.message;
+    renderPosthog();
+  }
+}
+
+function renderPosthog() {
+  const box = document.getElementById("phBox");
+  if (!box) return;
+  const d = POSTHOG.data;
+  if (POSTHOG.error) {
+    box.innerHTML = `<div class="meta err">${esc(POSTHOG.error)}</div>`;
+    return;
+  }
+  if (!d) { box.textContent = "läser …"; return; }
+  const vad = d.fel ? "inte ansluten" : "ansluten";
+  const vem = d.namn ? `${esc(d.namn)} (${esc(d.projekt)})` : esc(d.projekt);
+  const antal = d.handelser == null ? "" : ` · <b>${esc(d.handelser)}</b> händelser senaste sju dygnen`;
+  box.innerHTML =
+    `<div class="meta">${vad} · ${vem} · ${esc(d.vard)}.posthog.com${antal} · källan: ${esc(d.kalla)}</div>` +
+    (d.fel ? `<div class="meta err">${esc(d.fel)}</div>` : "") +
+    `<div class="linkbar">
+      <input class="inp" type="password" id="phNyckel" placeholder="phx_… (personal API-nyckel)"
+             autocomplete="off" spellcheck="false">
+      <input class="inp" type="text" id="phProjekt" placeholder="Projekt" inputmode="numeric"
+             value="${esc(d.projekt || "")}">
+      <select class="inp" id="phVard">
+        <option value="eu"${d.vard === "eu" ? " selected" : ""}>eu.posthog.com</option>
+        <option value="us"${d.vard === "us" ? " selected" : ""}>us.posthog.com</option>
+      </select>
+      <button class="chip on" data-act="posthog-save">Testa anslutningen</button>
+      <span class="grow"></span><span class="meta" id="phNote"></span>
+    </div>
+    <div class="meta" style="margin-top:10px">Nyckeln prövas mot PostHog <b>innan</b> den sparas, och
+      sparas hos dig i <code>~/.config/godjira/panel.json</code> (0600) — aldrig i repot, och aldrig
+      tillbaka till den här sidan. Svarar den inte ligger den förra kvar. Har du ingen:
+      <a href="https://${esc(d.vard)}.posthog.com/settings/user-api-keys" target="_blank"
+         rel="noreferrer">skapa en ny nyckel</a>.</div>`;
+}
+
+async function posthogLoad() {
+  try {
+    const r = await fetch("/api/posthog");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const a = await r.json();
+    if (!a.ok) throw new Error(a.error || "svaret gick inte att läsa");
+    POSTHOG.data = a;
+    POSTHOG.error = "";
+  } catch (e) {
+    POSTHOG.error = "kunde inte läsa PostHog-inställningen: " + e.message;
+  }
+  renderPosthog();
+}
+
 function renderSettings() {
   renderLayoutPrefs();
   const box = document.getElementById("tokenBox");
@@ -2339,6 +2419,7 @@ function renderInsights() {
 // räknar själv är en andra åsikt om samma sak, och de två glider isär förr eller senare.
 // Panelen ritar, motorn räknar.
 const SITES = { data: null, error: "", valt: "" };
+const POSTHOG = { data: null, error: "" };
 
 async function siteLoad() {
   if (SITES.data) return;
@@ -3910,7 +3991,7 @@ function show(v) {
   // Vyerna som frågar efter något eget laddar det när de öppnas -- samma väg för
   // kugghjulet, setupen och första starten.
   if (view === "setup") setupLoad();
-  if (view === "settings") { renderRights(); renderLanguage(); }
+  if (view === "settings") { renderRights(); renderLanguage(); renderPosthog(); posthogLoad(); }
   if (view === "admin") adminLoad();
   if (view === "insights") insightLoad();
   if (view === "sites") siteLoad();
@@ -4003,6 +4084,14 @@ document.addEventListener("click", e => {
     return;
   }
   if (e.target.closest('[data-act="token-rm"]')) return tokenSave({ rm: true });
+  if (e.target.closest('[data-act="posthog-save"]')) {
+    posthogSave({
+      nyckel: (document.getElementById("phNyckel") || {}).value || "",
+      projekt: (document.getElementById("phProjekt") || {}).value || "",
+      vard: (document.getElementById("phVard") || {}).value || "eu",
+    });
+    return;
+  }
   if (e.target.closest('[data-act="token-save"]')) {
     const value = id => ((document.getElementById(id) || {}).value || "");
     const token = value("tokNew").trim();

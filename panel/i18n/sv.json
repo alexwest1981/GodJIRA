@@ -396,5 +396,14 @@
  "mest besökta": "mest besökta",
  "varifrån": "varifrån",
  "kassan är inte kopplad": "kassan är inte kopplad",
- "provkörningar uteslutna": "provkörningar uteslutna"
+ "provkörningar uteslutna": "provkörningar uteslutna",
+ "Koppla på PostHog": "Koppla på PostHog",
+ "trafiken hämtas ur ditt eget projekt": "trafiken hämtas ur ditt eget projekt",
+ "ansluten": "ansluten",
+ "inte ansluten": "inte ansluten",
+ "händelser senaste sju dygnen": "händelser senaste sju dygnen",
+ "källan": "källan",
+ "Testa anslutningen": "Testa anslutningen",
+ "sparat": "sparat",
+ "testar …": "testar …"
 }

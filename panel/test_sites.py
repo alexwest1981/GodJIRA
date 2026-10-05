@@ -73,6 +73,30 @@ t = sajter.trafik(["minnoria.se"], fraga=lambda *a, **k: (_ for _ in ()).throw(V
 check(t.get("fel") == sajter.MISSLYCKAT and "visningar" not in t,
       "en misslyckad trafikmatning maste bli ordet, inte noll besok")
 
+# --- 7. PostHog-inställningen: kopplas på i panelen, inte i koden -------------------
+# Nyckeln får finnas, svaras på och sparas -- men den får aldrig följa med ut i ett svar.
+ut = sajter.posthog_lage(env="/finns/inte.env")
+check(ut["satt"] is False and ut.get("fel") == "ingen nyckel", "utan nyckel skall laget saga det")
+check("phx" not in json.dumps(ut), "nyckeln lacker ut i laget")
+
+serve = (PANEL / "server.py").read_text(encoding="utf-8")
+check('if path == "/api/posthog":' in serve, "rutten /api/posthog saknas i server.py")
+check('"/api/posthog": posthog_save' in serve, "sparandet av PostHog-inställningen saknas i do_POST")
+check("PANEL_KONFIG = Path.home()" in serve, "panelens egen inställningsfil definieras inte")
+check("os.chmod(PANEL_KONFIG, 0o600)" in serve, "inställningsfilen skrivs utan 0600")
+check("posthog_read" in serve and "seam(\"sites\", \"--posthog\"" in serve,
+      "servern frågar inte motorn om PostHog-läget")
+for bit in ('id="phBox"', 'data-act="posthog-save"', "function renderPosthog()",
+            "async function posthogLoad()", "async function posthogSave("):
+    check(bit in html, "inställningsvyn saknar {}".format(bit))
+check('renderPosthog(); posthogLoad();' in html, "inställningsvyn laddar inte PostHog-läget")
+for nyckel in ("Koppla på PostHog", "Testa anslutningen", "ansluten", "inte ansluten", "källan",
+               "händelser senaste sju dygnen", "trafiken hämtas ur ditt eget projekt"):
+    check(nyckel in sv, "nyckeln {} saknas i sv.json".format(nyckel))
+# Motorn har en egen krok för det panelen frågar efter
+check("--posthog" in (ROOT / "bin" / "jira_sites.py").read_text(encoding="utf-8"),
+      "motorn har ingen --posthog")
+
 if failures:
     print("MISSLYCKAT:")
     for f in failures:

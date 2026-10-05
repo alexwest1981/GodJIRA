@@ -396,5 +396,14 @@
  "mest besökta": "meest bezocht",
  "varifrån": "vanaf",
  "kassan är inte kopplad": "de kassa is niet gekoppeld",
- "provkörningar uteslutna": "testruns uitgesloten"
+ "provkörningar uteslutna": "testruns uitgesloten",
+ "Koppla på PostHog": "PostHog koppelen",
+ "trafiken hämtas ur ditt eget projekt": "het verkeer komt uit je eigen project",
+ "ansluten": "gekoppeld",
+ "inte ansluten": "niet gekoppeld",
+ "händelser senaste sju dygnen": "gebeurtenissen in de laatste zeven dagen",
+ "källan": "bron",
+ "Testa anslutningen": "Verbinding testen",
+ "sparat": "opgeslagen",
+ "testar …": "testen …"
 }
