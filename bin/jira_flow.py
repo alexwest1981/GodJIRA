@@ -149,6 +149,9 @@ PLAN_WORDS = {
         "project": "Projekt",
         "documents": "dokument", "document": "dokument", "cut": "klippt",
         "chars": "tecken",
+        "board": "Jämfört med tavlan: {} befintliga ärenden lästa. Bara det som inte redan "
+                 "står där föreslås.",
+        "warnings": "Att se upp med",
         "overview": "Översikt", "kinds": "Typer", "of": "av",
         "sprint": "Sprint", "issue": "uppgift", "issues": "uppgifter",
         "holds": "Innehåller", "under": "under", "empty": "inget i den här sprinten",
@@ -177,6 +180,8 @@ PLAN_HTML = """<!doctype html>
 <body>
 <h1>{title}</h1>
 <p class="meta">{meta}</p>
+{board}
+{warnings}
 {wish}
 <h2 class="block">{overview}</h2>
 <table class="over">
@@ -3077,6 +3082,16 @@ def plan_document(items, meta, lang: str = "") -> str:
     for item in items:
         name = str(item.get("type") or "Task")
         kinds[name] = kinds.get(name, 0) + 1
+    # Tavlan och varningarna hör i pappret, inte bara i terminalen: pappret är det som
+    # visas upp, och "varför är den kort?" besvaras av raden om tavlan. En varning som bara
+    # syns i en flik någon annan tittade på är ingen varning (mätt 2026-10-05).
+    board_block = (('<p class="meta">{}</p>'.format(escape(words["board"].format(meta["board"])))
+                    if meta.get("board") else ""))
+    warn_block = ""
+    if meta.get("warnings"):
+        warn_block = '<p class="meta"><b>{}</b><br>{}</p>'.format(
+            escape(words["warnings"]),
+            "<br>".join(escape(str(w)) for w in meta["warnings"]))
     meta_line = " · ".join(x for x in [
         meta.get("project") and "{} {}".format(words["project"], escape(str(meta["project"]))),
         meta.get("repo") and escape(str(meta["repo"])),
@@ -3130,6 +3145,8 @@ def plan_document(items, meta, lang: str = "") -> str:
         css=PLAN_CSS,
         title=escape(words["title"]),
         meta=meta_line,
+        board=board_block,
+        warnings=warn_block,
         wish=('<p class="wishlab">{}</p><p class="wish">{}</p>'.format(
             escape(words["wish"]), escape(str(meta.get("wish") or "")))
             if (meta.get("wish") or "").strip() else ""),
@@ -3904,6 +3921,8 @@ def cmd_plan(client_, args) -> int:
                                         # En godkänd lista har ingen agent bakom sig, och
                                         # då skall raden inte hitta på en.
                                         "agent": "" if approved else agent_label(answered_by),
+                                        # Vad förslaget mättes mot, och vad det varnades för.
+                                        "board": tavlantal, "warnings": varningar,
                                         "date": time.strftime("%Y-%m-%d")},
                                 args.pdf, getattr(args, "lang", ""))
         except (RuntimeError, OSError) as exc:
