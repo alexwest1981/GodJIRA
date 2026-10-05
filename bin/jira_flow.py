@@ -464,6 +464,29 @@ def gh_open(root, what: str, limit: int = 10):
                    "--json", "number,title,updatedAt", root=root) or []
 
 
+def paths_not_in_repo(items: list, files) -> list:
+    """Sökvägar i förslaget som inte finns i repot.
+
+    Ett förslag som skickar någon att öppna en fil som inte finns kostar en letande människa
+    (mätt 2026-10-05: 26 av 27 sökvägar i ett riktigt förslag stämde, och den enda som inte
+    gjorde det -- WigellAutoCore/autocore/test.sh -- ligger i roten, inte under
+    WigellAutoCore). Sökvägen godtas om någon fil i repot slutar på den, så ett kort
+    "model/Booking.java" fungerar lika bra som hela vägen; en fil som bara delar namn med
+    den nämnda flaggas, för det är just den förväxlingen som gör skada.
+    """
+    kända = [str(f).lstrip("./").lower() for f in files]
+    saknas: list = []
+    for item in items:
+        text = " ".join(str((item or {}).get(k) or "") for k in ("summary", "description"))
+        for träff in re.findall(
+                r"(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\.(?:java|json|sh|yml|yaml|md|sql|cmd|xml)",
+                text):
+            rent = träff.lstrip("./").lower()
+            if not any(p.endswith(rent) for p in kända) and träff not in saknas:
+                saknas.append(träff)
+    return saknas
+
+
 def compare_lines(jämför, head: str) -> list:
     """GitHubs jämförelse som rader till underlaget.
 
@@ -503,7 +526,11 @@ def repo_context(raw) -> tuple:
     dirty = [row for row in git_out(root, "status", "--porcelain").splitlines() if row.strip()]
     info = {"repo": str(root), "branch": branch, "remote": remote,
             "commits": len(log), "uncommitted": len(dirty)}
-    lines = ["branch: {}".format(branch or "?"),
+    lines = [# Sökvägen står först: utan den läser agenten filerna ur vad den än hittar
+             # (mätt 2026-10-05: kartan listade relativa vägar och planen läste en annan,
+             # äldre kopia än den som mättes mot).
+             "the code is read from: {}".format(root),
+             "branch: {}".format(branch or "?"),
              "uncommitted files: {}".format(len(dirty)),
              "last {} commits (newest first):".format(len(log))]
     lines += ["  " + row for row in log]
@@ -1916,6 +1943,46 @@ def link_project(args, repo_dir: str = "") -> tuple:
         if len(linked) == 1:
             return linked[0]["project"], "länken ({})".format(linked[0].get("repo"))
     return DEFAULT_PROJECT, "standarden"
+
+
+MAIN_CACHE = Path(os.path.expanduser("~/.cache/jira-flow/main"))
+
+
+def main_mirror(repo_dir, name: str = "") -> tuple:
+    """(en kopia av main, fel). Tom sökväg när det inte går.
+
+    Måndag kl 9 skall allt ligga på main (Alex 2026-10-05), så planen skall mätas mot main --
+    inte mot vad som råkar vara utcheckat i en arbetskopia (mätt: AutoCore-klonen stod 215
+    commits efter medan GitHub hade dagens arbete). Motorn rör aldrig någon annans träd: den
+    håller en egen, grund kopia i sin cache och hämtar main dit. Går det inte (ingen fjärr,
+    ingen gh, ingen main) mäts den lokala kopian i stället, och det sägs högt.
+    """
+    root = Path(str(repo_dir or ""))
+    if not root.is_dir() or not (root / ".git").exists():
+        return "", "inte ett git-repo"
+    remote = git_out(root, "remote", "get-url", "origin")
+    if "github.com" not in (remote or "") or not shutil.which("gh"):
+        return "", "ingen github-fjärr"
+    spegel = MAIN_CACHE / (name or root.name)
+    try:
+        spegel.parent.mkdir(parents=True, exist_ok=True)
+        if (spegel / ".git").exists():
+            hämt = subprocess.run(["git", "-C", str(spegel), "fetch", "--depth", "50", "origin"],
+                                  capture_output=True, text=True, timeout=600)
+        else:
+            shutil.rmtree(spegel, ignore_errors=True)
+            hämt = subprocess.run(["git", "clone", "--depth", "50", "--branch", "main", remote,
+                                   str(spegel)], capture_output=True, text=True, timeout=600)
+        if hämt.returncode != 0:
+            sista = [l for l in (hämt.stderr or "").strip().splitlines() if l.strip()]
+            return "", (sista[-1][:160] if sista else "git svarade fel")
+        kvitt = subprocess.run(["git", "-C", str(spegel), "reset", "--hard", "origin/main"],
+                               capture_output=True, text=True, timeout=120)
+        if kvitt.returncode != 0:
+            return "", "main gick inte att lägga ut i cachen"
+        return str(spegel), ""
+    except (OSError, subprocess.SubprocessError) as exc:
+        return "", "{}: {}".format(type(exc).__name__, str(exc)[:120])
 
 
 def plan_repo_dir(args) -> str:
@@ -3703,6 +3770,16 @@ def cmd_plan(client_, args) -> int:
 
     docs_text, docs_notes, repo_text, repo_info = "", [], "", {}
     if not approved:
+        # Mät mot main, om ingen annan katalog sades rakt ut: måndag kl 9 skall allt ligga på
+        # main (Alex 2026-10-05), så main är sanningen och en arbetskopia bara en kopia.
+        # Spegeln är motorns egen, i motorns cache -- ingen annans träd rörs.
+        if repo_dir and not (getattr(args, "repo", "") or "").strip():
+            speglad, spegelfel = main_mirror(repo_dir, (getattr(args, "repo_name", "") or "").strip())
+            if speglad:
+                step("mäter mot main: {}".format(speglad))
+                repo_dir = speglad
+            else:
+                step("mäter mot den lokala kopian ({})".format(spegelfel))
         try:
             step("läser underlaget …")
             docs_text, docs_notes = read_context(getattr(args, "context", []) or [])
@@ -3781,6 +3858,12 @@ def cmd_plan(client_, args) -> int:
                 answer = ask_agent(prompt)
             varningar = []
             items = parse_plan(answer, varningar)
+            # Sökvägarna kontrolleras mot repots filkarta innan förslaget visas: en väg till
+            # en fil som inte finns skickar någon att leta (mätt 2026-10-05).
+            filkarta = [rad.strip() for rad in git_out(Path(repo_dir), "ls-files").splitlines()
+                        if rad.strip()] if repo_dir else []
+            for saknad in paths_not_in_repo(items, filkarta):
+                varningar.append("the plan names a path that is not in the repo: " + saknad)
             for varning in varningar:
                 step(varning)
             epics = [i for i in items if is_epic(i)]
@@ -4612,6 +4695,23 @@ def selftest() -> int:
                      ' {"summary": "Servicepaket för båtar", "type": "Epic", "epic": "", "sprint": 1},'
                      ' {"summary": "Uppgift", "type": "Story", "epic": "Servicepaket", "sprint": 1}]', varn2)
     assert len([i for i in två if is_epic(i)]) == 3, "en tvetydig referens blir en egen epic, inte en gissning"
+
+    # Sökvägarna i ett förslag kontrolleras mot repot: en väg som inte finns flaggas, en
+    # kort väg som pekar rätt godtas, och en fil som bara delar namn (test.sh i roten mot
+    # WigellAutoCore/autocore/test.sh) fångas -- det var den verkliga fällan (mätt).
+    filer = ["WigellAutoCore/autocore/src/com/wac/autocore/model/Booking.java", "test.sh",
+             "WigellAutoCore/autocore/src/com/wac/autocore/data/Db.java"]
+    assert paths_not_in_repo([{"summary": "X", "description": "ändra i model/Booking.java"}], filer) == [], \
+        "en kort väg som pekar rätt godtas"
+    assert paths_not_in_repo([{"description": "kör WigellAutoCore/autocore/test.sh"}], filer) == \
+        ["WigellAutoCore/autocore/test.sh"], "fel väg till en fil som finns någon annanstans fångas"
+    assert paths_not_in_repo([{"description": "lägg i src/com/wac/autocore/data/Ny.java"}], filer) == \
+        ["src/com/wac/autocore/data/Ny.java"], "en fil som inte finns alls fångas"
+    # En naken filnamn kan inte kontrolleras (den kan bo var som helst): bara vägar med
+    # minst ett snedstreck prövas, och det är de som avgör om någon skickas att leta.
+    assert paths_not_in_repo([{"description": "se .github/workflows/ci.yml och README.md"}], filer) == \
+        [".github/workflows/ci.yml"], "vägen kontrolleras, det nakna namnet lämnas i fred"
+    assert paths_not_in_repo([{"description": "ingen sokvag alls har"}], filer) == [], "utan väg inget besked"
 
     # Riktningen i GitHubs jämförelse: ahead_by räknas mot grenen på GitHub, behind_by mot
     # klonen. Vänds de blir raden om vem som ligger före en lögn (mätt 2026-10-05: 215).
