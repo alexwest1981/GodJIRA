@@ -28,6 +28,7 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 import tempfile
+import queue
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -2075,8 +2076,13 @@ def state() -> dict:
     return dict(cached("state", build))
 
 
-def import_parse(payload: dict) -> tuple[int, dict]:
-    """A wish plus the papers it came with -> an issue proposal. Writes nothing."""
+def import_parse(payload: dict, on_line=None) -> tuple[int, dict]:
+    """A wish plus the papers it came with -> an issue proposal. Writes nothing.
+
+    `on_line` finns för panelen: med den talar panelen med motorn direkt och lämnar varje
+    rad vidare medan den kommer (stegen, agentens händelser), i stället för att vänta på
+    hela svaret. Samma kontroller och samma bokföring på båda vägarna -- en implementation.
+    """
     wish = (payload.get("wish") or "").strip() or DEFAULT_WISH
     repo = str(payload.get("repo") or "").strip()
     if repo and not re.fullmatch(r"[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)?", repo):
@@ -2124,10 +2130,36 @@ def import_parse(payload: dict) -> tuple[int, dict]:
         args += ["--pdf", str(sheet), "--lang", panel_language("")]
         for path in paths:
             args += ["--context", str(path)]
-        env = seam(*args, timeout=600)
-        data = env.get("payload") or {}
-        if env.get("exitCode") != 0 or not isinstance(data.get("proposal"), list) or not data["proposal"]:
-            return 200, {"ok": False, "error": data.get("error") or first_line(env)}
+        data = {}
+        if on_line is None:
+            env = seam(*args, timeout=600)
+            data = env.get("payload") or {}
+            if env.get("exitCode") != 0 or not isinstance(data.get("proposal"), list) or not data["proposal"]:
+                return 200, {"ok": False, "error": data.get("error") or first_line(env)}
+        else:
+            # Strömmen: motorn talar direkt (args[0] är "flow", som seam använder för att
+            # välja motor -- här är vi redan framme) och varje rad går vidare medan den kommer.
+            proc = subprocess.Popen([sys.executable, str(ENGINE), *args[1:], "--stream"],
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            sista = ""
+            for line in proc.stdout:
+                if not line.strip():
+                    continue
+                sista = line
+                on_line(line if line.endswith("\n") else line + "\n")
+            try:
+                proc.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            if proc.returncode != 0:
+                var = (proc.stderr.read() or "").strip().splitlines()
+                return 200, {"ok": False, "error": var[-1] if var else "motorn föll"}
+            try:
+                data = json.loads(sista)
+            except ValueError:
+                return 200, {"ok": False, "error": "motorn svarade inte med ett förslag"}
+            if not isinstance(data.get("proposal"), list) or not data["proposal"]:
+                return 200, {"ok": False, "error": data.get("error") or "inget förslag"}
         token = secrets.token_urlsafe(9)
         try:
             blob = sheet.read_bytes()
@@ -2144,6 +2176,35 @@ def import_parse(payload: dict) -> tuple[int, dict]:
                      "repo": repo, "agent": data.get("agent"), "context": data.get("context")}
     finally:
         shutil.rmtree(folder, ignore_errors=True)   # the papers are not kept
+
+
+def import_stream(payload: dict):
+    """Importen som den händer: motorns rader vidare ut medan de kommer.
+
+    Samma import som import_parse (en implementation), körd i en egen tråd så att
+    generatorn kan lämna raderna vidare medan den arbetar. Sista raden är svaret, med
+    type=done -- samma form som chatten, så panelen läser den med samma kod.
+    """
+    kö, ut = queue.Queue(), {}
+
+    def kör():
+        try:
+            ut["svar"] = import_parse(payload, on_line=kö.put)
+        except Exception as exc:  # noqa: BLE001 -- en krasch får inte tystna i strömmen
+            ut["svar"] = 500, {"ok": False, "error": "{}: {}".format(type(exc).__name__, exc)}
+        finally:
+            kö.put(None)
+
+    tråd = threading.Thread(target=kör, daemon=True)
+    tråd.start()
+    while True:
+        rad = kö.get()
+        if rad is None:
+            break
+        yield rad
+    tråd.join(timeout=5)
+    _, answer = ut.get("svar") or (500, {"ok": False, "error": "importen svarade inget"})
+    yield json.dumps(dict(answer, type="done"), ensure_ascii=False) + "\n"
 
 
 def import_apply(payload: dict) -> tuple[int, dict]:
@@ -2385,6 +2446,9 @@ class Handler(BaseHTTPRequestHandler):
         if handler is chat_ask and payload.get("stream"):
             self._chat_stream(payload)
             return
+        if handler is import_parse and payload.get("stream"):
+            self._import_stream(payload)
+            return
         try:
             code, answer = handler(payload)
         except Exception as exc:  # noqa: BLE001 -- a crash must not look like a dead panel
@@ -2392,7 +2456,13 @@ class Handler(BaseHTTPRequestHandler):
         self._json(code, answer)
 
     def _chat_stream(self, payload: dict) -> None:
-        """Chatten som den kommer: motorns rader vidare ut medan de skrivs.
+        self._stream(chat_stream(payload))
+
+    def _import_stream(self, payload: dict) -> None:
+        self._stream(import_stream(payload))
+
+    def _stream(self, lines) -> None:
+        """En ström av NDJSON-rader ut till panelen: det som händer, medan det händer.
 
         HTTP/1.0 utan Content-Length: anslutningen stängs när motorn är klar, och det är
         ramen. Panelen läser med en reader och får varje rad för sig -- den behöver inte
@@ -2406,7 +2476,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.close_connection = True
         try:
-            for line in chat_stream(payload):
+            for line in lines:
                 self.wfile.write(line.encode("utf-8"))
                 self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError, OSError):

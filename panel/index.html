@@ -279,6 +279,11 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   .impbar { display: flex; align-items: center; gap: 8px; padding-top: 10px; margin-top: 6px; border-top: 1px solid var(--line); }
   #impWish { width: 100%; resize: vertical; background: var(--panel); color: var(--text);
              border: 1px solid var(--line); border-radius: 6px; padding: 8px; font: inherit; }
+  /* Importens terminal: en rad per steg, medan stegen händer. */
+  .term { margin: 6px 0 0; padding: 8px 10px; max-height: 190px; overflow: auto;
+          border: 1px solid var(--border); border-radius: 8px; white-space: pre-wrap;
+          font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
+          color: var(--muted-foreground); }
   #impNote.err { color: var(--red); }
   #impNote.warn { color: var(--amber, #e0a33e); }
   .empty { color: var(--text-2); font-size: 12.5px; padding: 3px 0; }
@@ -748,6 +753,8 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
             <button class="chip" data-act="imp-parse" id="impParse">Tolka → förslag</button>
           </div>
           <div class="meta" id="impNote"></div>
+          <!-- Stegen medan de händer: underlaget, koden, agentens verktyg, förslaget. -->
+          <pre class="term" id="impLog" hidden></pre>
         </div>
       </div>
       <div class="panel" id="impProposalPanel" hidden>
@@ -3924,7 +3931,7 @@ function renderRepos() {
 // A document in, a proposal out, and nothing written to Jira until a human has
 // ticked off what should be there. The panel sends back only *which* of the
 // proposed items to write -- never issue text of its own.
-const IMP = { files: [], plan: [], token: "", spent: false, keep: new Set(), busy: false,
+const IMP = { files: [], plan: [], token: "", spent: false, keep: new Set(), busy: false, log: [],
               note: "", bad: false, created: [], project: "", projectSource: "", repo: "",
               pdf: false, pdfError: "", sprints: false, made: [], sprintError: "" };
 const projectKey = () => (board() || {}).projectKey || "SCRUM";
@@ -3996,6 +4003,12 @@ function renderImport() {
   // IMP.files och knappen lästes upp, men kvittensen syntes aldrig).
   document.getElementById("impFilesNote").textContent = filesLabel();
   const write = mayCreateIssues();       // före noten: noten säger varför knappen är av
+  const log = document.getElementById("impLog");
+  if (log) {
+    log.hidden = !IMP.log.length;
+    log.textContent = IMP.log.join("\n");
+    log.scrollTop = log.scrollHeight;
+  }
   const note = document.getElementById("impNote");
   note.className = "meta" + (IMP.note ? (IMP.bad ? " err" : "") : "");
   note.textContent = IMP.note ||
@@ -4056,11 +4069,38 @@ function renderImport() {
   }
 }
 
+// En rad i importens terminal. Taket håller listan kort: en lång körning får inte växa
+// utan ände i minnet, och de sista raderna är de som betyder något.
+function impLogLine(text) {
+  IMP.log.push(String(text || ""));
+  if (IMP.log.length > 300) IMP.log.shift();
+  const el = document.getElementById("impLog");
+  if (el) {
+    el.hidden = false;
+    el.textContent = IMP.log.join("\n");
+    el.scrollTop = el.scrollHeight;
+  }
+}
+
+// En rad ur strömmen. Stegen ritas i terminalen; agentens egna händelser visas som korta
+// rader (verktygsanropen är det som syns medan de händer); sista raden är svaret.
+function impEvent(line) {
+  const text = (line || "").trim();
+  if (!text) return null;
+  let event = null;
+  try { event = JSON.parse(text); } catch (e) { return null; }
+  if (!event || typeof event !== "object") return null;
+  if (event.type === "step") { impLogLine(event.text || ""); return null; }
+  if (event.type === "error") { impLogLine("fel: " + (event.error || "")); return null; }
+  if (event.type === "done" || event.ok !== undefined) return event;
+  return null;
+}
+
 async function impParse() {
   const wish = document.getElementById("impWish").value.trim();
   if (!IMP.files.length || IMP.busy) return;
   IMP.busy = true; IMP.bad = false; IMP.plan = []; IMP.token = ""; IMP.spent = false;
-  IMP.pdf = false; IMP.pdfError = "";
+  IMP.pdf = false; IMP.pdfError = ""; IMP.log = [];
   // Mätta 133 s för ett litet dokument och 240 s för en pdf: "några sekunder" var en lögn,
   // och en lögn om väntetiden får folk att tro att knappen är död. Ingen siffra lovas här --
   // räknaren nedan visar hur länge det faktiskt har pågått, och den är sann hela vägen.
@@ -4079,9 +4119,25 @@ async function impParse() {
   try {
     const files = [];
     for (const f of IMP.files) files.push({ name: f.name, b64: b64(await f.arrayBuffer()) });
+    // Strömmen: motorn berättar varje steg medan det händer (underlaget, koden, agentens
+    // verktygsanrop, förslaget), så väntan syns i terminalen i stället för att bara räknas.
     const r = await fetch("/api/import", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ wish, files, repo: (document.getElementById("impRepo") || {}).value || "" }) });
-    const answer = await r.json();
+      body: JSON.stringify({ wish, files, repo: (document.getElementById("impRepo") || {}).value || "",
+                             stream: true }) });
+    if (!r.ok || !r.body) throw new Error("importen gick inte fram");
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let rest = "", answer = null;
+    for (;;) {
+      const bit = await reader.read();
+      if (bit.done) break;
+      rest += decoder.decode(bit.value, { stream: true });
+      const lines = rest.split("\n");
+      rest = lines.pop();
+      for (const line of lines) answer = impEvent(line) || answer;
+    }
+    if (rest.trim()) answer = impEvent(rest) || answer;
+    if (!answer) throw new Error("motorn svarade inget");
     if (!answer.ok) throw new Error(answer.error || "svaret gick inte att läsa");
     IMP.plan = answer.proposal || []; IMP.token = answer.token || "";
     IMP.project = answer.project || ""; IMP.projectSource = answer.projectSource || "";

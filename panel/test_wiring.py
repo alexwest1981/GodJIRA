@@ -450,6 +450,13 @@ console.log(bad.length ? "FEL " + bad.join(" | ") : "OK");
           "sökningens lyssnare kopplas på ett ställe")
     check('answer["needs"] = needs_list(answer)' in server and "def needs_list(" in server,
           "kön räknas i servern ur state-svaret")
+    check('id="impLog"' in html and "function impEvent(line)" in html
+          and "stream: true }) });" in html and "def import_stream(payload: dict)" in server
+          and 'handler is import_parse and payload.get("stream")' in server,
+          "importen visar stegen medan de händer i stället för att bara räkna sekunder")
+    check("def import_parse(payload: dict, on_line=None)" in server
+          and "on_line(line if line.endswith" in server,
+          "samma import kör både den buffrade vägen och strömmen")
     check("function driftRow(s)" in html and "const drift = driftRow(s);" in html
           and "return drift + spark(t.perDag)" in html,
           "den körande commiten står i sajtens detalj, inte bara för dem med trafik")

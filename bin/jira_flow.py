@@ -130,8 +130,13 @@ MEMORY_FILE = Path.home() / ".local/state/jira-flow/memory.jsonl"
 MEMORY_DAYS = int(os.environ.get("JIRA_FLOW_MEMORY_DAYS", "7"))
 MEMORY_TURNS = 20       # turer som får plats i prompten
 MEMORY_CHARS = 4000     # och hur mycket de får kosta, sammanlagt
-PLAN_EPICS = int(os.environ.get("JIRA_FLOW_PLAN_EPICS", "3"))
-PLAN_MAX = int(os.environ.get("JIRA_FLOW_PLAN_MAX", "10"))
+# Taken är vakter mot en agent som spårar ur, inte mot en verklig backlog. Ett tak på 10
+# kastade 2026-10-05 bort ett riktigt svar: en pdf gav 16 ärenden med epics, filnamn ur
+# koden och sprints -- och hela listan försvann på en sifferkontroll, trots att panelen
+# visar förslagen som en lista man bockar av. "Är det 400 scrums som måste göras, så måste
+# 400 scrums göras": taket skall ligga där ingen rimlig uppdelning når det.
+PLAN_EPICS = int(os.environ.get("JIRA_FLOW_PLAN_EPICS", "50"))
+PLAN_MAX = int(os.environ.get("JIRA_FLOW_PLAN_MAX", "500"))
 PLAN_SPRINTS = int(os.environ.get("JIRA_FLOW_PLAN_SPRINTS", "3"))
 
 # Ramen runt pappret som importen lägger fram. Uppgifterna står som de skrevs, i kundens
@@ -3090,6 +3095,17 @@ def memory_lines(rows: list, limit: int = MEMORY_TURNS, budget: int = MEMORY_CHA
     return picked, len(rows) - len(picked) + cut
 
 
+def say_step(text: str) -> None:
+    """Ett steg ut till den som tittar, på samma väg som agentens egna händelser.
+
+    NDJSON på stdout, en rad per steg: panelen ritar den medan den kommer i stället för att
+    visa en räknare och hoppas. Bara när --stream är satt -- annars är stdout svaret, och
+    ett steg mitt i det vore skräp i svaret.
+    """
+    sys.stdout.write(json.dumps({"type": "step", "text": text}, ensure_ascii=False) + "\n")
+    sys.stdout.flush()
+
+
 def read_agent_reply(out: str) -> str:
     """Svaret ur det CLI:t skrev -- inte dekoren runt det.
 
@@ -3475,11 +3491,23 @@ def cmd_plan(client_, args) -> int:
     repo_dir = plan_repo_dir(args)
     project, project_source = link_project(args, repo_dir)
 
+    # Stegen: vad som läses och när. Panelen visar dem medan de händer, så en väntan på
+    # flera minuter ser ut som arbete i stället för som en död knapp.
+    streaming = bool(getattr(args, "stream", False))
+
+    def step(text):
+        if streaming:
+            say_step(text)
+
     docs_text, docs_notes, repo_text, repo_info = "", [], "", {}
     if not approved:
         try:
+            step("läser underlaget …")
             docs_text, docs_notes = read_context(getattr(args, "context", []) or [])
+            step("underlaget: {} dokument, {} tecken".format(
+                len(docs_notes), sum(n.get("chars") or 0 for n in docs_notes)))
             if repo_dir:
+                step("läser repot {} …".format(os.path.basename(str(repo_dir))))
                 repo_text, repo_info = repo_context(repo_dir)
                 if repo_info.get("error"):
                     raise RuntimeError("--repo {}: {}".format(repo_dir, repo_info["error"]))
@@ -3487,6 +3515,8 @@ def cmd_plan(client_, args) -> int:
                 # finns, och filnamnen styr vilka filer som läses (önskemålets ord).
                 code_text, code_info = code_context(Path(repo_dir), code_words(wish))
                 repo_info["code"] = code_info
+                step("koden: {} filer i {}".format(
+                    code_info.get("files") or 0, repo_info.get("repo") or os.path.basename(str(repo_dir))))
                 if code_text:
                     repo_text = "{}\n\n{}".format(repo_text, code_text) if repo_text else code_text
         except (RuntimeError, OSError) as exc:
@@ -3515,8 +3545,22 @@ def cmd_plan(client_, args) -> int:
         answered_by, answer, items = ["(no agent answered)"], "", []
         try:
             answered_by = agent_argv(prompt)[0]
-            answer = ask_agent(prompt)
+            step("agenten läser underlaget och koden, och föreslår ärenden …")
+            if streaming:
+                # Agentens egna händelser vidare ut, som chatten gör: verktygsanropen är
+                # det som visas medan de händer.
+                def emit(event):
+                    if event.get("type") == "tool_use":
+                        say_step("verktyg: {}".format(str(event.get("name") or "")[:60]))
+                    sys.stdout.write(json.dumps(event, ensure_ascii=False) + "\n")
+                    sys.stdout.flush()
+                answer = ask_agent_stream(prompt, None, emit)
+            else:
+                answer = ask_agent(prompt)
             items = parse_plan(answer)
+            epics = [i for i in items if is_epic(i)]
+            step("förslaget: {} ärenden, {} epics, {} sprints".format(
+                len(items), len(epics), len(plan_sprints(items))))
         except (ValueError, RuntimeError) as exc:
             # Ett svar som inte går att tolka sparas: annars är det borta för alltid och
             # den som felsöker har bara felet att gå på. Svaret kan innehålla kundtext,
@@ -3559,10 +3603,14 @@ def cmd_plan(client_, args) -> int:
     if args.json and not args.create:
         # Med --create kommer ett enda dokument, längst ner, med både förslaget och
         # nycklarna: en maskinläsare ska inte behöva tolka två JSON-dokument i rad.
-        print(json.dumps({"ok": True, "created": False, "proposal": items,
-                          "project": project, "projectSource": project_source, "agent": answered_by,
-                          "pdf": pdf_path, "pdfError": pdf_error,
-                          "context": context_note}, ensure_ascii=False))
+        # Med --stream slutar raden strömmen: type=done säger att svaret är färdigt.
+        out = {"ok": True, "created": False, "proposal": items,
+               "project": project, "projectSource": project_source, "agent": answered_by,
+               "pdf": pdf_path, "pdfError": pdf_error,
+               "context": context_note}
+        if streaming:
+            out["type"] = "done"
+        print(json.dumps(out, ensure_ascii=False))
     elif not args.json:
         if docs_notes or repo_info:
             print("read with the wish: {} document(s) ({} chars){}".format(
@@ -4318,6 +4366,11 @@ def selftest() -> int:
         raise AssertionError("platshållartext skulle ha vägrats")
     except ValueError as exc:
         assert "echoed" in str(exc), exc
+    # Ett svar på 16 ärenden är ett riktigt svar, inte ett tak-fel: en pdf gav precis det,
+    # och hela förslaget kastades. Taket skall bara fånga en agent som spårar ur.
+    riktigt = "[" + ",".join('{"summary": "uppgift %d"}' % i for i in range(16)) + "]"
+    assert len(parse_plan(riktigt)) == 16, "sexton ärenden skall gå igenom"
+    assert PLAN_MAX >= 200, "taket skall ligga over en rimlig uppdelning"
     for bad, why in (("inga ärenden här, bara prat", "utan array"),
                      ('{"summary": "inte en lista"}', "objekt i stället för lista"),
                      ("[{\"type\": \"Task\"}]", "utan summary"),
@@ -5223,6 +5276,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_plan.add_argument("--create", action="store_true",
                         help="write exactly the proposed list (default: write nothing)")
     p_plan.add_argument("--json", action="store_true", help="machine-readable result")
+    p_plan.add_argument("--stream", action="store_true",
+                        help="report each step as it happens (NDJSON on stdout)")
     p_plan.add_argument("--project", default="",
                         help="override the project; default comes from the repo's link")
     p_plan.add_argument("--context", action="append", default=[], metavar="PATH",
