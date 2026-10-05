@@ -2797,7 +2797,7 @@ def sprint_of(item: dict) -> int:
     return max(1, int(found.group())) if found else 1
 
 
-def parse_plan(text: str):
+def parse_plan(text: str, warnings: list = None):
     """Ärendena ur agentens svar. Hel array eller inget: en halv lista blir aldrig
     några ärenden, och skräp ger fel i stället för halvskrivna tavlor."""
     body = (text or "").strip()
@@ -2853,17 +2853,52 @@ def parse_plan(text: str):
         raise ValueError("the agent proposed {} issues; the cap is {} "
                          "(JIRA_FLOW_PLAN_MAX)".format(len(out), PLAN_MAX))
     epics = [item["summary"] for item in out if is_epic(item)]
+
+    def epic_of(namn: str) -> str:
+        """Epikens riktiga sammanfattning, ur det agenten skrev.
+
+        Agenten skriver ofta en förkortning: "Arbetsordertyper" för "Arbetsordertyper, utkast
+        och livscykel i logik och databas". Ett helt svar kastades förr på det (mätt
+        2026-10-05). Exakt träff först, sedan förled -- men bara om förledet pekar på EN
+        epic: en gissning mitt emellan två är värre än ett fel, för då hamnar uppgiften under
+        fel rot utan att någon ser det.
+        """
+        namn = str(namn or "").strip()
+        if not namn:
+            return ""
+        if namn in epics:
+            return namn
+        små = namn.lower()
+        träffar = [e for e in epics
+                   if e.lower().startswith(små) or små.startswith(e.lower())]
+        return träffar[0] if len(träffar) == 1 else ""
     if len(epics) > PLAN_EPICS:
         raise ValueError("the agent proposed {} epics; the cap is {} "
                          "(JIRA_FLOW_PLAN_EPICS)".format(len(epics), PLAN_EPICS))
-    # En uppgift som pekar på en epic som inte finns i listan blir inget ärende under
-    # den. Ett tyst träd utan rot är värre än ett fel: hellre ett omtag än fel tavla.
+    # En uppgift som pekar på en epic som inte finns i listan blir inget ärende under den.
+    # Ett tyst träd utan rot är värre än ett fel -- men svaret kastas inte: agenten pekade
+    # på en rot den menade, och ett helt svar försvann förr på det (mätt 2026-10-05: 1 epic
+    # listad, 4 refererade, 19 ärenden kastade -- och användaren hade bett om flera epics).
+    # Den saknade epiken läggs till i stället, och det sägs högt i en varning: förslaget
+    # granskas av en människa innan något skrivs, och då är en synlig epic bättre än inget.
+    saknade = []
     for item in out:
         if is_epic(item):
             item["epic"] = ""
-        elif item["epic"] and item["epic"] not in epics:
-            raise ValueError("an issue named an epic that is not in the list: {!r}".format(
-                item["epic"][:60]))
+        elif item["epic"]:
+            sådan = epic_of(item["epic"])
+            if sådan:
+                item["epic"] = sådan      # agentens förkortning -> epikens eget namn
+            elif item["epic"] not in saknade:
+                saknade.append(item["epic"])
+    if saknade:
+        # Epikerna först: ett barn som skrivs före sin epic blir ett träd utan rot, och
+        # ordningen i listan får inte styra (samma regel som skrivningen).
+        out = [{"summary": namn, "type": "Epic", "description": "", "priority": "",
+                "epic": "", "sprint": out[0]["sprint"] if out else 1} for namn in saknade] + out
+        if warnings is not None:
+            warnings.append("{} epic(s) the agent referred to were not in its list and were "
+                            "added: {}".format(len(saknade), ", ".join(s[:40] for s in saknade)))
     return out
 
 
@@ -3640,6 +3675,7 @@ def cmd_plan(client_, args) -> int:
             return 2
 
     board = client_.board(project)
+    varningar = []          # det agenten sade som en människa bör se innan hon godkänner
     if approved:
         # Samma kontroll som agentens svar går igenom: en lista någon har redigerat i
         # är inte mer pålitlig än en modell, och en halv lista ska bli noll ärenden.
@@ -3683,7 +3719,10 @@ def cmd_plan(client_, args) -> int:
                 answer = ask_agent_stream(prompt, None, emit)
             else:
                 answer = ask_agent(prompt)
-            items = parse_plan(answer)
+            varningar = []
+            items = parse_plan(answer, varningar)
+            for varning in varningar:
+                step(varning)
             epics = [i for i in items if is_epic(i)]
             step("förslaget: {} ärenden, {} epics, {} sprints".format(
                 len(items), len(epics), len(plan_sprints(items))))
@@ -3731,6 +3770,7 @@ def cmd_plan(client_, args) -> int:
         # nycklarna: en maskinläsare ska inte behöva tolka två JSON-dokument i rad.
         # Med --stream slutar raden strömmen: type=done säger att svaret är färdigt.
         out = {"ok": True, "created": False, "proposal": items,
+               "warnings": varningar,
                "project": project, "projectSource": project_source, "agent": answered_by,
                "pdf": pdf_path, "pdfError": pdf_error,
                "context": context_note}
@@ -4492,6 +4532,27 @@ def selftest() -> int:
         raise AssertionError("platshållartext skulle ha vägrats")
     except ValueError as exc:
         assert "echoed" in str(exc), exc
+    # En epic som agenten pekade på men inte listade läggs till i stället för att kasta
+    # svaret, och orden sägs högt. En riktig epic (förkortad) träffas av förledet.
+    varn = []
+    lagade = parse_plan('[{"summary": "Servicepaket", "type": "Epic", "epic": "", "sprint": 1},'
+                        ' {"summary": "Bokningen bär flera tjänster", "type": "Story",'
+                        '  "epic": "Servicepak", "sprint": 1},'
+                        ' {"summary": "Nytt underlag", "type": "Story", "epic": "Fakturering",'
+                        '  "sprint": 2}]', varn)
+    # 1 epic + 2 uppgifter från agenten, och den saknade epiken tillagd först
+    assert len(lagade) == 4 and "Fakturering" in [i["summary"] for i in lagade if is_epic(i)], lagade
+    assert lagade[0]["epic"] == "" and lagade[0]["type"] == "Epic", "epiken först i listan"
+    assert [i for i in lagade if i["summary"] == "Bokningen bär flera tjänster"][0]["epic"] == \
+        "Servicepaket", "en förkortning träffar sin epic"
+    assert varn and "Fakturering" in varn[0], varn
+    # Två tänkbara rötter är ingen träff: då gissar vi inte, utan lägger till den nya
+    varn2 = []
+    två = parse_plan('[{"summary": "Servicepaket för bilar", "type": "Epic", "epic": "", "sprint": 1},'
+                     ' {"summary": "Servicepaket för båtar", "type": "Epic", "epic": "", "sprint": 1},'
+                     ' {"summary": "Uppgift", "type": "Story", "epic": "Servicepaket", "sprint": 1}]', varn2)
+    assert len([i for i in två if is_epic(i)]) == 3, "en tvetydig referens blir en egen epic, inte en gissning"
+
     # Markören för klippt underlag: siffrorna med, och tom när inget klipptes. Ett kravdokument
     # på 7999 tecken tappade sina sista 1999 med den gamla budgeten, och "klippt" utan siffror
     # sade inte om det saknades en rad eller en tredjedel.

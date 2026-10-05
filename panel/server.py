@@ -2207,8 +2207,18 @@ def import_parse(payload: dict, on_line=None) -> tuple[int, dict]:
             except subprocess.TimeoutExpired:
                 proc.kill()
             if proc.returncode != 0:
+                # Motorns egen feltext står i den sista JSON-raden (den som redan lästes):
+                # stderr är ofta tom, och "motorn föll" sade ingenting om varför (mätt).
+                svar = {}
+                try:
+                    svar = json.loads(sista) if sista else {}
+                except ValueError:
+                    svar = {}
+                if isinstance(svar, dict) and svar.get("error"):
+                    return 200, {"ok": False, "error": svar["error"]}
                 var = (proc.stderr.read() or "").strip().splitlines()
-                return 200, {"ok": False, "error": var[-1] if var else "motorn föll"}
+                return 200, {"ok": False, "error": var[-1] if var else
+                             "motorn föll (kod {})".format(proc.returncode)}
             try:
                 data = json.loads(sista)
             except ValueError:
