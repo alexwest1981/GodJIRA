@@ -91,7 +91,6 @@ _lock = threading.Lock()
 # A proposal waiting for a human. The imported documents are gone by the time it
 # exists: what is kept is the list the panel showed, and the client may only name
 # which of *those* items to write -- it can never send issue text of its own.
-_imports: dict[str, dict] = {}
 IMPORT_TTL = 3600
 
 
@@ -2134,10 +2133,6 @@ def import_parse(payload: dict, on_line=None) -> tuple[int, dict]:
     files = payload.get("files")
     if not isinstance(files, list) or not files:
         return 400, {"ok": False, "error": "inga dokument bifogades"}
-    now = time.time()
-    for token in [t for t, e in _imports.items() if now - e["at"] > IMPORT_TTL]:
-        _imports.pop(token, None)
-
     folder = tempfile.mkdtemp(prefix="godjira-import-")
     try:
         paths = []
@@ -2231,9 +2226,9 @@ def import_parse(payload: dict, on_line=None) -> tuple[int, dict]:
         except OSError:
             blob = b""      # pappret är inte förslaget: ett misslyckat papper får inte fälla det
         # Repot följer med godkännandet: skrivningen ska landa där förhandsgranskningen sa.
-        _imports[token] = {"proposal": data["proposal"], "at": time.time(), "repo": repo,
-                           "pdf": blob,
-                           "pdfName": "plan-{}.pdf".format(time.strftime("%Y-%m-%d"))}
+        # På disk, så att en omstart av panelen inte tappar ett giltigt godkännande.
+        import_save(token, {"proposal": data["proposal"], "at": time.time(), "repo": repo,
+                            "pdfName": "plan-{}.pdf".format(time.strftime("%Y-%m-%d"))}, blob)
         return 200, {"ok": True, "token": token, "proposal": data["proposal"],
                      "project": data.get("project") or PROJECT,
                      "projectSource": data.get("projectSource") or "",
@@ -2274,7 +2269,7 @@ def import_stream(payload: dict):
 
 def import_apply(payload: dict) -> tuple[int, dict]:
     """The ticked part of the proposal, and only that. One approval, used once."""
-    entry = _imports.pop(str(payload.get("token") or ""), None)
+    entry = import_take(str(payload.get("token") or ""), radera=True)   # en användning
     if not entry:
         return 404, {"ok": False, "error": "godkännandet gäller inte längre (använt, eller äldre än en timme)"}
     proposal = entry["proposal"]
@@ -2315,13 +2310,72 @@ def import_apply(payload: dict) -> tuple[int, dict]:
         shutil.rmtree(folder, ignore_errors=True)
 
 
+def _import_dir():
+    return PANEL_KONFIG.parent / "imports"
+
+
+def _import_token(token: str) -> str:
+    """Nyckeln blir ett filnamn: bara det teckensnitt secrets.token_urlsafe ger."""
+    rent = re.sub(r"[^A-Za-z0-9_-]", "", str(token or ""))
+    return rent if 8 <= len(rent) <= 43 else ""
+
+
+def import_save(token: str, entry: dict, blob: bytes) -> None:
+    """Förslaget och pappret på disk -- inte bara i minnet.
+
+    Mätt 2026-10-05: panelen startades om mellan förslaget och klicket på "planen som PDF",
+    och nyckeln (som bara fanns i minnet) var borta: 404 på ett godkännande som var helt
+    giltigt, och webbläsaren ville spara svaret som "pdf.txt". Ett godkännande skall dö av
+    att bli använt eller av att en timme gått -- inte av att panelen startade om.
+    """
+    nyckel = _import_token(token)
+    if not nyckel:
+        return
+    mapp = _import_dir()
+    mapp.mkdir(parents=True, exist_ok=True)
+    (mapp / (nyckel + ".json")).write_text(json.dumps(entry, ensure_ascii=False), encoding="utf-8")
+    if blob:
+        (mapp / (nyckel + ".pdf")).write_bytes(blob)
+
+
+def import_take(token: str, radera: bool = False) -> dict:
+    """Godkännandet, ur filen. Utgångna städas på vägen -- samma ett-timmes regel."""
+    nyckel = _import_token(token)
+    if not nyckel:
+        return {}
+    mapp = _import_dir()
+    förfaller = time.time() - IMPORT_TTL
+    for gammal in sorted(mapp.glob("*.json")) if mapp.is_dir() else []:
+        try:
+            if gammal.stat().st_mtime < förfaller:
+                gammal.unlink(missing_ok=True)
+                gammal.with_suffix(".pdf").unlink(missing_ok=True)
+        except OSError:
+            pass
+    fil = mapp / (nyckel + ".json")
+    try:
+        entry = json.loads(fil.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(entry, dict) or time.time() - (entry.get("at") or 0) > IMPORT_TTL:
+        return {}
+    if radera:
+        fil.unlink(missing_ok=True)
+        fil.with_suffix(".pdf").unlink(missing_ok=True)
+    return entry
+
+
 def import_blob(token: str) -> tuple:
     """Pappret som hörde till ett förslag. Det gäller lika länge som godkännandet (en
-    timme) och försvinner med det -- ett papper som ingen förslag hör till finns inte."""
-    entry = _imports.get(str(token or "")) or {}
-    if not entry or time.time() - (entry.get("at") or 0) > IMPORT_TTL or not entry.get("pdf"):
+    timme) och försvinner med det -- ett papper som inget förslag hör till finns inte."""
+    entry = import_take(token)
+    if not entry:
         return b"", ""
-    return entry["pdf"], entry.get("pdfName") or "plan.pdf"
+    try:
+        blob = (_import_dir() / (_import_token(token) + ".pdf")).read_bytes()
+    except OSError:
+        return b"", ""
+    return (blob, entry.get("pdfName") or "plan.pdf") if blob else (b"", "")
 
 
 class Handler(BaseHTTPRequestHandler):

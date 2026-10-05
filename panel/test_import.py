@@ -137,6 +137,28 @@ def main() -> int:
         code, answer = post(base + "/api/import/apply", {"token": token, "keep": [0]}, quiet_on=(404,))
         check("the approval cannot be used twice (404)", code == 404, code)
 
+    # Ett godkännande får inte dö med en omstart: nyckeln låg bara i minnet, så ett klick på
+    # "planen som PDF" efter en omstart av panelen gav 404 -- och webbläsaren ville spara
+    # svaret som "pdf.txt" (mätt 2026-10-05, tre klick i journalen). Nu ligger förslaget och
+    # pappret på disk, och ett använt godkännande städas bort.
+    import time
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import server
+    server.import_save("provnyckel1234", {"proposal": [{"summary": "Prov", "type": "Story"}],
+                                          "at": time.time(), "repo": "", "pdfName": "plan-prov.pdf"},
+                       b"%PDF-1.4 prov")
+    with urllib.request.urlopen(base + "/api/import/pdf?token=provnyckel1234", timeout=60) as svar:
+        papper = svar.read()
+        check("pappret kommer även efter en omstart (inte 404 -> \"pdf.txt\")",
+              svar.status == 200 and svar.headers.get("Content-Type") == "application/pdf"
+              and papper[:5] == b"%PDF-" and "plan-prov.pdf" in str(svar.headers.get("Content-Disposition")),
+              (svar.status, svar.headers.get("Content-Type"), papper[:5]))
+    check("en nyckel som inte är en nyckel ger inget",
+          server.import_take("../../etc/passwd") == {})
+    server.import_take("provnyckel1234", radera=True)
+    check("ett använt godkännande städas bort från disken",
+          not (server._import_dir() / "provnyckel1234.json").exists())
+
     print()
     if FAILED:
         print("{} check(s) failed".format(len(FAILED)))
