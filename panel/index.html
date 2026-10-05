@@ -3934,6 +3934,9 @@ const jiraMode = () => (STATE && STATE.jira.mode === "real" ? "skarpt läge" : "
 function jiraOrigin() {
   try { return new URL((issues()[0] || {}).url || "").origin; } catch { return ""; }
 }
+// Hur länge något har pågått, som siffror: 2:14. Inga ord att översätta.
+const mmss = ms => Math.floor(ms / 60000) + ":" + String(Math.floor(ms / 1000) % 60).padStart(2, "0");
+
 function b64(buffer) {   // chunked: one spread over a big file overflows the stack
   const bytes = new Uint8Array(buffer); let out = "";
   for (let i = 0; i < bytes.length; i += 8192) out += String.fromCharCode(...bytes.subarray(i, i + 8192));
@@ -4058,9 +4061,21 @@ async function impParse() {
   if (!IMP.files.length || IMP.busy) return;
   IMP.busy = true; IMP.bad = false; IMP.plan = []; IMP.token = ""; IMP.spent = false;
   IMP.pdf = false; IMP.pdfError = "";
-  // Mätta 133 s för ett litet dokument: "några sekunder" var en lögn, och en lögn om
-  // väntetiden får folk att tro att knappen är död.
-  IMP.note = "tolkar underlaget — agenten läser dokumenten och koden, det tar en till två minuter"; renderImport();
+  // Mätta 133 s för ett litet dokument och 240 s för en pdf: "några sekunder" var en lögn,
+  // och en lögn om väntetiden får folk att tro att knappen är död. Ingen siffra lovas här --
+  // räknaren nedan visar hur länge det faktiskt har pågått, och den är sann hela vägen.
+  IMP.note = "tolkar underlaget — agenten läser dokumenten och koden"; renderImport();
+  // Klockan: texten ovan är redan översatt av panelen när den ritas, så basen läses ur
+  // elementet och räknaren hängs på efteråt. Skulle raden skrivas om på svenska varje
+  // sekund hade översättningen slagits ut för alla som inte kör svenska.
+  const tickEl = document.getElementById("impNote");
+  const bas = ((tickEl && tickEl.textContent) || IMP.note).trim();
+  const start = Date.now();
+  clearInterval(IMP.tick);
+  IMP.tick = setInterval(() => {
+    const el = document.getElementById("impNote");
+    if (el) el.textContent = bas + " (" + mmss(Date.now() - start) + ")";
+  }, 1000);
   try {
     const files = [];
     for (const f of IMP.files) files.push({ name: f.name, b64: b64(await f.arrayBuffer()) });
@@ -4082,7 +4097,7 @@ async function impParse() {
                (IMP.pdfError ? ` · fördelningen kunde inte skrivas: ` + IMP.pdfError.slice(0, 120) : "");
   } catch (e) {
     IMP.bad = true; IMP.note = "kunde inte tolka: " + e.message;
-  } finally { IMP.busy = false; renderImport(); }
+  } finally { clearInterval(IMP.tick); IMP.busy = false; renderImport(); }
 }
 
 async function impApply() {

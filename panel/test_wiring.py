@@ -462,6 +462,16 @@ console.log(bad.length ? "FEL " + bad.join(" | ") : "OK");
     check("def ci_of(" in server and "def ci_state(" in server and "ov:stat:ci" in html,
           "byggstatusen läses för de kopplade repona och har ett kort")
 
+    # Väntetiden: en räknare som visar att något händer, och ingen siffra som kan bli en
+    # lögn. Mätt: ett litet dokument tar 133 s, en pdf 240 s -- "en till två minuter" var
+    # fel, och fyra tysta minuter ser ut som en död knapp.
+    check("const mmss = ms =>" in html and "IMP.tick = setInterval(" in html
+          and "clearInterval(IMP.tick)" in html,
+          "importen räknar upp väntetiden medan svaret väntar")
+    check("en till två minuter" not in html
+          and "en till två minuter" not in (HERE / "i18n" / "sv.json").read_text(encoding="utf-8"),
+          "ingen siffra lovas som mätningen inte håller")
+
     # Ett id som används två gånger: getElementById ger den FÖRSTA, och skriver man till
     # den andra hamnar texten i en nod som inte ritas. Importen hade "impFiles" på både
     # filväljaren och etiketten, så raden stod kvar på "inga filer valda" hur många filer
