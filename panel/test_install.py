@@ -116,6 +116,14 @@ def main() -> int:
         old = world / "home/.config/omarchy/plugins/custom.jira"
         old.mkdir(parents=True)
         (old / "manifest.json").write_text('{"id": "custom.jira", "name": "Jira"}')
+        # En äldre installation lämnade kvar panelens QML i plugin-mappen. Skalet laddar
+        # det som ligger där, så installern måste ta bort det -- annars står en andra
+        # upplaga av appen kvar och ser installerad ut.
+        stale = world / "plugin"
+        (stale / "views").mkdir(parents=True)
+        (stale / "components").mkdir(parents=True)
+        for gammal in ("JiraPanel.qml", "views/BoardView.qml", "components/IssueCard.qml"):
+            (stale / gammal).write_text("// gammal panel\n")
         shell = world / "home/.config/omarchy/shell.json"
         shell.write_text('{"bar": {"layout": {"right": [{"id": "custom.jira"}, '
                          '{"id": "omarchy.audio"}]}}}')
@@ -149,9 +157,13 @@ def main() -> int:
                   "manifestets id är GodJIRA.plugin")
             check("GodJIRA.plugin" in (plug / "BarWidget.qml").read_text(),
                   "widgeten registrerar sig under det nya id:t")
-            shim = plug / "bin/jira_flow.py"
+            shim = plug / "bin/jira_bridge.py"
             check(shim.is_file() and str(world / "repo") in shim.read_text() and os.access(shim, os.X_OK),
                   "shimmen pekar på kopian och går att köra")
+            check(not (plug / "bin/jira_flow.py").exists(),
+                  "flödets shim skrivs inte längre (bara panelens vyer använde den)")
+            kvar_qml = [f for f in ("JiraPanel.qml", "views", "components") if (plug / f).exists()]
+            check(not kvar_qml, "panelens QML rivs ur plugin-mappen", ", ".join(kvar_qml))
         check(not old.exists(), "gamla custom.jira-mappen tas bort")
         ids = json.dumps(json.loads(shell.read_text()))
         check("custom.jira" not in ids and "GodJIRA.plugin" in ids,

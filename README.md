@@ -122,11 +122,18 @@ rather than running the wrong thing.
 
 The plugin folder is a **copy**, not a checkout: the shell hot-reloads a local
 plugin on *any* file change inside its folder, so the app must not be edited
-there. `install.sh` copies manifest + QML + views/components + i18n + assets and
-writes one generated shim per CLI (`bin/jira_bridge.py`, `bin/jira_flow.py`) that
-hands the work to this repo. Run it again after pulling changes to QML, i18n or
-the manifest — edits to `bin/`, `panel/` or `n8n/` need no reinstall (the panel
-reads them live).
+there. `install.sh` copies the manifest, the bar widget, `i18n/` and `assets/`,
+writes one generated shim (`bin/jira_bridge.py`) that hands the work to this repo,
+and removes `JiraPanel.qml`, `views/` and `components/` if an older install left
+them behind. Run it again after pulling changes to the widget, i18n or the
+manifest — edits to `bin/`, `panel/` or `n8n/` need no reinstall (the panel reads
+them live).
+
+The plugin is **only the bar widget**: the mark, the board notifications and the
+door into the app. The app itself is the web panel, and it used to exist a second
+time in QML (`JiraPanel.qml` + `views/` + `components/`, ~6600 lines doing the same
+nine views) — that copy was deleted, because all the new work (the agent cockpit,
+the runs, the maps, the file and diff panes) only ever landed in the web panel.
 
 Variables: `PANEL_PORT=9000` (default 8788), `PANEL_BIND=0.0.0.0` to also answer
 on the local network (the panel shows your Jira token's data, so it listens on
@@ -246,13 +253,8 @@ python3 ~/.config/omarchy/plugins/GodJIRA.plugin/bin/jira_bridge.py mock-reset
 
 ```
 GodJIRA.plugin/
-├── manifest.json            plugin manifest (panel + bar widget)
-├── JiraPanel.qml            root: bridge process, connection, routing
-├── BarWidget.qml            bar launcher
-├── views/                   SummaryView, BoardView, BacklogView, TimelineView,
-│                            ReportsView, DevelopmentView, ActivityView,
-│                            SettingsView (language, connection, start view)
-├── components/              IssueCard, IssueDetail
+├── manifest.json            plugin manifest (bar widget only)
+├── BarWidget.qml            the bar's whole part: mark, notifications, the door in
 ├── i18n/                    en.json (source) + sv, de, fr, es, it, pt, nl, pl
 ├── window-rule.lua          Hyprland rule that floats the Jira window (see README)
 ├── panel/                   the hub's front door: server.py + index.html (no deps,
@@ -796,12 +798,10 @@ ta bort rättigheten *Delete Issues* från vanliga medlemmar — en status räck
 
 ## Development notes
 
-- After editing QML, restart the shell so the running engine picks the files up:
-  `omarchy-restart-shell`, then reopen the window. The plugin is declared
-  `keepLoaded: true`, so the shell keeps the loaded instance and does **not**
-  replace it on hot reload - edits to `JiraPanel.qml` (the entry point) need a
-  shell restart to show up, while the view files under `views/` are re-read when
-  a view is loaded.
+- After editing the widget, restart the shell so the running engine picks the file
+  up: `omarchy-restart-shell`. The plugin is declared `keepLoaded: true`, so the
+  shell keeps the loaded instance and does **not** replace it on hot reload — the
+  entry point is `BarWidget.qml` and it needs the restart to show up.
 - A plugin's IPC surface is fixed to the methods it had when the shell first
   loaded it: adding a method to the `IpcHandler` does not make it callable
   (`omarchy-shell shell call GodJIRA.plugin <name>` answers `unknown`), and an
@@ -811,7 +811,7 @@ ta bort rättigheten *Delete Issues* från vanliga medlemmar — en status räck
 - Lint plugin QML against the shell UI types:
 
 ```
-qmllint -I /usr/share/omarchy/shell -I /usr/lib/qt6/qml views/BoardView.qml JiraPanel.qml
+qmllint -I /usr/share/omarchy/shell -I /usr/lib/qt6/qml BarWidget.qml
 ```
 
 - Shell log for runtime errors: `journalctl --user -t omarchy-shell`.

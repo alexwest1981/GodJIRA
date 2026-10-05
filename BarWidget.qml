@@ -33,13 +33,22 @@ BarWidget {
     onPressed: function(button) {
       if (!root.bar) return
       if (button === Qt.RightButton) {
-        // Right click forces a refresh of an already-open window.
-        root.bar.run("omarchy-shell shell call GodJIRA.plugin refresh '{}'")
+        // Högerklick: fråga tavlan NU i stället för att vänta på minutklockan.
+        root.watchTick()
       } else {
-        root.bar.run("omarchy-shell shell toggle GodJIRA.plugin '{}'")
+        // Baren är en dörr, inte en andra panel. Appen är webbpanelen (cockpiten,
+        // körningarna, kartan, filerna) och den får inte en andra upplaga i QML --
+        // den upplagan stod still medan allt nytt byggdes.
+        // Adressen står i panel/godjira.desktop (install.sh fyller i @PORT@), så
+        // klicket går genom menyns egen post: samma port, samma fönsterregel.
+        root.bar.run("sh -c 'gtk-launch godjira.desktop 2>/dev/null || xdg-open http://127.0.0.1:8788'")
       }
     }
   }
+
+  // Widgeten är barens hela del av GodJIRA: märket, notisbevakningen och dörren in.
+  // Panelens nio vyer bodde förr här också (JiraPanel + views + components, ~6600 rader
+  // QML) och gjorde samma sak som webbpanelen -- de är rivna.
 
   // ------------------------------------------------------------- watcher
   // Polls the bridge for board changes and raises a desktop notification when
