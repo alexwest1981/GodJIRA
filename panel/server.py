@@ -1600,6 +1600,39 @@ def sites_read() -> dict:
     return dict(payload, ok=True)
 
 
+# Provlägets agenter: egna tal, for da hade skarmdumpen burit anvandarens riktiga
+# forbrukning -- samma skal som DEMO_REPOS och demo-token.
+DEMO_AGENTS = {
+    "ok": True, "days": 7, "since": "2026-09-28", "mode": "mock", "note": "",
+    "totals": {"sessions": 243, "messages": 17258, "tools": 9741, "tokens": 68779369,
+               "cost": 24.61, "calls": 15646},
+    "models": [{"model": "deepseek-flash", "sessions": 198, "tokens": 61200000,
+                "cost": 21.4, "calls": 13980, "color": "#4d8df6", "share": 89},
+               {"model": "gemini-3.7-flash", "sessions": 45, "tokens": 7579369,
+                "cost": 3.21, "calls": 1666, "color": "#e0a33e", "share": 11}],
+    "sources": [{"source": "desktop", "sessions": 186, "tokens": 54053833},
+                {"source": "oneshot", "sessions": 45, "tokens": 1774743},
+                {"source": "cron", "sessions": 8, "tokens": 370720},
+                {"source": "subagent", "sessions": 4, "tokens": 171416}],
+}
+
+
+def agents_read() -> dict:
+    """Vad agenterna gjorde: modellerna, tokens och kostnaden.
+
+    Siffrorna ar Hermes egna (bin/jira_agents.py laser sessionsdatabasen skrivskyddat);
+    panelen raknar dem inte. I provlaget svarar modulen med exempeltal i stallet for den
+    har maskinens riktiga forbrukning.
+    """
+    if demo():
+        return dict(DEMO_AGENTS)
+    env = seam("agents", "--json", "--days", "7", timeout=90)
+    payload = env.get("payload")
+    if not isinstance(payload, dict):
+        return {"ok": False, "error": (env.get("raw") or "motorn svarade inget")[:300]}
+    return dict(payload, ok=True)
+
+
 def posthog_read() -> dict:
     """Vad PostHog-inställningen är: satt, vilket projekt, och om den svarar.
 
@@ -1678,6 +1711,9 @@ def state() -> dict:
                     "links": pool.submit(links_state),
                     "token": pool.submit(token_read),
                     "journal": pool.submit(journal, 10),
+                    # Vad agenterna gjorde medan Jira stod still: modellerna, tokens,
+                    # kostnaden. Egna siffror, lästa ur Hermes egen databas.
+                    "agents": pool.submit(lambda: cached("agents", agents_read, ttl=300)),
                     "flows": pool.submit(lambda: cached("flows", flow_graphs)),
                     # Bara frågan om behörigheten (ett anrop): projektlistan finns
                     # redan i jira-svaret. Utan den här raden vore "nytt projekt" en

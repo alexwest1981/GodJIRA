@@ -29,29 +29,40 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
        #f9f9f9. Stegen klättrar fortfarande uppåt, och texten mörknar något
        (#1a1e1d) så svart-på-vitt-glansen försvinner. Accenten mörknades ett steg
        (#007d61 -> #00775c) för att hålla 4,5:1 mot den nya kanvasen. */
-    --bg: light-dark(#e7eae9, #0f0f10);
-    --rail: light-dark(#ecefee, #141415);
-    --side: light-dark(#f2f4f3, #181a1b);
-    --panel: light-dark(#f4f6f5, #1d1f20);
-    --card: light-dark(#fdfdfc, #1d1f20);
-    --card-hi: light-dark(#f3f5f4, #222425);
-    --line: light-dark(#dfe3e1, #222425);
-    --line-2: light-dark(#d5d9d7, #2c2e30);
-    --line-3: light-dark(#c9cecb, #36393a);
-    --text: light-dark(#1a1e1d, #e4e6e7);
-    --text-2: light-dark(#3c4240, #cacdce);
-    --muted: light-dark(#5a605e, #afb3b6);
+    --bg: light-dark(#e7eae9, #08090b);
+    --rail: light-dark(#ecefee, #0e1113);
+    --side: light-dark(#f2f4f3, #131719);
+    --panel: light-dark(#f4f6f5, #171c1f);
+    --card: light-dark(#fdfdfc, #1c2226);
+    --card-hi: light-dark(#f3f5f4, #232a2e);
+    --line: light-dark(#dfe3e1, #222a2e);
+    --line-2: light-dark(#d5d9d7, #2c3439);
+    --line-3: light-dark(#c9cecb, #38424a);
+    --text: light-dark(#1a1e1d, #e8eef1);
+    --text-2: light-dark(#3c4240, #c3ccd1);
+    --muted: light-dark(#5a605e, #9fabb2);
     --accent: light-dark(#00775c, #04997a);
     --navy: #1a6ba8; --green: light-dark(#25743b, #7bcf6a);
     --amber: light-dark(#973c00, #e0a33e); --red: light-dark(#a5261d, #e5545f);
-    --r: 6px;
+    /* Mörkt läge, andra rampen: kanvasen djupare (#0f0f10 -> #08090b) och kortet ett steg
+       ljusare ÄN panelen (förr var de samma #1d1f20, alltså ingen sista rung). Djupet
+       kommer inte ur fler färger utan ur fyra nya tokens: --edge (en hårfin ljus kant
+       överst på varje yta), --toplite (ljuset som faller in uppifrån), --shadow och
+       --glow/--glow-2 (ljuskällan bakom kanvasen). Provas i test_palette.py. */
+    --shadow: light-dark(0 1px 2px rgba(16, 24, 22, .07), 0 12px 28px -14px rgba(0, 0, 0, .75));
+    --edge: light-dark(rgba(255, 255, 255, .9), rgba(255, 255, 255, .05));
+    --toplite: light-dark(rgba(255, 255, 255, 0), rgba(255, 255, 255, .035));
+    --glow: light-dark(rgba(0, 119, 92, .05), rgba(4, 153, 122, .11));
+    --glow-2: light-dark(rgba(26, 107, 168, .05), rgba(77, 141, 246, .08));
+    --r: 10px;
   }
   [data-theme="light"] { color-scheme: light; }
   [data-theme="dark"] { color-scheme: dark; }
 
-  /* Ytorna i mörkt läge är Plane:s mörka ramp (@makeplane/propel 0.9.2, @variant
-     dark): kanvas #0f0f10 -> räl #141415 -> sidofält #181a1b -> panel/kort #1d1f20,
-     ramar #222425/#2c2e30/#36393a, text #e4e6e7/#cacdce/#afb3b6. Våra egna värden
+  /* Ytorna i mörkt läge byggde på Plane:s mörka ramp (@makeplane/propel 0.9.2,
+     @variant dark) och gör det fortfarande, ett steg nedåt: kanvas #08090b -> räl
+     #0e1113 -> sidofält #131719 -> panel #171c1f -> kort #1c2226, ramar
+     #222a2e/#2c3439/#38424a, text #e8eef1/#c3ccd1/#9fabb2. Våra egna värden
      hade rälen MÖRKARE än kanvasen (#08080a mot #0b0b0e), så kromet flöt ihop till
      en svart massa i stället för att klättra -- stegen är hela poängen.
      Accentfärgen är märkets teal (#04997a mörkt, #007d61 ljust): den gamla
@@ -526,6 +537,71 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   td .t { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 460px; }
   td.num { text-align: right; color: var(--muted); }
   .src { font-size: 10px; letter-spacing: .06em; color: var(--muted); border: 1px solid var(--line-2); border-radius: 4px; padding: 0 4px; }
+  /* ======================================================== djup och ljus =====
+     Panelen var platt: allt låg på samma z-index, korten var mörkgrå block utan kant
+     och kanvasen en enda ton. Här kommer djupet -- på ETT ställe, så det går att ta
+     bort igen -- ur fyra saker: en ljuskälla bakom kanvasen, en hårfin ljus kant
+     överst på varje yta, ett svagt ljus in uppifrån, och en mjuk skugga under.
+     Inga nya färger, inga nya beroenden: token som redan finns. */
+  body::before {
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background:
+      radial-gradient(1080px 520px at 10% -10%, var(--glow), transparent 62%),
+      radial-gradient(820px 460px at 102% -6%, var(--glow-2), transparent 60%);
+  }
+  .rail, .side, main { position: relative; z-index: 1; }
+  .rail {
+    background: color-mix(in srgb, var(--rail) 82%, transparent);
+    backdrop-filter: blur(14px);
+  }
+  .side { background: color-mix(in srgb, var(--side) 94%, transparent); }
+  .panel, .stat, .facts .f, .site-card, .card {
+    background-image: linear-gradient(180deg, var(--toplite), transparent 46%);
+    box-shadow: inset 0 1px 0 var(--edge), var(--shadow);
+  }
+  .panel, .stat { border-radius: 12px; }
+  .facts .f { border-radius: 11px; }
+  .panel { transition: border-color .18s ease; }
+  .panel:hover, .stat:hover, .facts .f:hover { border-color: var(--line-3); }
+  .stat .n { font-size: 25px; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .facts .f .v { font-variant-numeric: tabular-nums; }
+  .panel > h3 { letter-spacing: .002em; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ------------------------------------------------------------- agenterna ----
+     Kortet högst upp på Översikt: en orb per modell (ringen är andelen av veckans
+     tokens, siffran i mitten samma andel), siffrorna, och staplarna per källa. Ringen
+     är en conic-gradient och en mask -- ingen SVG, inget bibliotek. */
+  .orbs { display: flex; flex-wrap: wrap; gap: 18px; }
+  .orb { display: flex; align-items: center; gap: 12px; min-width: 210px; }
+  .orb .ring {
+    width: 76px; height: 76px; flex: 0 0 76px; border-radius: 50%;
+    background: conic-gradient(var(--c) calc(var(--pct) * 1%), var(--line-2) 0);
+    display: grid; place-items: center; position: relative;
+    box-shadow: 0 0 26px -10px var(--c);
+  }
+  .orb .ring::before {
+    content: ""; position: absolute; inset: 7px; border-radius: 50%; background: var(--card);
+  }
+  .orb .ring b {
+    position: relative; font-size: 17px; font-weight: 600; letter-spacing: -.02em;
+    font-variant-numeric: tabular-nums;
+  }
+  .orb .who { min-width: 0; }
+  .orb .who b { display: block; font-size: 13.5px; }
+  .orb .who span { display: block; color: var(--muted); font-size: 11.5px; margin-top: 3px; }
+  .orb .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--c); margin-right: 6px; }
+  .bars { display: grid; gap: 7px; }
+  .bars .bar { display: grid; grid-template-columns: 92px 1fr 74px; align-items: center; gap: 10px; }
+  .bars .bar span { color: var(--text-2); font-size: 12px; }
+  .bars .bar i { height: 7px; border-radius: 4px; background: var(--accent); display: block; }
+  .bars .bar u { text-decoration: none; color: var(--muted); font-size: 11.5px; text-align: right; font-variant-numeric: tabular-nums; }
+  .cockpit .facts { margin-top: 14px; }
+  .cockpit .bars { margin-top: 14px; }
+  @media (prefers-reduced-motion: no-preference) {
+    .orb .ring { transition: box-shadow .3s ease; }
+  }
+
 </style>
 </head>
 <body>
@@ -558,6 +634,14 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
       <div class="ovtools">
         <button class="chip" data-act="ov-edit" id="editChip">✎ ändra</button>
         <span class="meta" id="editNote" hidden>dra raderna dit du vill ha dem — ordningen sparas</span>
+      </div>
+      <div class="panel cockpit" data-ov="agents" data-unit="agents">
+        <h3>Agenterna <span class="meta" id="agentsMeta"></span></h3>
+        <div class="body">
+          <div class="orbs" id="agentsOrbs"></div>
+          <div class="facts" id="agentsFacts"></div>
+          <div class="bars" id="agentsSources"></div>
+        </div>
       </div>
       <div class="stats" id="stats" data-unit="stats"></div>
       <div class="panel" data-ov="automation" data-unit="automation">
@@ -869,6 +953,8 @@ const TEXT = {
   runnersUp: "därefter", noSprint: "ingen aktiv sprint — det som är kvar står i backloggen och ligger i To Do här",
   open: "öppna", settled: "klara", backlog: "i backloggen", repos: "repon", waiting: "väntar på dig",
   allTasks: "Alla uppgifter", sources: "Jira + GitHub",
+  agentWindow: "senaste {days} dygnen", sessions: "sessioner", tokens: "tokens", cost: "kostnad",
+  calls: "anrop", toolCalls: "verktygsanrop", messages: "meddelanden",
   scope: { all: "Alla", shared: "Gemensamma", mine: "Egna" },
   flows: "Flöden", flowRuns: "går av sig själv", flowIdle: "trycks bara på",
   flowNone: "här finns inget flöde att rita — det här repot har inget eget än",
@@ -1268,12 +1354,54 @@ function renderStats() {
     cards.filter(([id]) => !off.has(id)).map(([, html]) => html).join("");
 }
 
+// Vad agenterna gjorde: modellerna, tokens, kostnaden -- ur Hermes egen sessionsdatabas,
+// som motorn läser (bin/jira_agents.py). Panelen räknar ingenting själv här; den ritar
+// STATE.agents. Orbsen är andel av veckans tokens, staplarna samma andel per källa.
+function human(n) {
+  for (const [edge, suffix] of [[1e9, "B"], [1e6, "M"], [1e3, "k"]]) {
+    if (Math.abs(n) >= edge) return (n / edge).toFixed(1) + suffix;
+  }
+  return String(Math.round(n || 0));
+}
+// OBS: namnet får inte vara renderAgents -- den ritaren finns redan för agentlistan
+// i Agenten-vyn, och en andra deklaration med samma namn överskuggar den första utan
+// ett ord (mätt: cockpiten stod tom medan koden såg rätt ut).
+function renderAgentWeek() {
+  const a = (STATE || {}).agents || {};
+  const set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
+  const meta = document.getElementById("agentsMeta");
+  if (meta) meta.textContent = a.ok ? TEXT.agentWindow.replace("{days}", a.days || 7) : "";
+  if (!a.ok) {
+    set("agentsOrbs", `<div class="empty">${esc(a.error || TEXT.nothing)}</div>`);
+    set("agentsFacts", ""); set("agentsSources", "");
+    return;
+  }
+  const models = a.models || [];
+  set("agentsOrbs", models.map(m =>
+    '<div class="orb" style="--c:' + esc(m.color || "var(--accent)") + ';--pct:' + (m.share || 0) + '">' +
+    `<div class="ring"><b>${m.share || 0}%</b></div>` +
+    `<div class="who"><b><span class="dot"></span>${esc(m.model)}</b>` +
+    `<span>${human(m.tokens)} ${esc(TEXT.tokens)} · $${(m.cost || 0).toFixed(2)} · ${m.sessions} ${esc(TEXT.sessions)}</span>` +
+    "</div></div>").join("") || `<div class="empty">${esc(TEXT.nothing)}</div>`);
+  const t = a.totals || {};
+  set("agentsFacts", [
+    [TEXT.sessions, t.sessions], [TEXT.tokens, human(t.tokens)], [TEXT.cost, "$" + (t.cost || 0).toFixed(2)],
+    [TEXT.calls, t.calls], [TEXT.toolCalls, t.tools], [TEXT.messages, t.messages],
+  ].map(([l, v]) => `<div class="f"><div class="l">${esc(l)}</div><div class="v">${esc(String(v))}</div></div>`).join(""));
+  const sources = a.sources || [];
+  const all = (t.tokens || 0) || 1;
+  set("agentsSources", sources.map(s =>
+    '<div class="bar"><span>' + esc(s.source) + "</span>" +
+    `<i style="width:${Math.max(1, Math.round(100 * s.tokens / all))}%"></i>` +
+    `<u>${human(s.tokens)}</u></div>`).join(""));
+}
+
 /* ----------------------------------------------------------- vad som syns ---- */
 // Testarens önskemål: alla vill inte se samma sak. Här stängs verktyg (rälen) och
 // block (Översikt) av. Listan är det som är AV -- nya block är alltså på från början,
 // och ett tomt val betyder allt. Valet ligger i webbläsaren, som temat.
 const HIDDEN_KEY = "godjira.hidden";
-const OVERVIEW_BLOCKS = [["automation", "Projektet du är kopplad till"],
+const OVERVIEW_BLOCKS = [["agents", "Agenterna"], ["automation", "Projektet du är kopplad till"],
   ["flow", "Flödets nästa"], ["journal", "Flödets egna skrivningar"], ["recent", "Senast rörda repon"]];
 // Statuskorten högst upp: källan står i etiketten, så valet handlar om källor och inte om
 // var i gränssnittet något råkade hamna.
@@ -1282,7 +1410,7 @@ const STATUS_CARDS = [["ov:stat:jira", "Jira — öppna ärenden"], ["ov:stat:gh
 // Raderna på Översikt, i den ordning de står i filen. Alla är direkta barn till vyn, så
 // ordningen sätts med det inbyggda order -- ingen flytt av noder i trädet.
 const ORDER_KEY = "godjira.order";
-const UNITS = [["stats", "Statuskorten"], ["automation", "Projektet du är kopplad till"],
+const UNITS = [["agents", "Agenterna"], ["stats", "Statuskorten"], ["automation", "Projektet du är kopplad till"],
   ["pair", "Flödets nästa + egna skrivningar"], ["recent", "Senast rörda repon"]];
 // Översikt är vägen tillbaka och Inställningar är där man slår på igen: de två går inte
 // att stänga av.
@@ -3870,7 +3998,7 @@ function render() {
   document.getElementById("filtersRow").hidden = !["board", "items"].includes(view);
   // Projektväljaren hör till Uppgifter; i andra vyer vore den en död ratt.
   document.getElementById("itemProject").hidden = view !== "items";
-  if (view === "overview") { renderStats(); renderAutomation(); renderFlowPick(); renderJournal(); renderRecent(); }
+  if (view === "overview") { renderAgentWeek(); renderStats(); renderAutomation(); renderFlowPick(); renderJournal(); renderRecent(); }
   if (view === "board") renderBoard();
   if (view === "chat") { renderChat(); if (!AGENTS) agentLoad(); }
   if (view === "items") renderItems();

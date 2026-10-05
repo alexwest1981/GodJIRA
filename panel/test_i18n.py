@@ -50,7 +50,13 @@ for path in translated_files:
         continue
     missing = sorted(set(source) - set(table))
     extra = sorted(set(table) - set(source))
-    same = sorted(k for k, v in table.items() if k == v and k != "Jira")
+    # Ord som ÄR samma på båda språken är inte en oöversatt rad: egennamn, lånord och
+    # "Projekt" (tyska och polska) eller "tokens" (engelska, spanska, nederländska,
+    # portugisiska) skrivs likadant med flit. Utan listan räknades de som oöversatta och
+    # en riktig översättning kunde falla på att den var *för* lik originalet.
+    SAME_OK = {"Admin", "Jira", "Jira + GitHub", "sprint", "Projekt", "Titel", "st",
+               "under", "Automatik", "Repos", "tokens"}
+    same = sorted(k for k, v in table.items() if k == v and k not in SAME_OK)
     check(not missing, "{}: {} nycklar saknas, t.ex. {}".format(code, len(missing), missing[:3]))
     check(not extra, "{}: {} nycklar finns inte i källistan, t.ex. {}".format(code, len(extra), extra[:3]))
     # Några rader är egennamn eller redan engelska ("Jira + GitHub") och blir lika i alla
