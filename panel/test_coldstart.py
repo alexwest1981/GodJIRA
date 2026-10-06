@@ -64,7 +64,12 @@ panel = subprocess.Popen([sys.executable, str(HERE / "server.py")], env=env,
 try:
     base = "http://127.0.0.1:{}".format(port)
     ready = False
-    for _ in range(120):
+    # 120 * 0,5 s = 60 s. Räcker gott ensam, men provet skall också hålla när det körs i
+    # hela sviten medan andra servrar och sessioner jobbar på samma maskin -- då är en
+    # kallstart utan nyckel tyngre. Loopen bryter så fort /healthz svarar, så en höjd
+    # gräns kostar ingenting när starten går fort. (Mätt: ett rött körningstillfälle av
+    # många, 3 av 3 gröna ensam -- flakigt under last, inte trasigt.)
+    for _ in range(240):
         try:
             with urllib.request.urlopen(base + "/healthz", timeout=2):
                 ready = True
