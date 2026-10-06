@@ -55,6 +55,16 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
     --glow: light-dark(rgba(0, 119, 92, .05), rgba(4, 153, 122, .11));
     --glow-2: light-dark(rgba(26, 107, 168, .05), rgba(77, 141, 246, .08));
     --r: 10px;
+    /* Rörelsen. Före detta fanns tre transitioner och en keyframe i tolv vyer, och
+       varje ny knapp hittade på sin egen tid. Tiderna bor här, reglerna ligger i
+       ett block längre ned, och allt är kort med flit: en vy som skall läsas får
+       inte vänta på sig. */
+    --t-fast: 120ms;   /* färg, kant, bakgrund -- det som skall kännas direkt */
+    --t: 180ms;        /* det mesta: hover, läge, öppning */
+    --t-slow: 320ms;   /* något dyker upp eller försvinner */
+    --t-step: 26ms;    /* ett steg i entréns trappa */
+    --ease: cubic-bezier(.22, .61, .36, 1);   /* ut, mjukt stopp */
+    --ease-io: cubic-bezier(.4, 0, .2, 1);    /* fram och tillbaka */
   }
   [data-theme="light"] { color-scheme: light; }
   [data-theme="dark"] { color-scheme: dark; }
@@ -81,7 +91,8 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
      spinner that never stops is how a dead backend looks like a broken app. */
   .splash {
     position: fixed; inset: 0; z-index: 50; background: var(--bg);
-    display: grid; place-items: center; transition: opacity .35s ease;
+    display: grid; place-items: center;
+    transition: opacity var(--t-slow) var(--ease);   /* släckningen är inte valfri: den bär lastningen */
   }
   .splash.gone { opacity: 0; pointer-events: none; }
   .splash-box { display: flex; flex-direction: column; align-items: center; gap: 11px; text-align: center; }
@@ -575,7 +586,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   }
   .panel, .stat { border-radius: 12px; }
   .facts .f { border-radius: 11px; }
-  .panel { transition: border-color .18s ease; }
+  /* Panelens kant rör sig i lagret längre ned, som allt annat -- ingen egen tid här. */
   .panel:hover, .stat:hover, .facts .f:hover { border-color: var(--line-3); }
   .stat .n { font-size: 25px; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
   .facts .f .v { font-variant-numeric: tabular-nums; }
@@ -624,8 +635,52 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   .runNote .okdot { color: var(--green); }
   .cockpit .facts { margin-top: 14px; }
   .cockpit .bars { margin-top: 14px; }
+  /* Rörelselagret. Ett ställe för all rörelse i panelen, och allt innanför
+     (prefers-reduced-motion: no-preference): den som stängt av rörelse i
+     skrivbordet får panelen helt stilla -- inga halva effekter kvar. */
   @media (prefers-reduced-motion: no-preference) {
-    .orb .ring { transition: box-shadow .3s ease; }
+    .orb .ring { transition: box-shadow var(--t-slow) var(--ease); }
+
+    /* 1. Allt tryckbart rör sig likadant: färg snabbt, lyft långsamt. Fokusringen
+       ägs redan av :focus-visible längre upp -- den rör vi inte här. */
+    button, .ghost, .seg button, .railitem, .inp, .facts .f, .card, .say,
+    .stat, .site-card, tr td, .panel {
+      transition: background-color var(--t-fast) var(--ease),
+                  border-color var(--t-fast) var(--ease),
+                  color var(--t-fast) var(--ease),
+                  box-shadow var(--t) var(--ease),
+                  transform var(--t-fast) var(--ease);
+    }
+    button:active, .ghost:active, .seg button:active, .railitem:active {
+      transform: translateY(.5px);
+    }
+
+    /* 2. Korten lyfter under musen -- och bara då. */
+    .facts .f:hover, .card:hover, .stat:hover, .site-card:hover {
+      transform: translateY(-2px); box-shadow: var(--shadow); border-color: var(--line-3);
+    }
+
+    /* 3. Listrader: ytan tänds och en accentkant växer in från vänster. Kanten
+       ritas som skugga, inte som pseudo-element, så inga marginaler rörs. */
+    .wl .r:hover { background: var(--card-hi); box-shadow: inset 2px 0 0 var(--accent); }
+
+    /* 4. Räl och flikar: aktiv rad får samma kant, så läget syns på formen. */
+    .railitem.on { box-shadow: inset 2px 0 0 var(--accent); }
+    .seg button.on { box-shadow: inset 0 -2px 0 var(--accent); }
+
+    /* 5. Entrén: varje vy tonar in underifrån, i en trappa så ögat hinner med.
+       Ren CSS -- ingen renderare behöver veta om det. */
+    @keyframes rise { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
+    .view.on > *, .pane.on > * { animation: rise var(--t-slow) var(--ease) both; }
+    .view.on > *:nth-child(2), .pane.on > *:nth-child(2) { animation-delay: calc(var(--t-step) * 1); }
+    .view.on > *:nth-child(3), .pane.on > *:nth-child(3) { animation-delay: calc(var(--t-step) * 2); }
+    .view.on > *:nth-child(4), .pane.on > *:nth-child(4) { animation-delay: calc(var(--t-step) * 3); }
+    .view.on > *:nth-child(5), .pane.on > *:nth-child(5) { animation-delay: calc(var(--t-step) * 4); }
+    .view.on > *:nth-child(n+6), .pane.on > *:nth-child(n+6) { animation-delay: calc(var(--t-step) * 5); }
+
+    /* 6. En siffra som byter värde skall inte hoppa i bredd. Korten har regeln
+       redan; här får tabellerna och raderna den. */
+    table, .tside, .n, .stat .n { font-variant-numeric: tabular-nums; }
   }
 
 </style>
@@ -4925,6 +4980,43 @@ document.addEventListener("input", e => {
     if (host) host.innerHTML = repoRows();
   }
 });
+/* Siffrorna räknar upp till sitt värde. Ett tal som tonar in i sin slutliga form läses
+   som ett svar; samma tal som bara står där läses som en tabellcell. Bara rena heltal
+   animeras, och den som stängt av rörelse får talet direkt. */
+const animerar = new WeakSet();
+function countUp(el) {
+  if (animerar.has(el)) return;
+  const text = el.textContent.trim();
+  if (el.dataset.count === text) return;          /* redan visad: rör den inte */
+  if (!/^[2-9]\d{0,4}$/.test(text)) { el.dataset.count = text; return; }   /* bara rena heltal */
+  const mal = Number(text);
+  el.dataset.count = text;
+  if (!window.matchMedia("(prefers-reduced-motion: no-preference)").matches) return;
+  const start = performance.now(), fran = mal - Math.min(mal, 12);
+  animerar.add(el);
+  const steg = (nu) => {
+    const k = Math.min(1, (nu - start) / 420);
+    el.textContent = String(Math.round(fran + (mal - fran) * (1 - Math.pow(1 - k, 3))));
+    if (k < 1) requestAnimationFrame(steg);
+    else { el.textContent = text; animerar.delete(el); }
+  };
+  requestAnimationFrame(steg);
+}
+
+/* Varje renderare skriver sina siffror som vanligt -- uppräkningen fångas här, i stället
+   för att varje renderare skall komma ihåg att räkna upp. */
+// ponytail: en observer på main, avstudsad en frame. Byt mot en hook i renderarna om
+// panelen någonsin ritar tusentals noder i sekunden.
+let sifferko = false;
+new MutationObserver(() => {
+  if (sifferko) return;
+  sifferko = true;
+  requestAnimationFrame(() => {
+    sifferko = false;
+    document.querySelectorAll(".facts .f .v, .stat .n").forEach(countUp);
+  });
+}).observe(document.querySelector("main"), { childList: true, subtree: true, characterData: true });
+
 window.addEventListener("hashchange", () => show(readHash()));
 // Strängarna först: skärmen skall inte hinna visa svenska och sedan byta språk.
 loadStrings().finally(() => {
