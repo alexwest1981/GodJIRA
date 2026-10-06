@@ -27,7 +27,7 @@
  "Flödets egna skrivningar": "Własne zapisy przepływu",
  "Flödets nästa": "Następne z przepływu",
  "Flödets nästa + egna skrivningar": "Następne z przepływu + własne zapisy",
- "Folk på sajten": "Osoby w witrynie",
+ "Folk på webbplatsen": "Osoby na stronie",
  "Fråga agenten": "Zapytaj agenta",
  "Frågan gick inte fram": "Nie udało się wysłać pytania",
  "Fördelningen (PDF)": "Podział (PDF)",
@@ -71,7 +71,7 @@
  "Rensa samtalet": "Wyczyść rozmowę",
  "Repon": "Repozytoria",
  "Rörd": "Ruszane",
- "Sajterna": "Strony",
+ "Webbplatser": "Strony internetowe",
  "Sammanfattning": "Podsumowanie",
  "Senast rörda": "Ostatnio ruszane",
  "Senast rörda repon": "Ostatnio ruszane repozytoria",
@@ -464,5 +464,6 @@
  "källa": "źródło",
  "datum": "data",
  "antal": "liczba",
- "andel": "udział"
+ "andel": "udział",
+ "PostHog": "PostHog"
 }

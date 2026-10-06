@@ -417,8 +417,11 @@ console.log(bad.length ? "FEL " + bad.join(" | ") : "OK");
     # en fast ruta, så etiketterna börjar på samma x. Utan den ritas raden utan märke och
     # raderna hamnar snett igen (mätt: alla etiketter på samma x i den skarpa panelen).
     # Ikonen får inte vara bredare än sin ruta: då skjuts etiketterna olika långt in och
-    # kolumnen spricker. Rutan är 18, ikonen 17,5 -- tio procent större än förut, samma rad.
-    check(".item .g { width: 18px" in html and ".item .g svg { width: 17.5px" in html,
+    # kolumnen spricker. Talen ändras när ikonerna skalas om, därför mäts förhållandet i
+    # stället för siffrorna.
+    ruta = re.search(r"\.item \.g \{ width: ([\d.]+)px", html)
+    ikon = re.search(r"\.item \.g svg \{ width: ([\d.]+)px", html)
+    check(bool(ruta and ikon) and float(ruta.group(1)) >= float(ikon.group(1)),
           "the one navigation is a column: every icon fits its box, so labels line up")
     check('id="rail"' not in html and "renderRail" not in html and ".railitem" not in html,
           "det finns en navigering, inte två (rälen är borta, inte bara tömd)")
@@ -480,8 +483,15 @@ console.log(bad.length ? "FEL " + bad.join(" | ") : "OK");
     check(".grupp.falt { display: none; }" in html and 'closest("[data-fall]")' in html,
           "ihopfälld grupp försvinner (utan [hidden], som en display-regel hade vunnit över)")
     check("const FOT = [" in html and '<div class="fot">' in html
-          and "margin-top: auto" in html and "FOT.filter(v => synliga[v]).map(rad)" in html,
+          and "margin-top: auto" in html and "FOT.filter(v => synliga[v]" in html,
           "inställningarna ligger sist i sidofältet, i sin egen fot")
+    # Rubriken är en rad: klicket går till avdelningens första vy (GitHub -> Repon), pilen
+    # fäller, och en avdelning med en enda vy får ingen dubbelrad under sig. Förut kostade
+    # GitHub tre klick till repolistan, och Agenterna/Agenten var två namn för samma sak.
+    check("har.length === 1" in html and "har.slice(1)" in html
+          and 'data-fall="${namn}"' in html and 'data-v="${vy}"' in html,
+          "rubriken är en rad: klicket går till avdelningens första vy, pilen fäller ihop, "
+          "och en avdelning med en enda vy får ingen dubbelrad under sig")
     check('data-v="board"><span class="g">▤</span>' not in html,
           "tavlan står inte både i menyn och som genväg (samma mål i två ordförråd)")
 

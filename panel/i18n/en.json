@@ -27,7 +27,7 @@
  "Flödets egna skrivningar": "The flow's own writes",
  "Flödets nästa": "The flow's next",
  "Flödets nästa + egna skrivningar": "The flow's next + own writes",
- "Folk på sajten": "People on the site",
+ "Folk på webbplatsen": "People on the site",
  "Fråga agenten": "Ask the agent",
  "Frågan gick inte fram": "The question did not get through",
  "Fördelningen (PDF)": "The division (PDF)",
@@ -71,7 +71,7 @@
  "Rensa samtalet": "Clear the conversation",
  "Repon": "Repos",
  "Rörd": "Touched",
- "Sajterna": "Sites",
+ "Webbplatser": "Websites",
  "Sammanfattning": "Summary",
  "Senast rörda": "Recently touched",
  "Senast rörda repon": "Most recently touched repos",
@@ -464,5 +464,6 @@
  "källa": "source",
  "datum": "date",
  "antal": "count",
- "andel": "share"
+ "andel": "share",
+ "PostHog": "PostHog"
 }

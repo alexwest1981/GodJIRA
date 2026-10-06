@@ -336,8 +336,11 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   /* Ikonrutan är 17 px (var 15) och ikonerna 17,5 (var 16): tio procent större, så de syns
      utan att raden blir högre. Ingen ikon bär färg -- grå i vila, vit när raden är vald,
      precis som etiketten. Accenten hör till kanten, inte till ikonen. */
-  .item .g { width: 18px; text-align: center; color: var(--muted); font-size: 12.5px; }
-  .item .g svg { width: 17.5px; height: 17.5px; }
+  /* Ikonerna bär ingen dämpad grå: de är vita som texten, och tio procent större än förut
+     (16 -> 19,25 px). Rutan är 20 så etiketterna står i samma kolumn. Ingen ikon får färg --
+     accenten hör till kanten. */
+  .item .g { width: 20px; text-align: center; color: var(--text); font-size: 12.5px; }
+  .item .g svg { width: 19.25px; height: 19.25px; }
   .item:hover .g { color: var(--text-2); }
   .item.on .g { color: var(--text); }
   .item:hover { background: var(--panel); color: var(--text); }
@@ -353,8 +356,14 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   /* Ihopfälld grupp försvinner helt. Ingen [hidden] här: en display-regel på elementet
      vinner över den, och då syns raderna fast de är fällda. */
   .grupp.falt { display: none; }
-  .sect .g { display: flex; color: var(--muted); }
-  .sect .g svg { width: 13.2px; height: 13.2px; }   /* tio procent upp från 12 */
+  .sect .g { display: flex; color: var(--text); }
+  .sect .g svg { width: 14.5px; height: 14.5px; }   /* tio procent upp från 13,2 */
+  /* Rubriken går att klicka på (den är en rad), och pilen fäller ihop. Talet står före
+     pilen, annars delar två auto-marginaler ut utrymmet mellan sig. */
+  .sect .c { margin-left: auto; margin-right: 7px; color: var(--muted); font-size: 11px; }
+  .sect .c + .pil { margin-left: 0; }
+  .sect.on { color: var(--text); }
+  .sect.on .g { color: var(--text); }
   /* Foten ligger alltid sist i sidofältet (flex-kolumnen), med ett streck ovanför:
      panelens egna inställningar skall inte läsas som en avdelning i arbetet. */
   .fot { margin-top: auto; padding-top: 10px; border-top: 1px solid var(--line); }
@@ -820,7 +829,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
     <section class="view" id="v-sites">
       <div class="facts" id="siteTotals"></div>
       <div class="panel">
-        <h3>Sajterna <span class="meta" id="sitesMeta"></span></h3>
+        <h3>PostHog <span class="meta" id="sitesMeta"></span></h3>
         <div class="body"><div class="tablewrap"><table id="sitesTable"></table></div></div>
       </div>
       <div class="panel" id="siteDetailPanel" hidden>
@@ -1111,7 +1120,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
 <script>
 const TEXT = {
   views: { overview: ["Översikt", "◫"], insights: ["Projekt", "◎"], board: ["Tavlan", "▤"], items: ["Uppgifter", "☰"], repos: ["Repon", "⌥"],
-           sites: ["Sajterna", "◔"],
+           sites: ["PostHog", "◔"],
            import: ["Importera", "⇪"], setup: ["Kom igång", "★"], chat: ["Agenten", "◈"],
            admin: ["Admin", "⚑"], settings: ["Inställningar", "⚙"],
            mine: ["Mina uppgifter", "☑"] },
@@ -1457,11 +1466,13 @@ const RAIL = [
   ["sajterna", ["sites"]],
   ["systemet", ["settings", "admin", "setup"]],
 ];
+// Vyns namn är PostHog -- det är dit allt deras material kommer. Landet, källan och
+// mätaren heter fortfarande vad de är; bara skärmen bär produktens namn.
 // Avdelningarnas namn. Utskriften går genom panelens egna i18n-byte, så orden är sådana
 // som redan finns i ordlistan (Flödet, Agenterna, Sajterna, Inställningar) eller redan
 // står i gränssnittet (GitHub).
 const DELNAMN = { flodet: "Flödet", github: "GitHub", agenterna: "Agenterna",
-                  sajterna: "Sajterna", systemet: "Inställningar" };
+                  sajterna: "PostHog", systemet: "Inställningar" };
 // Foten: panelens egna inställningar. De hör till panelen, inte till arbetet, och skall
 // därför inte ligga bland de vanliga valen.
 const FOT = ["settings", "admin", "setup"];
@@ -1524,7 +1535,6 @@ function renderSide() {
     ${STATE.projectCan && STATE.projectCan.may === false ? `<div class="item muted" title="${esc(STATE.projectCan.reason || "behörigheten saknas")}"><span class="g">＋</span>nytt projekt<span class="c">nej</span></div>` : ""}`;
   const github = `
     <div class="sub">
-      <div class="item ${view === "repos" ? "on" : ""}" data-v="repos"><span class="g">⌥</span>${esc(g.login || "GitHub")}<span class="c">${g.repos.length}</span></div>
       <input class="inp" id="repoSearch" placeholder="sök repo …" autocomplete="off"
              value="${esc(repoFilter)}" aria-label="sök i repon">
       <div class="sub repolist" id="repoList">${repoRows()}</div>
@@ -1533,30 +1543,40 @@ function renderSide() {
   const falt = (namn) => fallna().has(namn);
   // Rubriken ÄR knappen: pilen visar läget, aria-expanded säger det till skärmläsaren,
   // och data-fall bär namnet som klicket letar efter.
-  const rubrik = (namn, ikon) =>
-    `<div class="sect${falt(namn) ? " falt" : ""}" data-fall="${namn}" role="button" tabindex="0" ` +
-    `aria-expanded="${!falt(namn)}"><span class="g">${ICONS[ikon] || ""}</span>` +
-    `${esc(DELNAMN[namn] || namn)}<span class="pil" aria-hidden="true"></span></div>`;
+  // Rubriken ÄR en rad: klicket går till avdelningens FÖRSTA vy (GitHub -> Repon, Flödet ->
+  // Översikt), och pilen fäller ihop listan. Förut fanns ingenstans att gå med rubriken --
+  // man fick fälla upp den och sedan välja, och för GitHub blev det tre steg till repolistan.
+  // En avdelning med en enda vy får ingen rad under sig: rubriken ÄR raden, så
+  // "Agenterna / Agenten" blir ett namn i stället för två för samma sak.
+  const rubrik = (namn, ikon, vy, etikett, antal) =>
+    `<div class="sect${falt(namn) ? " falt" : ""}${vy === view ? " on" : ""}"` +
+    (vy ? ` data-v="${vy}"` : "") + ` role="button" tabindex="0" aria-expanded="${!falt(namn)}">` +
+    `<span class="g">${ICONS[ikon] || ""}</span>${esc(etikett || DELNAMN[namn] || namn)}` +
+    (antal ? `<span class="c">${antal}</span>` : "") +
+    `<span class="pil" data-fall="${namn}" role="button" aria-label="fäll ihop"></span></div>`;
   const grupp = (namn, innehall) =>
     `<div class="grupp${falt(namn) ? " falt" : ""}">${innehall}</div>`;
   const avdelningar = RAIL.filter(([namn]) => namn !== "systemet").map(([namn, vyer]) => {
     const har = vyer.filter(v => synliga[v]);
-    const rader = har.map(rad).join("");
-    if (!rader && !sammanhang[namn]) return "";
-    // Rubriken bär avdelningens ikon (kvar från rälen) och en pil: den går att fälla ihop,
-    // och då försvinner allt under den -- repolistan, projektets genvägar, allt.
-    return rubrik(namn, har[0]) + grupp(namn, rader + (sammanhang[namn] || ""));
+    if (!har.length) return sammanhang[namn] ? grupp(namn, sammanhang[namn]) : "";
+    const en = har.length === 1;   // en enda vy: rubriken är hela avdelningen
+    const rader = (en ? [] : har.slice(1)).map(rad).join("");
+    return rubrik(namn, har[0], har[0], en ? synliga[har[0]][0] : null,
+                  namn === "github" ? ((STATE.github || {}).repos || []).length : "") +
+      grupp(namn, rader + (sammanhang[namn] || ""));
   }).filter(Boolean).join("");
   // Foten: panelens egna inställningar, avskilda från arbetet. Inställningarna först, för
   // det är den man letar efter; admin och setup följer med när de finns.
-  const fot = FOT.filter(v => synliga[v]).map(rad).join("");
+  const fotLenk = synliga.settings ? "settings" : "";
+  const fot = FOT.filter(v => synliga[v] && v !== fotLenk).map(rad).join("");
   document.getElementById("side").innerHTML = `
     <div class="head"><span class="mark" title="GodJIRA"></span><b>GodJIRA</b><span class="grow"></span>
       <button class="ghost" title="hämta färskt" data-act="refresh">↻</button></div>
     ${avdelningar}
     <div class="who">${esc((j.account || {}).displayName || "")}<br>
       <span class="key">${esc((j.account || {}).email || "")}</span><br>${esc(j.mode || "")} · uppdaterad ${hhmm()}</div>
-    <div class="fot">${rubrik("systemet", "settings")}${grupp("systemet", fot)}</div>`;
+    <div class="fot">${rubrik("systemet", "settings", fotLenk,
+      synliga.settings ? synliga.settings[0] : "Inställningar")}${grupp("systemet", fot)}</div>`;
 }
 
 function renderCrumbs() {
@@ -3169,13 +3189,13 @@ function renderSites() {
     const uppe = sajter.filter(s => (s.liv || {}).uppe).length;
     const sum = fn => sajter.reduce((n, s) => n + (fn(s) || 0), 0);
     box.innerHTML = kpi([
-      ["Sajterna", uppe + " / " + sajter.length, "uppe"],
+      ["Webbplatser", uppe + " / " + sajter.length, "uppe"],
       ["besök", sum(s => (s.trafik || {}).visningar), "· " + SITES.data.dagar + " dygn"],
       ["personer", sum(s => (s.trafik || {}).personer), ""],
       ["kassa", sum(s => (s.salj || {}).krTotalt).toFixed(2) + " kr", ""],
     ]);
   }
-  lista.innerHTML = '<thead><tr><th style="width:22%">Sajterna</th><th style="width:16%">uppe</th>' +
+  lista.innerHTML = '<thead><tr><th style="width:22%">Webbplatser</th><th style="width:16%">uppe</th>' +
     "<th>besök</th><th style=\"width:26%\">kassa</th><th style=\"width:16%\">PostHog</th></tr></thead><tbody>" +
     (sajter.map(siteRow).join("") || '<tr><td colspan="5" class="empty">—</td></tr>') + "</tbody>";
   lista.querySelectorAll("[data-site]").forEach(rad => rad.addEventListener("click", () => {
@@ -3260,7 +3280,7 @@ function renderAdmin() {
         panelHead('Egna fält', own.length + ' av ' + (d.fields || []).length + ' fält') +
         '<div class="body wl">' + fields + '</div></div>' +
       '<div class="panel">' +
-        panelHead('Folk på sajten', 'sök för att hitta någon att tilldela') +
+        panelHead('Folk på webbplatsen', 'sök för att hitta någon att tilldela') +
         '<div class="body">' +
           '<div class="linkbar">' +
             '<input class="inp" id="adminQuery" placeholder="sök namn eller e-post">' +
@@ -4980,9 +5000,18 @@ document.addEventListener("dragend", () => {
   renderLayoutPrefs();
 });
 
+// Enter och mellanslag på en rad i sidofältet: rollen är button, alltså skall tangentbordet
+// också kunna gå dit. Rubrikerna bar role="button" redan förut, men ingen tangent lyssnade.
+document.addEventListener("keydown", e => {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  const mal = e.target.closest && e.target.closest(".side [data-v], .side [data-fall], .side [data-repo]");
+  if (!mal) return;
+  e.preventDefault();
+  mal.click();
+});
 document.addEventListener("click", e => {
-  // Rubriken i sidofältet fäller ihop sin avdelning. Först i hanteraren: en rubrik är
-  // ingen vy, så klicket skall aldrig bära vidare till något annat.
+  // Pilen fäller ihop sin avdelning. Först i hanteraren: en fällning skall aldrig bära
+  // vidare till något annat -- rubriken runtom är en rad och går till sin vy.
   const rubrik = e.target.closest && e.target.closest("[data-fall]");
   if (rubrik) { vik(rubrik.dataset.fall); return; }
   // Raderna i kunskapsgrafen öppnar nästa enhet -- men länken inuti raden (ärendenyckeln)

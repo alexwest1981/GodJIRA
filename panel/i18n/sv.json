@@ -27,7 +27,7 @@
  "Flödets egna skrivningar": "Flödets egna skrivningar",
  "Flödets nästa": "Flödets nästa",
  "Flödets nästa + egna skrivningar": "Flödets nästa + egna skrivningar",
- "Folk på sajten": "Folk på sajten",
+ "Folk på webbplatsen": "Folk på webbplatsen",
  "Fråga agenten": "Fråga agenten",
  "Frågan gick inte fram": "Frågan gick inte fram",
  "Fördelningen (PDF)": "Fördelningen (PDF)",
@@ -71,7 +71,7 @@
  "Rensa samtalet": "Rensa samtalet",
  "Repon": "Repon",
  "Rörd": "Rörd",
- "Sajterna": "Sajterna",
+ "Webbplatser": "Webbplatser",
  "Sammanfattning": "Sammanfattning",
  "Senast rörda": "Senast rörda",
  "Senast rörda repon": "Senast rörda repon",
@@ -464,5 +464,6 @@
  "källa": "källa",
  "datum": "datum",
  "antal": "antal",
- "andel": "andel"
+ "andel": "andel",
+ "PostHog": "PostHog"
 }
