@@ -3549,8 +3549,8 @@ function renderFlowPick() {
     ${(f.runnersUp || []).length ? `<div class="wl" style="margin-top:10px"><div class="empty">${TEXT.runnersUp}</div>
       ${f.runnersUp.map(i => `<div class="r">${typeGlyph("Task")}<span class="key">${esc(i.key)}</span>
         <span class="t">${esc(i.summary)}</span><span class="tside">${esc(i.priority || "")}</span></div>`).join("")}</div>` : ""}`;
-  const knapp = host.querySelector("[data-run]");
-  if (knapp) knapp.addEventListener("click", () => runStart(knapp.dataset.run));
+  // Körknappen hanteras delegerat i klick-lyssnaren (samma knapp finns på flera ställen nu:
+  // kortet på Översikt och varje rad i Mina uppgifter).
   if (!RUN.peeked) { RUN.peeked = true; runPoll(); }
 }
 
@@ -4512,7 +4512,8 @@ async function renderMine() {
     if (data.missing) { mål.innerHTML = `<p class="meta">Inget hämtat än — tryck på knappen.</p>`; return; }
     mål.innerHTML = ärenden.length ? ärenden.map(i => `
       <details class="mineitem">
-        <summary><b>${esc(i.key)}</b> ${esc(i.summary)} <span class="meta">${esc(i.status || "")}</span></summary>
+        <summary><b>${esc(i.key)}</b> ${esc(i.summary)} <span class="meta">${esc(i.status || "")}</span>
+          <button class="chip" data-run="${esc(i.key)}" title="${esc(TEXT.runTooltip)}">${esc(TEXT.run)}</button></summary>
         <p class="meta"><b>Krav:</b> ${esc(i.requirement || "—")}</p>
         <p class="meta"><b>Bevis:</b> ${esc(i.proof || "—")}</p>
         ${i.explanation ? `<pre class="minexp">${esc(i.explanation)}</pre>`
@@ -5070,6 +5071,17 @@ document.addEventListener("click", e => {
     }
   }
   if (e.target.closest('[data-act="refresh"]')) return load(true);
+  // En körning skriver kod i en egen worktree och öppnar en pull request. Det är en riktig
+  // handling, inte en visning, så den frågar en gång först -- och knappen i en lista är lätt
+  // att träffa av misstag på ett sätt som kortet på Översikt inte är.
+  const kor = e.target.closest("[data-run]");
+  if (kor) {
+    e.preventDefault();
+    e.stopPropagation();
+    const k = kor.dataset.run;
+    if (!window.confirm("Låt agenten göra " + k + " i en egen worktree? Den skriver kod och öppnar en PR.")) return;
+    return runStart(k);
+  }
   // Kartan och landslistan hör ihop: samma data-kod, och den ena lyser upp när man pekar på
   // den andra. Ett attribut är allt de delar -- ingen tabell över namn till punkter att hålla
   // reda på, och inget som kan bli inaktuellt.

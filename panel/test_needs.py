@@ -15,12 +15,14 @@ import server  # noqa: E402
 ME = {"displayName": "Alex Weström", "email": "alex@example.se"}
 
 
-def state_of(*, issues=(), backlog=(), runs=(), prs=(), gissues=(), token=None, account=None):
+def state_of(*, issues=(), backlog=(), runs=(), prs=(), gissues=(), token=None, account=None,
+             watch=None):
     return {
         "jira": {"account": account or ME,
                  "boards": [{"issues": list(issues), "backlog": list(backlog)}]},
         "runs": {"runs": list(runs)},
         "github": {"pullRequests": list(prs), "issues": list(gissues)},
+        "watch": watch if watch is not None else {},
         "token": token if token is not None else {"present": True, "connected": True,
                                                   "daysLeft": 30, "warnDays": 14, "alert": ""},
     }
@@ -171,6 +173,18 @@ queue = server.needs_list(state_of(issues=[issue("SCRUM-1")],
                                 runs=[{"key": "SCRUM-7", "ok": False}]))
 check([n["level"] for n in queue] == sorted([n["level"] for n in queue], key=lambda l: server.NEED_ORDER[l]),
       "block före wait före info")
+
+# Bevakningen: ett problem blir en rad i kon, i samma form som de andra -- och ett tomt
+# svar blir ingen rad. "Inget fel" och "ingen har tittat" får inte se likadana ut.
+queue = server.needs_list(state_of(watch={"at": "2026-10-06T09:00:00Z",
+                                          "problem": [{"kind": "sajt",
+                                                       "text": "Minnoria kör inte (failed)",
+                                                       "view": "sites"}]}))
+check(len(queue) == 1 and queue[0]["kind"] == "watch" and queue[0]["level"] == "block"
+      and "Minnoria" in queue[0]["label"] and queue[0]["view"] == "sites",
+      "bevakningens problem blir en rad i kon")
+check(server.needs_list(state_of(watch={"at": "x", "problem": []})) == [],
+      "en tom bevakning ger ingen rad")
 
 # Ingen nyckel alls: dörren till Kom igång, inte en tom skärm.
 queue = server.needs_list(state_of(token={"present": False, "connected": False}))

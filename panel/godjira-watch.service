@@ -1,0 +1,16 @@
+[Unit]
+Description=GodJIRA-bevakningen: vad som ar fel just nu
+Documentation=https://github.com/alexwest1981/GodJIRA
+After=network-online.target
+
+[Service]
+Type=oneshot
+# install.sh skriver den har filen och byter ut @ROOT@ och @PYTHON@ pa vagen, precis som
+# panelens unit. Bevakningen kan ligga efter panelen: den fragar panelen om korningen over
+# HTTP, och far den inget svar ar det ett svar i sig.
+WorkingDirectory=@ROOT@
+ExecStart=@PYTHON@ @ROOT@/bin/jira_watch.py
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%U/bus
+Environment=PYTHONDONTWRITEBYTECODE=1

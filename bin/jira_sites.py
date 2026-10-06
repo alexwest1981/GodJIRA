@@ -398,7 +398,7 @@ def tjanst_lage(enhet, kor=None):
         return MISSLYCKAT
 
 
-def vakt_lage(enhet: str, kor=None, nu=None) -> dict:
+def vakt_lage(enhet: str, kor=None, nu=None, timer=None) -> dict:
     """Senaste körningen av ett jobb som skall ha kört: resultat, när, hur länge sedan.
 
     Epoch ur systemd (`--timestamp=unix`), inte text: en textstämpel beror på språket och
@@ -406,11 +406,28 @@ def vakt_lage(enhet: str, kor=None, nu=None) -> dict:
     att enheten aldrig har kört -- `Result` är då "success" ändå, så resultatet ensamt duger
     inte som svar på om jobbet har gjort sitt. `lage` (ActiveState) behövs för att en körning
     som PÅGÅR nollställer tidsstämpeln: den får inte läsas som "har aldrig kört".
+
+    En engångsenhet (oneshot) glömmer sin egen tidsstämpel så snart den är klar: `ExecMain*`
+    är tomma medan timern minns när den senast gick. Därför frågas timern också, och den som
+    vittnar om en körning vinner. Utan det stod backningen som körde i natt som "har aldrig
+    kört" -- en vakt som larmar om något som är gjort är värre än ingen vakt.
     """
     def standard(u):
         return subprocess.run(["systemctl", "--user", "show", "--timestamp=unix",
                                "-p", "Result", "-p", "ExecMainExitTimestamp", "-p", "ActiveState",
                                u], capture_output=True, text=True, timeout=15)
+
+    def timer_standard(u):
+        if not u.endswith(".service"):
+            return ""
+        svar = subprocess.run(["systemctl", "--user", "show", "--timestamp=unix",
+                               "-p", "LastTriggerUSec", u[:-len(".service")] + ".timer"],
+                              capture_output=True, text=True, timeout=15)
+        for rad in (svar.stdout or "").splitlines():
+            nyckel, _, värde = rad.partition("=")
+            if nyckel.strip() == "LastTriggerUSec" and värde.strip().startswith("@"):
+                return värde.strip()
+        return ""
 
     kor = kor or standard
     try:
@@ -432,6 +449,16 @@ def vakt_lage(enhet: str, kor=None, nu=None) -> dict:
             at = int(stamp[1:])
         except ValueError:
             at = None
+    if at is None:
+        try:
+            vitne = (timer or timer_standard)(enhet)
+        except Exception:
+            vitne = ""
+        if vitne.startswith("@"):
+            try:
+                at = int(vitne[1:])
+            except ValueError:
+                at = None
     nu = int(time.time()) if nu is None else nu
     return {"enhet": enhet, "lage": lage, "result": result, "at": at,
             "age_h": round((nu - at) / 3600.0, 1) if at else None}
@@ -684,6 +711,14 @@ def selftest():
     assert trasig["result"] == "exit-code" and trasig["age_h"] > 24, trasig
     aldrig = vakt_lage("x.service", kor=vakt_svar(vakt_rader()), nu=nu)
     assert aldrig["at"] is None and aldrig["age_h"] is None, aldrig
+    # En engangsenhet glommer sin stampel nar den ar klar -- timern ar da vittnet.
+    glomd = vakt_lage("x.service", kor=vakt_svar(vakt_rader(lage="inactive")),
+                      timer=lambda u: "@1799998000", nu=nu)
+    assert glomd["age_h"] == 0.6, glomd
+    # En langkorande tjanst har sin egen stampel, och timern far inte skriva over den.
+    egen = vakt_lage("x.service", kor=vakt_svar(vakt_rader(stamp="@1799990000")),
+                     timer=lambda u: "@1000000000", nu=nu)
+    assert egen["age_h"] == round((nu - 1799990000) / 3600.0, 1), egen
     pagaende = vakt_lage("x.service", kor=vakt_svar(vakt_rader(lage="activating")), nu=nu)
     assert pagaende["lage"] == "activating", pagaende
     # Ordningen skall inte spela roll: epoken får inte hamna i "result"

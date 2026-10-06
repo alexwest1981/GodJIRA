@@ -85,6 +85,9 @@ PROJECT = os.environ.get("JIRA_FLOW_PROJECT", "SCRUM")
 # Automationens senaste ord. n8n skriver den, panelen visar den -- och den ligger i
 # användarens egen state-katalog, inte i repot.
 AUTOMATION_FILE = Path.home() / ".local/state/omarchy/godjira-automation.json"
+# Bevakningens fil (bin/jira_watch.py, kord av godjira-watch.timer): samma mapp och samma
+# rattigheter som automationens -- den ar maskinens, inte webblasarens.
+WATCH_FILE = Path.home() / ".local/state/omarchy/godjira-watch.json"
 MAX_BODY = int(os.environ.get("PANEL_MAX_BODY", str(40 * 1024 * 1024)))
 MAX_FILE = int(os.environ.get("PANEL_MAX_FILE", str(25 * 1024 * 1024)))
 DEFAULT_WISH = "Skapa ärenden för det som står i de bifogade dokumenten."
@@ -754,6 +757,16 @@ def first_project_of_connection() -> str:
         if (project or {}).get("key"):
             return str(project["key"])
     return ""
+
+
+def watch_state() -> dict:
+    """Vad bevakningen hittade senast. Tom fil eller tom lista = inget fel -- och det ar
+    ett svar, inte samma sak som att ingen har tittat."""
+    try:
+        data = json.loads(WATCH_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def automation_state() -> dict:
@@ -1930,6 +1943,16 @@ def needs_list(state: dict, limit: int = 4) -> list:
                                                            str(repo.get("repo") or "")) if x),
                           "url": repo.get("url") or "", "view": "repos"})
 
+    # 0b. Bevakningen: sajter som inte kör, vakter som inte gjort sitt, en körning som stått
+    #     still. Bedömningen är redan gjord (bin/jira_watch.py) -- här blir den bara en rad.
+    #     Är listan tom är det svaret, och då står ingen rad där.
+    watch = state.get("watch") or {}
+    for p in (watch.get("problem") or [])[:limit]:
+        needs.append({"kind": "watch", "level": "block", "count": 1,
+                      "label": str(p.get("text") or "bevakningen såg något"),
+                      "detail": "bevakningen " + str(watch.get("at") or ""),
+                      "view": str(p.get("view") or "sites")})
+
     # 1. Körningar. En körning som öppnat en PR väntar på din merge -- det är människans
     #    grind, och den skall synas. En körning som inte kom igenom väntar på ett beslut.
     for run in runs[:6]:
@@ -2049,6 +2072,7 @@ def state() -> dict:
                     "github": pool.submit(github_state),
                     "project": pool.submit(project_of_the_link, flow),
                     "automation": pool.submit(automation_state),
+                    "watch": pool.submit(watch_state),
                     # Teamet är panelens egen lilla inställning: ingen cache, ingen motor.
                     "team": pool.submit(team_read),
                     "links": pool.submit(links_state),

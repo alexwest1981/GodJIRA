@@ -186,6 +186,12 @@ fi
 # 6. The flow, only where n8n already is. Its unit names a node version and the
 #    mise shims on the machine it was made on, so the binary is looked up here.
 if [ -n "$n8n_bin" ]; then
+	# Bevakningen: en timer som tittar aven nar ingen gör det. Den skriver bara problem --
+	# en tom fil ar ett svar, och panelen visar den som en rad i kon.
+	fill "$root/panel/godjira-watch.service" "$HOME/.config/systemd/user/godjira-watch.service"
+	fill "$root/panel/godjira-watch.timer" "$HOME/.config/systemd/user/godjira-watch.timer"
+	[ "$have_systemctl" = no ] || systemctl --user enable --now godjira-watch.timer
+
 	fill "$root/n8n/n8n.service" "$HOME/.config/systemd/user/n8n.service"
 	fill "$root/panel/godjira-flodet.desktop" "$HOME/.local/share/applications/godjira-flodet.desktop"
 	[ "$have_systemctl" = no ] || systemctl --user enable --now n8n.service

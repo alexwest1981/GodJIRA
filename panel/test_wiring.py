@@ -676,6 +676,13 @@ console.log(lines.join("\\n"));
         return 1
     print("all good: the repos open in the app, the flows are drawn from their own files, "
           "and the shell cannot hang empty")
+    # Körknappen: samma data-run-knapp på Översiktskortet och på varje rad i Mina uppgifter,
+    # och EN delegerad hanterare -- en lyssnare på ett enda element startar inte de andra. Den
+    # frågar dessutom en gång: en körning skriver kod i ett repo och öppnar en pull request.
+    check('data-run="${esc(i.key)}"' in html, "varje rad i Mina uppgifter har en körknapp")
+    check('closest("[data-run]")' in html and 'querySelector("[data-run]")' not in html,
+          "alla körknappar sköts av en delegerad hanterare")
+    check("window.confirm(" in html, "körningen frågar en gång innan den skriver")
     return 0
 
 

@@ -1,0 +1,13 @@
+[Unit]
+Description=Bevakningen: var femtonde minut, och en stund efter start
+
+[Timer]
+# En stund efter start i stallet for direkt: natverket, panelen och sajterna skall vara uppe
+# forst. Persistent=yes tar en missad korning nar maskinen har varit avstangd.
+OnBootSec=3min
+OnUnitActiveSec=15min
+AccuracySec=30s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
