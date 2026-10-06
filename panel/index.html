@@ -581,11 +581,11 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   /* Raden med prioritet, poäng och sprint foljer titeln i stallet for att tryckas till
      kortets botten. Med margin-top: auto + height: 100% hamnade markeringen pa kortets
      hojd -- olika langt fran titeln beroende pa hur langt kortet var. */
-  .card .c2 { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; min-width: 0; margin-top: 0; }
+  .card .c2 { display: flex; align-items: center; gap: 7px; flex-wrap: nowrap; min-width: 0; margin-top: 0; }
   /* Etiketterna i kortets fotrad får inte krympa. Utan det krymper flex dem till en flisa så
      snart raden är trång -- "SCRUM Sprint 4: AutoCore 3.0" kapas till ett par tecken, och
      prioritetsmarkeringen trycks ner på egen rad. Raden bryter hellre: flex-shrink 0. */
-  .card .c2 > * { flex: 0 0 auto; max-width: 100%; }
+  .card .c2 > * { flex: 0 1 auto; min-width: 0; max-width: 100%; }
   .typeg { font-size: 12px; line-height: 1; }
 
   .avatar {
@@ -609,15 +609,17 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex: 0 0 7px; }
   /* Mockens sprak: en tonad bricka i stället for en kal glyf. Stapelmarkeringen far
      samma slags ruta som .excl har, med sin egen färg i tonen. */
-  .bars {
-    display: inline-flex; align-items: flex-end; gap: 1.5px; height: 10px;
+  /* Bara brickan i kortets rad. Klassen .bars anvands ocksa av prioritetsstaplarna i
+     Projekt-vyn (en grid, rad 699) -- de skall inte ha ton, kant eller luft. */
+  .card .c2 .bars {
+    display: inline-flex; align-items: flex-end; gap: 1.5px;
     padding: 1.5px 4px; border-radius: 4px;
     background: color-mix(in oklch, var(--sev, var(--line-2)) 16%, transparent);
     border: 1px solid color-mix(in oklch, var(--sev, var(--line-2)) 36%, transparent);
   }
-  .bars.p3 { --sev: var(--red); }
-  .bars.p2 { --sev: var(--amber); }
-  .bars.p1 { --sev: var(--accent); }
+  .card .c2 .bars.p3 { --sev: var(--red); }
+  .card .c2 .bars.p2 { --sev: var(--amber); }
+  .card .c2 .bars.p1 { --sev: var(--accent); }
   .bars i { width: 2.5px; border-radius: 1px; background: var(--line-2); display: block; }
   .bars i:nth-child(1) { height: 4px; } .bars i:nth-child(2) { height: 7px; } .bars i:nth-child(3) { height: 10px; }
   .bars.p3 i { background: var(--red); }
