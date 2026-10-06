@@ -2,10 +2,12 @@
 """Provet for infosidan: att den svarar, att den sager sanningen, och att den inte laddar
 nagot utifran.
 
-Statisk HTML utan JavaScript -- men "inga cookies, ingen spanning, inga anrop till nagon
-annan" ar ett pastaende pa sida 2 (integritet.html), och ett pastaende utan matning ar vard
-ingenting. Det har provet kollar just det: att inga cookies satts, att det inte finns ett
-enda <script>, och att ingen bild, stilmall eller typsnitt hamtas fran en annan vard.
+Sidorna ar statiska HTML-filer med ETT enda skript: besoksräkningen (PostHog, EU). Det star
+i integritet.html ("Inga cookies", "Anonym besoksräkning", "Ett enda skript", "Bara ett
+anrop ut"), och ett pastaende utan matning ar vard ingenting. Det har provet kollar just
+det: att inga cookies satts, att varje sida har exakt ett skript, att det ar samma snutt i
+alla tre, att den pekar pa EU-hosten och sparar i minnet (alltsa ingenting i webblasaren),
+och att ingen bild eller stilmall hamtas fran en annan vard.
 
 Sidan finns ocksa pa engelska (/en/). Provet mater inte att oversattningen ar BRA -- det gor
 ogat, pa skarmdumpen -- utan att den ar HEL: ingen svensk rad far sta kvar, stilmallen och
@@ -70,7 +72,22 @@ def main() -> int:
                   "%s tillater ingen cachning" % sida, str(huvuden.get("Cache-Control")))
 
         _, _, startsida = hamta(port, "/")
-        kolla("<script" not in startsida.lower(), "ingen JavaScript pa sidan")
+        # Snutten: ETT skript per sida, och samma snutt i alla tre -- annars driver de isar
+        # och en sida mater nagot annat an de andra. Den skall vara PostHog mot EU-hosten med
+        # minneslagring: da sparas ingenting i webblasaren, som integritetssidan lovar.
+        snuttar: dict[str, list[str]] = {}
+        for sida in SIDOR:
+            _, _, kropp = hamta(port, "/" + sida)
+            funna = re.findall(r"<script\b.*?</script>", kropp, re.S | re.I)
+            snuttar[sida] = funna
+            kolla(len(funna) == 1, "%s har exakt ett skript" % sida, "%d" % len(funna))
+        kolla(len({tuple(v) for v in snuttar.values()}) == 1, "samma snutt pa alla tre sidorna")
+        snutt = (snuttar["index.html"] or [""])[0]
+        kolla("phc_" in snutt, "snutten bar projekt-token (phc_)")
+        kolla("eu.i.posthog.com" in snutt, "snutten pekar pa EU-hosten")
+        kolla(re.search(r"persistence:\s*'memory'", snutt) is not None,
+              "snutten sparar ingenting i webblasaren (persistence: memory)")
+        kolla(not re.search(r"<script[^>]+src=", startsida, re.I), "inget skript laddas fran en fil")
         # Bilderna och stilmallen skall komma fran samma server. En enda extern sokvag racker
         # for att pastaendet om integritet skall vara falskt.
         # Det som LADDAS skall komma fran samma server: src= (bilder, skript) och <link
@@ -79,7 +96,7 @@ def main() -> int:
         laddas = (re.findall(r'src\s*=\s*"(.*?)"', startsida)
                   + re.findall(r'<link[^>]+href\s*=\s*"(.*?)"', startsida))
         kolla(laddas and not any(f.startswith(UTANFOR) for f in laddas),
-              "inget laddas fran en annan vard", "%d resurser, alla lokala" % len(laddas))
+              "bilder och stilmall kommer fran samma vard", "%d resurser, alla lokala" % len(laddas))
         falt = re.findall(r'(?:src|href)\s*=\s*"(.*?)"', startsida)
         lokala = [f for f in falt if not f.startswith("#")]
 
@@ -109,7 +126,8 @@ def main() -> int:
             kolla(huvuden.get("Content-Language") == "en",
                   "/en/%s sager att den ar engelsk" % sida, str(huvuden.get("Content-Language")))
             kolla('<html lang="en">' in kropp, "/en/%s ar markt engelsk" % sida)
-            kolla("<script" not in kropp.lower(), "/en/%s har ingen JavaScript" % sida)
+            kolla(re.findall(r"<script\b.*?</script>", kropp, re.S | re.I) == snuttar[sida],
+                  "/en/%s har samma snutt som svenskan" % sida)
             kolla("set-cookie" not in {k.lower() for k in huvuden},
                   "/en/%s satter ingen cookie" % sida)
             # Den engelska sidan ligger ett steg djupare an den svenska: stilmallen och

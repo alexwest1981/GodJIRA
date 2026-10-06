@@ -48,8 +48,9 @@ SAJTER = [
      "kassa_namn": "REDTHREAD_BILLING_STRIPE_SECRET_KEY"},
     {"nyckel": "higgies", "namn": "Higgies", "url": "http://127.0.0.1:3000/",
      "vardar": ["127.0.0.1:3000", "localhost:3000"], "tjanst": "higgies.service", "salj": None, "kassa": None},
-    {"nyckel": "godjira", "namn": "GodJIRA", "url": "http://127.0.0.1:8788/",
-     "vardar": [], "tjanst": "godjira-panel.service", "salj": None, "kassa": None},
+    {"nyckel": "godjira", "namn": "GodJIRA", "url": "https://godjira.se/",
+     "vardar": ["godjira.se", "www.godjira.se"], "tjanst": "godjira-webb.service",
+     "salj": None, "kassa": None},
 ]
 
 # Tjanster som inte ar sajter men som anda skall synas: en hub som visar att allt ar
@@ -58,6 +59,10 @@ SAJTER = [
 TJANSTER = [
     {"nyckel": "n8n", "namn": "n8n (flodena)", "enhet": "n8n.service"},
     {"nyckel": "omniroute", "namn": "OmniRoute (modellrouter)", "enhet": "omniroute.service"},
+    # Panelen ar ingen sajt (den lyssnar pa 127.0.0.1 och visas aldrig utat), men den skall
+    # anda synas: den ar hubben sjalv. Den ligger har i stallet for i SAJTER, for en post dar
+    # mater en publik adress.
+    {"nyckel": "godjira-panel", "namn": "GodJIRA-panelen", "enhet": "godjira-panel.service"},
 ]
 
 # Jobb som skall ha kört av sig själva: backningar och gallringar. Att de tystnar är den

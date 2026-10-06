@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Engelskan på infosidan: samma filer, samma markup, bytta textnoder.
 
-Sidan är tre statiska HTML-filer utan JavaScript, och det är ett löfte som
-`integritet.html` ger och `test_webb.py` mäter. Översättningen sker därför i servern i
-stället för i webbläsaren: samma fil ligger kvar på disk, men texten byts mot raden i
-`i18n/<språk>.json` innan svaret går ut.
+Sidan är tre statiska HTML-filer och en stilmall, och att det inte laddas något utifrån (utom
+besöksräkningen) är ett löfte som `integritet.html` ger och `test_webb.py` mäter.
+Översättningen sker därför i servern i stället för i webbläsaren: samma fil ligger kvar på
+disk, men texten byts mot raden i `i18n/<språk>.json` innan svaret går ut.
 
 **Nycklarna är den svenska texten själv**, precis som i panelen (`panel/i18n/sv.json`),
 så ingen ritning behöver skrivas om -- och en ändrad svensk rad blir en ny nyckel i
@@ -34,7 +34,10 @@ MAL = "en"
 SPRAKVAL = re.compile(r"<a[^>]*data-sprak[^>]*>.*?</a>", re.S)
 
 # Taggar och kommentarer: allt som inte är text hålls orört (klassnamn, id:n, sökvägar).
-BITAR = re.compile(r"<!--.*?-->|<[^>]*>", re.S)
+# Ett skriptblock tas som en bit för sig: det är kod, inte text, och skall varken
+# översättas eller skrivas om (sökvägarna i det skulle bli absoluta av misstag annars).
+BITAR = re.compile(r"<!--.*?-->|<script\b.*?</script>|<[^>]*>", re.S)
+RAK = re.compile(r"<script\b", re.I)
 # Attribut som syns för en läsare eller en skärmläsare. `content` sitter bara på meta.
 ATTRIBUT = re.compile(r'\b(alt|content|title|aria-label)="([^"]*)"')
 # En sida: href="villkor.html#namnet". Bara .html -- stilmallen och bilderna är inte sidor.
@@ -102,8 +105,11 @@ def bitar(dokument: str):
             yield "text", text, not hoppa
             hoppa = False
         tagg = traff.group(0)
-        yield "tagg", tagg, True
-        hoppa = "data-sprak" in tagg
+        if RAK.match(tagg):
+            yield "rak", tagg, False
+        else:
+            yield "tagg", tagg, True
+            hoppa = "data-sprak" in tagg
         sista = traff.end()
     if sista < len(dokument):
         yield "text", dokument[sista:], not hoppa
@@ -126,7 +132,7 @@ def rader(dokument: str) -> list[str]:
         if slag == "text":
             if oversattbar:
                 ta(bit)
-        else:
+        elif slag == "tagg":
             for traff in ATTRIBUT.finditer(bit):
                 ta(traff.group(2))
     return ut
@@ -171,6 +177,8 @@ def oversatt(dokument: str, tabell: dict[str, str], vag: str = "index.html",
     for slag, bit, oversattbar in bitar(dokument):
         if slag == "tagg":
             ut.append(_tagg(bit, tabell, sprak))
+        elif slag == "rak":
+            ut.append(bit)
         else:
             ut.append(_nod(bit, tabell) if oversattbar else bit)
     sida = "".join(ut)
