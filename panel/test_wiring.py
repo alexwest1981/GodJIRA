@@ -491,6 +491,9 @@ console.log(bad.length ? "FEL " + bad.join(" | ") : "OK");
     # Två sorters rubrik, och skillnaden är vad som finns under dem.
     # Med rader: hela rubriken fäller (data-fall), och då ligger ALLA vyerna i undermenyn.
     # Utan rader: rubriken navigerar (data-v), och har ingen pil -- inget att fälla.
+    check("const newest = (((STATE.github" not in html and "Inget valt: visa listan" in html
+          and 'class="r" data-repo=' in html,
+          "Repon är listan: inget repo öppnas av sig självt, och tomma läget visar repolistan")
     check("genvag" in html and "har.length === 1 && !sammanhang[namn]" in html
           and "har.map(rad).join" in html
           and 'data-fall="${namn}"' in html and 'data-v="${vy}"' in html,

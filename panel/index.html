@@ -3746,7 +3746,25 @@ function renderRepoDetail() {
   const meta = document.getElementById("repoDetailMeta");
   const body = document.getElementById("repoDetail");
   const host = document.getElementById("repoLink");
-  if (!REPO.name) { meta.textContent = ""; return; }
+  if (!REPO.name) {
+    // Inget valt: visa listan i stället för en tom plats. Raderna bär data-repo, alltså
+    // samma klickväg som sidofältet -- ingen ny hanterare, ingen andra sanning om vad ett
+    // klick på ett repo gör.
+    meta.textContent = "";
+    const alla = ((STATE.github || {}).repos || []);
+    body.innerHTML = alla.length
+      ? '<div class="wl">' + alla.map(r => {
+          const l = linkOf(r.name);
+          return `<div class="r" data-repo="${esc(r.name)}" title="${esc(r.description || r.name)}">` +
+            `<span class="key">${esc(r.name)}</span>` +
+            `<span class="t">${esc(r.description || "")}</span>` +
+            `<span class="tside">${l ? esc(l.project || "?") : ""}` +
+            `${r.isPrivate ? '<span class="meta">· privat</span>' : ""}</span></div>`;
+        }).join("") + "</div>"
+      : '<div class="empty">inget repo</div>';
+    host.innerHTML = '<div class="empty">inget repo valt</div>';
+    return;
+  }
   const d = REPO.data;
   meta.innerHTML = d ? link(d.about.url, esc(d.repo)) : esc(REPO.name);
   if (REPO.busy) {
@@ -4851,16 +4869,10 @@ function render() {
   if (view === "mine") renderMine();
   if (view === "chat") { renderChat(); if (!AGENTS) agentLoad(); }
   if (view === "items") renderItems();
-  // In i Repon med inget valt: öppna det kopplade repot (annars det senast rörda),
-  // så huvudrutan visar något i stället för en tom plats.
+  // Ingen automatisk öppning: Repon ÄR listan, och ett klick i den (eller i sidofältet) är
+  // valet. Att öppna det senast rörda repot gjorde raden "Projekt" obegriplig -- listan såg
+  // ut som ett repo, och ordningen stämde inte med någonting.
   if (view === "repos") {
-    if (!REPO.name && !REPO.busy) {
-      const linked = links()[0];
-      const newest = (((STATE.github || {}).repos) || [])[0];
-      const pick = (linked && linked.repo ? shortName(linked.repo) : "") ||
-                   (newest ? newest.name : "");
-      if (pick) repoOpen(pick);
-    }
     renderTabs("repos");
     renderRepos();
   }
