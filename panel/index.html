@@ -560,14 +560,17 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   /* fr-rows: every row is as tall as the tallest card, so the grid reads as a board
      instead of a ragged wall. The card fills its row and keeps its metadata at the
      bottom, which is what makes two rows of unequal titles still line up. */
-  .bgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(264px, 1fr)); gap: 8px; padding: 1px; grid-auto-rows: 1fr; }
+  /* Korten hade 264 px som golv och INGEN luft inuti, sa 153 ärenden lag i fem kolumner
+     pa 309 px dar texten gick kant mot kant (matt: forsta barnet 1 px fran kanten).
+     Golvet upp sa korten far rum, och luften in i kortet i stallet. */
+  .bgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 10px; padding: 1px; grid-auto-rows: 1fr; }
   .bgrid > a { display: block; height: 100%; }
   .card {
     /* Mockens kort: ljuset faller in uppifrån vänster (145 grader) i stället för att ytan
        ligger platt. Färgen tas ur kortets egen ton, så båda temana följer med. */
     background: var(--card); background-image: linear-gradient(145deg, color-mix(in oklab, var(--card) 90%, var(--text) 10%), var(--card) 62%);
     border: 1px solid var(--line); border-radius: var(--r);
-    height: 100%; display: flex; flex-direction: column;
+    height: 100%; display: flex; flex-direction: column; padding: 12px 13px;
   }
   .card:hover { background: var(--card-hi); border-color: var(--line-2); }
   .card .c1 { display: flex; align-items: center; gap: 7px; }
@@ -601,7 +604,17 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
     white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
   }
   .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex: 0 0 7px; }
-  .bars { display: inline-flex; align-items: flex-end; gap: 1.5px; height: 10px; }
+  /* Mockens sprak: en tonad bricka i stället for en kal glyf. Stapelmarkeringen far
+     samma slags ruta som .excl har, med sin egen färg i tonen. */
+  .bars {
+    display: inline-flex; align-items: flex-end; gap: 1.5px; height: 10px;
+    padding: 1.5px 4px; border-radius: 4px;
+    background: color-mix(in oklch, var(--sev, var(--line-2)) 16%, transparent);
+    border: 1px solid color-mix(in oklch, var(--sev, var(--line-2)) 36%, transparent);
+  }
+  .bars.p3 { --sev: var(--red); }
+  .bars.p2 { --sev: var(--amber); }
+  .bars.p1 { --sev: var(--accent); }
   .bars i { width: 2.5px; border-radius: 1px; background: var(--line-2); display: block; }
   .bars i:nth-child(1) { height: 4px; } .bars i:nth-child(2) { height: 7px; } .bars i:nth-child(3) { height: 10px; }
   .bars.p3 i { background: var(--red); }
@@ -3666,7 +3679,7 @@ function card(i) {
     <div class="c2">${prio(i.priorityName)}
       ${i.dueMs ? `<span class="pill">📅 ${dt(i.dueMs)}</span>` : ""}
       ${i.storyPoints ? `<span class="pill">${i.storyPoints} p</span>` : ""}
-      ${i.sprintName ? `<span class="pill">${esc(i.sprintName)}</span>` : ""}
+      ${i.sprintName ? `<span class="pill tint" style="--tint:var(--accent)">${esc(i.sprintName)}</span>` : ""}
       ${i.parentKey ? `<span class="pill">↳ ${esc(i.parentKey)}</span>` : ""}</div>`;
   return link(i.url, `<div class="card">${body}</div>`);
 }
