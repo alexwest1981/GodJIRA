@@ -18,7 +18,7 @@ HTML = (HERE / "index.html").read_text(encoding="utf-8")
 
 # esc() behövs av rader(), och den ligger i samma fil -- samma källa, inget prov som glider isär.
 ESC = re.search(r"const esc = s =>.*?\n", HTML, re.S)
-RADER = re.search(r"  const rader = \(lista, forsta\) => \{.*?\n  \};", HTML, re.S)
+RADER = re.search(r"  const rader = \(lista[^)]*\) => \{.*?\n  \};", HTML, re.S)
 
 PROV = """
 {t}const t = (namn, ok) => console.log((ok ? "OK " : "FEL ") + namn);
@@ -32,9 +32,12 @@ t("tom lista ger ingen tabell", rader([], "namn") === "" && rader(null) === "");
 const k = rader([["Sweden", 12, "SE"]], "land");
 t("landet får sin kod på raden", k.includes('data-kod="SE"'));
 t("en rad utan kod får inget attribut", !h.includes("data-kod"));
+const p = rader([["/", 8], ["/om", 4]], "sida", 16, "besök");
+t("nämnaren är hela summan när den ges", p.includes(">50 %<") && p.includes(">25 %<"));
+t("kolumnen heter det talet är", p.includes(">besök<") && rader([["Sweden", 1, "SE"]], "land", null, "personer").includes(">personer<"));
 """.format(t=(ESC.group(0) + RADER.group(0)) if (ESC and RADER) else "")
 
-ANTAL = 8
+ANTAL = 10
 
 # Kartans punkter: regeln måste peka på något markupen faktiskt skriver. Första versionen
 # letade efter en .punkter-behållare som aldrig fanns, så punkterna ritades som tomma

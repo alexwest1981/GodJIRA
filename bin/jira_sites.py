@@ -242,8 +242,13 @@ def vardar_for(sajt):
 
 
 def per_dag(rader):
-    """[[dag, visningar, personer], ...] -> [[dag, visningar], ...] i datumordning."""
-    return [[str(r[0]), int(r[1])] for r in sorted(rader or [], key=lambda r: str(r[0]))]
+    """[[dag, visningar, personer, sessioner], ...] -> samma fyra, i datumordning.
+
+    Alla kolumnerna följer med hela vägen ut. Förut kapades raden till två värden, och
+    panelens dagtabell läste det tredje -- den ritade nollor där det fanns ett tal.
+    """
+    return [[str(r[0]), int(r[1]), int(r[2] or 0), int(r[3] or 0)]
+            for r in sorted(rader or [], key=lambda r: str(r[0]))]
 
 
 def summa(rader, index=1):
@@ -273,20 +278,23 @@ def trafik(vardar, dagar=14, fraga=hogql):
     sedan = (datetime.now(timezone.utc) - timedelta(days=dagar)).strftime("%Y-%m-%d %H:%M:%S")
     bas = ("FROM events WHERE properties.$host IN %s AND event = '$pageview'" % lista)
     ut = {"mats": True, "dagar": dagar}
-    per = forsok(fraga, "SELECT toDate(timestamp) AS dag, count(), count(DISTINCT person_id) "
+    per = forsok(fraga, "SELECT toDate(timestamp) AS dag, count(), count(DISTINCT person_id), "
+                        "count(DISTINCT properties.$session_id) "
                         + bas + " AND timestamp > '" + sedan + "' GROUP BY dag ORDER BY dag")
     if per == MISSLYCKAT:
         return {"mats": True, "dagar": dagar, "fel": MISSLYCKAT}
     ut["perDag"] = per_dag(per)
     ut["visningar"] = summa(per)
-    ut["personer"] = summa(per, 2)
+    # Personer sätts längre ner, ur sessionsfrågan: summan av dygnens unika är inte unika
+    # över perioden. En som kommer tre dagar är en person, inte tre.
     # Sessioner och riktningen: en siffra säger hur mycket, förra perioden säger åt
     # vilket håll. Båda får kosta en fråga var -- de är hela skillnaden mellan en
     # rapport och en mätning.
-    sessioner = forsok(fraga, "SELECT count(DISTINCT properties.$session_id) " + bas
-                       + " AND timestamp > '" + sedan + "'")
+    sessioner = forsok(fraga, "SELECT count(DISTINCT properties.$session_id), "
+                       "count(DISTINCT person_id) " + bas + " AND timestamp > '" + sedan + "'")
     if sessioner and sessioner != MISSLYCKAT:
         ut["sessioner"] = int(sessioner[0][0])
+        ut["personer"] = int(sessioner[0][1] or 0)
     sedan_28 = (datetime.now(timezone.utc) - timedelta(days=dagar * 2)).strftime("%Y-%m-%d %H:%M:%S")
     forra = forsok(fraga, "SELECT count() " + bas + " AND timestamp > '" + sedan_28
                    + "' AND timestamp <= '" + sedan + "'")
@@ -693,7 +701,9 @@ def selftest():
     assert vardar_for({"vardar": []}) == []
 
     # Per dag: sorterat i datumordning hur raderna an kommer
-    assert per_dag([["2026-10-05", 3, 2], ["2026-10-04", 7, 4]]) == [["2026-10-04", 7], ["2026-10-05", 3]]
+    # Alla fyra kolumnerna följer med ut: dag, besök, personer, sessioner.
+    assert per_dag([["2026-10-05", 3, 2, 1], ["2026-10-04", 7, 4, 3]]) == \
+        [["2026-10-04", 7, 4, 3], ["2026-10-05", 3, 2, 1]]
     assert summa([["2026-10-05", 3, 2], ["2026-10-04", 7, 4]]) == 10
     assert summa([["x", 3, 9]], 2) == 9
 
@@ -755,8 +765,10 @@ def selftest():
     def låtsas(sql):
         if "avg(sek)" in sql:
             return [[83]]
+        if "toDate(timestamp)" in sql:
+            return [["2026-10-01", 4, 3, 2]]      # dag, besök, personer, sessioner
         if "session_id" in sql:
-            return [[7]]
+            return [[7, 5]]
         if "$exception" in sql:
             return [[2]]
         if "INTERVAL 5 MINUTE" in sql:
@@ -776,11 +788,14 @@ def selftest():
             return [["google", 3]]
         if "min(timestamp)" in sql:
             return [[12, 9, "2026-09-01 00:00:00", "2026-10-01 00:00:00"]]
-        return [["2026-10-01", 4, 3]]
+        return [["2026-10-01", 4, 3, 2]]
     t = trafik(["x.se"], 14, fraga=låtsas)
     assert t["sessioner"] == 7, t
     assert t["forra"] == 10, t
-    assert t["visningar"] == 4 and t["personer"] == 3, t
+    assert t["visningar"] == 4, t
+    # Personer är periodens unika (5 ur sessionsfrågan), inte summan av dygnens (3).
+    assert t["personer"] == 5, t
+    assert t["perDag"] == [["2026-10-01", 4, 3, 2]], t["perDag"]
     # Perioden fick inte vara dekorativ: rapport(7) skall ge sajter som MATS med sju.
     fångade = []
     def fånga(sajt, dagar=14):
@@ -799,7 +814,7 @@ def selftest():
 
     # Uteblir svaret skall fältet vara BORTA, inte noll: en nolla ser ut som ett svar.
     def halvt(sql):
-        return [["2026-10-01", 4, 3]] if "toDate" in sql else MISSLYCKAT
+        return [["2026-10-01", 4, 3, 2]] if "toDate" in sql else MISSLYCKAT
     t2 = trafik(["x.se"], 14, fraga=halvt)
     assert t2.get("mats") and t2.get("visningar") == 4, t2
     for nyckel in ("handelser", "enheter", "sessionSekunder", "undantag", "live"):

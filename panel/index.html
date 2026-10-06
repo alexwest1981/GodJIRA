@@ -500,6 +500,9 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
      mellan siffran och namnet. Samma ton som appens rad-hover. */
   table.tal tr:nth-child(even) td {
     background: light-dark(rgba(0, 0, 0, .028), rgba(255, 255, 255, .022)); }
+  /* Summa-raden: en linje över, ingen ton, och siffrorna i samma kolumner som resten. */
+  table.tal tr.fot td { border-top: 1px solid var(--line-2); border-bottom: 0;
+                        background: none; font-weight: 600; }
   table.tal td { padding: 5px 10px 5px 0; border-bottom: 1px solid var(--line); vertical-align: middle; }
   table.tal tr:last-child td { border-bottom: 0; }
   table.tal td:first-child { max-width: 200px; }
@@ -3060,13 +3063,18 @@ function siteDetail(s) {
   // skillnaden; procenten mot summan -- då blir de 100 tillsammans. Förut var stapeln
   // flex:1, alltså fyllde den raden och blev lika lång oavsett värde: den gick inte att
   // läsa av, och siffran stod utan något att jämföra med.
-  const rader = (lista, forsta) => {
+  const rader = (lista, forsta, totalt, enhet) => {
     const par = lista || [];
     if (!par.length) return "";
     const topp = Math.max(1, ...par.map(r => Number(r[1]) || 0));
-    const summa = par.reduce((s, r) => s + (Number(r[1]) || 0), 0) || 1;
+    // Nämnaren är hela summan för enheten när den finns (sajtens besök för sidor och
+    // källor). Annars summan av raderna -- och då är procenten andelen av det som visas,
+    // inte av allt, vilket är precis vad en topplista kan säga.
+    const hel = Number(totalt) || par.reduce((s, r) => s + (Number(r[1]) || 0), 0) || 1;
+    // Kolumnen heter det talet ÄR: besök för sidor och källor, personer för länder och
+    // enheter, antal för händelser. "antal" överallt gjorde två olika saker till samma ord.
     return '<table class="tal"><tr><th>' + esc(forsta || "namn") + "</th><th></th>" +
-      '<th class="n">' + esc("antal") + '</th><th class="n">' + esc("andel") + "</th></tr>" +
+      '<th class="n">' + esc(enhet || "antal") + '</th><th class="n">' + esc("andel") + "</th></tr>" +
       par.map(r => {
         const n = Number(r[1]) || 0;
         // Tredje värdet är koden (bara landet har en). Den gör raden och kartans punkt till
@@ -3074,7 +3082,7 @@ function siteDetail(s) {
         return "<tr" + (r[2] ? ' data-kod="' + esc(r[2]) + '"' : "") + "><td>" + esc(r[0] || "/") + "</td>" +
           '<td class="del"><span class="btrack"><i style="width:' +
           Math.round(n / topp * 100) + '%"></i></span></td>' +
-          '<td class="n">' + n + '</td><td class="n">' + Math.round(n / summa * 100) + " %</td></tr>";
+          '<td class="n">' + n + '</td><td class="n">' + Math.round(n / hel * 100) + " %</td></tr>";
       }).join("") + "</table>";
   };
   const tot = t.totalt ? '<div class="meta">' + Number(t.totalt.visningar) + " besök / " +
@@ -3103,7 +3111,7 @@ function siteDetail(s) {
   const handelser = t.handelser
     ? '<div class="meta">händelser</div>' + rader(t.handelser, "händelser") : "";
   const enheter = t.enheter
-    ? '<div class="meta">enheter</div>' + rader(t.enheter, "enheter") : "";
+    ? '<div class="meta">enheter</div>' + rader(t.enheter, "enheter", null, "personer") : "";
   // Perioden: samma fråga, tre svar. Knapparna är rälens .seg, samma kontroll som
   // panelen använder för tema och flikar -- inget eget reglage att lära sig.
   const period = '<div class="seg">' + [7, 14, 30].map(d =>
@@ -3126,18 +3134,25 @@ function siteDetail(s) {
   // vilken dag. Nyaste dagen först -- det är den man letar efter.
   const dagtabell = (t.perDag || []).length
     ? '<table class="tal"><tr><th>' + esc("datum") + '</th><th class="n">' + esc("besök") +
-      '</th><th class="n">' + esc("personer") + "</th></tr>" + t.perDag.slice().reverse().map(r =>
+      '</th><th class="n">' + esc("personer") + '</th><th class="n">' + esc("sessioner") + "</th></tr>" +
+      t.perDag.slice().reverse().map(r =>
         "<tr><td>" + esc(String(r[0]).slice(0, 10)) + '</td><td class="n">' + (Number(r[1]) || 0) +
-        '</td><td class="n">' + (Number(r[2]) || 0) + "</td></tr>").join("") + "</table>"
+        '</td><td class="n">' + (Number(r[2]) || 0) + '</td><td class="n">' + (Number(r[3]) || 0) +
+        "</td></tr>").join("") +
+      // Summan längst ner: besök och sessioner går att summera, personer gör det inte --
+      // en som kommer två dagar är en person, inte två. Den siffran står i kortet ovanför.
+      '<tr class="fot"><td>' + esc(String(t.dagar || "") + " dygn") + '</td><td class="n">' +
+      t.perDag.reduce((s, r) => s + (Number(r[1]) || 0), 0) + '</td><td class="n">—</td>' +
+      '<td class="n">' + t.perDag.reduce((s, r) => s + (Number(r[3]) || 0), 0) + "</td></tr></table>"
     : "";
   const lander = (t.lander || []).length
-    ? '<div class="meta">var de är</div>' + rader(t.lander, "land") : "";
+    ? '<div class="meta">var de är</div>' + rader(t.lander, "land", null, "personer") : "";
   const rikt = riktning(t.visningar, t.forra);
   const kurva = '<div class="sparkbox">' + spark(t.perDag) +
     (rikt ? '<div class="meta">' + rikt + "</div>" : "") + "</div>";
   return drift + period + kort + extra + kurva + karta + lander + dagtabell + tot + pengar + handelser +
-    '<div class="meta">mest besökta</div>' + (rader(t.toppSidor, "sida") || '<div class="empty">—</div>') +
-    '<div class="meta">varifrån</div>' + (rader(t.kallor, "källa") || '<div class="empty">—</div>') +
+    '<div class="meta">mest besökta</div>' + (rader(t.toppSidor, "sida", t.visningar, "besök") || '<div class="empty">—</div>') +
+    '<div class="meta">varifrån</div>' + (rader(t.kallor, "källa", t.visningar, "besök") || '<div class="empty">—</div>') +
     enheter;
 }
 
