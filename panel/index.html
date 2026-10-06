@@ -1629,7 +1629,7 @@ function renderRuns() {
     const when = esc(String(e.at || "").slice(11, 16));
     const done = (e.commits || 0) > 0;
     const tail = done
-      ? `${e.commits} ${esc(TEXT.changes)}${e.pr ? ` · <a href="${esc(e.pr)}" target="_blank" rel="noopener">PR</a>`
+      ? `${esc(TEXT.changes)} (${e.commits})${e.pr ? ` · <a href="${esc(e.pr)}" target="_blank" rel="noopener">PR</a>`
         : (e.pushed ? " · " + esc(TEXT.pushed) : " · " + esc(TEXT.localOnly))}`
       : `<span class="err">${esc(TEXT.noChange)}</span>`;
     const why = e.note ? ` title="${esc(e.note)}"` : "";
@@ -3062,8 +3062,8 @@ function renderSites() {
       ["kassa", sum(s => (s.salj || {}).krTotalt).toFixed(2) + " kr", ""],
     ]);
   }
-  lista.innerHTML = '<thead><tr><th style="width:150px">Sajterna</th><th style="width:130px">uppe</th>' +
-    "<th>besök</th><th style=\"width:210px\">kassa</th><th style=\"width:140px\">PostHog</th></tr></thead><tbody>" +
+  lista.innerHTML = '<thead><tr><th style="width:22%">Sajterna</th><th style="width:16%">uppe</th>' +
+    "<th>besök</th><th style=\"width:26%\">kassa</th><th style=\"width:16%\">PostHog</th></tr></thead><tbody>" +
     (sajter.map(siteRow).join("") || '<tr><td colspan="5" class="empty">—</td></tr>') + "</tbody>";
   lista.querySelectorAll("[data-site]").forEach(rad => rad.addEventListener("click", () => {
     SITES.valt = SITES.valt === rad.dataset.site ? "" : rad.dataset.site;
@@ -3441,7 +3441,7 @@ async function runPoll() {
       RUN.state = answer.state; RUN.key = answer.key || RUN.key;
       RUN.error = answer.error || "";
       RUN.tail = (answer.commits || 0) > 0
-        ? answer.commits + " " + TEXT.changes + (answer.pr ? " · PR" : "")
+        ? TEXT.changes + " (" + answer.commits + ")" + (answer.pr ? " · PR" : "")
         : TEXT.noChange;
       runNote();
       if (wasRunning) load(true);      // Körningskortet fick en ny rad
