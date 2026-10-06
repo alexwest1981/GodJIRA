@@ -47,9 +47,16 @@ def free_port() -> int:
 
 
 def git_state() -> str:
+    """Nya, ospårade filer i checkouten -- det panelen kan lägga dit.
+
+    Förut mättes hela repots git-status. Det sade ingenting om panelen: trädet delas med
+    andra skrivare, och en commit eller en redigering någon annanstans under körningen fick
+    provet att larma om panelen. Mätt: rött i en full svit medan en parallell session skrev
+    och jag committade, grönt 3 av 3 ensam. En redigering syns som " M"/"A " och rör inte
+    panelen; den kan bara lägga dit en NY fil."""
     done = subprocess.run(["git", "-C", str(ROOT), "status", "--porcelain"],
                           capture_output=True, text=True)
-    return done.stdout
+    return "\n".join(rad for rad in done.stdout.splitlines() if rad.startswith("??"))
 
 
 home = Path(tempfile.mkdtemp(prefix="godjira-cold-"))
@@ -58,18 +65,16 @@ before = git_state()
 
 env = {k: v for k, v in os.environ.items()
        if k not in ("JIRA_TOKEN", "JIRA_SITE", "JIRA_EMAIL", "GH_TOKEN", "PANEL_DEMO")}
-env.update(HOME=str(home), PANEL_PORT=str(port), PANEL_BIND="127.0.0.1", TMPDIR=str(home))
+# Utan bytekodsskrift kan panelen inte lämna något i checkouten alls; allt annat den
+# skriver hamnar under den tillfälliga hemkatalogen.
+env.update(HOME=str(home), PANEL_PORT=str(port), PANEL_BIND="127.0.0.1", TMPDIR=str(home),
+           PYTHONDONTWRITEBYTECODE="1")
 panel = subprocess.Popen([sys.executable, str(HERE / "server.py")], env=env,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 try:
     base = "http://127.0.0.1:{}".format(port)
     ready = False
-    # 120 * 0,5 s = 60 s. Räcker gott ensam, men provet skall också hålla när det körs i
-    # hela sviten medan andra servrar och sessioner jobbar på samma maskin -- då är en
-    # kallstart utan nyckel tyngre. Loopen bryter så fort /healthz svarar, så en höjd
-    # gräns kostar ingenting när starten går fort. (Mätt: ett rött körningstillfälle av
-    # många, 3 av 3 gröna ensam -- flakigt under last, inte trasigt.)
-    for _ in range(240):
+    for _ in range(120):
         try:
             with urllib.request.urlopen(base + "/healthz", timeout=2):
                 ready = True
@@ -110,7 +115,8 @@ try:
           "flödets nästa visar ett exempel i stället för ett tokenfel",
           json.dumps(flow)[:160])
 
-    check(git_state() == before, "panelen skriver ingenting i sin egen checkout")
+    check(git_state() == before,
+          "panelen lämnar inga nya filer i sin egen checkout (övriga trädet delas med andra skrivare)")
     check(not any(home.rglob("*.pyc")), "ingen bytekod hamnade i hemkatalogen")
 finally:
     panel.terminate()
