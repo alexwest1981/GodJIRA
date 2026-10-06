@@ -52,25 +52,25 @@ check(alibit.get("kassa_namn"), "Alibit saknar namnet pa nyckeln i sin miljofil"
 # --- 3. Panelen: vyn finns, och den ar kopplad till sin egen laddning -------------
 html = (PANEL / "index.html").read_text(encoding="utf-8")
 check('<section class="view" id="v-sites">' in html, "vyn v-sites saknas i panelen")
-check('sites: ["Sajterna"' in html, "sajten ar inte registrerad i TEXT.views (da ar den en dod lank)")
+check('sites: ["Sites"' in html, "sajten ar inte registrerad i TEXT.views (da ar den en dod lank)")
 check("sites:" in html.split("const ICONS")[1].split("};")[0], "sajt-ikonen saknas i ICONS")
-check("function renderSites()" in html and "async function siteLoad()" in html,
+check("function renderSites()" in html and "function siteLoad(" in html,
       "ritaren eller laddaren saknas")
 check('view === "sites") renderSites()' in html, "render() ritar inte vyn")
 check('view === "sites") siteLoad()' in html, "show() laddar inte vyn")
-check('fetch("/api/sites")' in html, "panelen fragar inte /api/sites")
+check('fetch("/api/sites' in html, "panelen fragar inte /api/sites")
 
 # --- 4. Servern: rutten finns och den fragar motorn -------------------------------
 server = (PANEL / "server.py").read_text(encoding="utf-8")
 check('if path == "/api/sites":' in server, "rutten /api/sites saknas i server.py")
-check("def sites_read()" in server, "sites_read saknas i server.py")
+check("def sites_read(" in server, "sites_read saknas i server.py")
 check('seam("sites", "--json"' in server, "panelen fragar inte motorn for siffrorna")
 check("\n\tsites)" in (ROOT / "n8n" / "bin" / "flow-call.sh").read_text(encoding="utf-8"),
       "flow-call.sh har ingen sites-gren (da svarar seam med panelens egen text)")
 
 # --- 5. Spraket: raderna panelen visar maste finnas som nycklar -------------------
 sv = json.loads((I18N / "sv.json").read_text(encoding="utf-8"))
-for nyckel in ("Sajterna", "Tjänsterna", "uppe", "nere", "besök", "personer", "kassa",
+for nyckel in ("Sites", "Tjänsterna", "uppe", "nere", "besök", "personer", "kassa",
                "dygn", "mäter inte trafiken", "PostHog saknas", "mest besökta", "varifrån",
                "kassan är inte kopplad", "provkörningar uteslutna"):
     check(nyckel in sv, "nyckeln {} saknas i sv.json -- raden star ooversatt i panelen".format(nyckel))
