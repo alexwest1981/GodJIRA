@@ -292,6 +292,37 @@ def trafik(vardar, dagar=14, fraga=hogql):
                    + "' AND timestamp <= '" + sedan + "'")
     if forra and forra != MISSLYCKAT:
         ut["forra"] = int(forra[0][0])
+    # Vad folk GJORDE, hur länge de stannade, och om något gick sönder. En siffra säger hur
+    # många som kom; de här säger vad som hände när de var där. Fyra frågor mot samma
+    # underlag, och varje svar läggs bara in om det kom -- saknas PostHog står fältet tomt
+    # i stället för att visa en nolla som ser ut som ett svar.
+    vards = "properties.$host IN " + lista
+    handelser = forsok(fraga, ("SELECT event, count() FROM events WHERE " + vards
+                               + " AND timestamp > '" + sedan + "' GROUP BY 1 ORDER BY 2 DESC LIMIT 6"))
+    if handelser and handelser != MISSLYCKAT:
+        ut["handelser"] = [[str(r[0]), int(r[1])] for r in handelser]
+    enheter = forsok(fraga, ("SELECT properties.$device_type, count(DISTINCT person_id) FROM events WHERE "
+                             + vards + " AND timestamp > '" + sedan + "' GROUP BY 1 ORDER BY 2 DESC LIMIT 4"))
+    if enheter and enheter != MISSLYCKAT:
+        ut["enheter"] = [[str(r[0] or "okänt"), int(r[1])] for r in enheter]
+    # Sessionstid: bara sessioner med mer än en händelse -- en enda sidvisning är ingen tid.
+    sekunder = forsok(fraga, ("SELECT round(avg(sek)) FROM (SELECT dateDiff('second', min(timestamp), "
+                              "max(timestamp)) AS sek FROM events WHERE " + vards
+                              + " AND timestamp > '" + sedan + "' GROUP BY properties.$session_id "
+                              "HAVING count() > 1)"))
+    if sekunder and sekunder != MISSLYCKAT and sekunder[0][0] is not None:
+        ut["sessionSekunder"] = int(sekunder[0][0])
+    # Fel: PostHogs egen undantagshändelse. Den är en av de få siffror som betyder något
+    # även när den är noll, så den visas alltid -- men bara när frågan gick igenom.
+    undantag = forsok(fraga, ("SELECT count() FROM events WHERE " + vards
+                              + " AND event = '$exception' AND timestamp > '" + sedan + "'"))
+    if undantag and undantag != MISSLYCKAT:
+        ut["undantag"] = int(undantag[0][0])
+    # Just nu: personer inne de senaste fem minuterna.
+    live = forsok(fraga, ("SELECT count(DISTINCT person_id) FROM events WHERE " + vards
+                          + " AND timestamp > now() - INTERVAL 5 MINUTE"))
+    if live and live != MISSLYCKAT:
+        ut["live"] = int(live[0][0])
     ut["toppSidor"] = forsok(fraga, "SELECT properties.$pathname, count() " + bas
                              + " GROUP BY 1 ORDER BY 2 DESC LIMIT 5") or []
     ut["kallor"] = forsok(fraga, "SELECT properties.$referring_domain, count() " + bas
@@ -700,8 +731,18 @@ def selftest():
     # Sessioner och riktningen: frågorna ställs och svaren hamnar på rätt plats. En
     # injicerad fråga gör provet oberoende av nätet (och av att sajten har besök).
     def låtsas(sql):
+        if "avg(sek)" in sql:
+            return [[83]]
         if "session_id" in sql:
             return [[7]]
+        if "$exception" in sql:
+            return [[2]]
+        if "INTERVAL 5 MINUTE" in sql:
+            return [[3]]
+        if "$device_type" in sql:
+            return [["Mobile", 5], ["Desktop", 3]]
+        if "SELECT event" in sql:
+            return [["$pageview", 9], ["checkout_started", 2]]
         if "count()" in sql and "timestamp <=" in sql:
             return [[10]]
         if "$pathname" in sql:
@@ -716,6 +757,18 @@ def selftest():
     assert t["forra"] == 10, t
     assert t["visningar"] == 4 and t["personer"] == 3, t
     assert t["toppSidor"] == [["/", 5]] and t["kallor"] == [["google", 3]], t
+    assert t["handelser"] == [["$pageview", 9], ["checkout_started", 2]], t
+    assert t["enheter"] == [["Mobile", 5], ["Desktop", 3]], t
+    assert t["sessionSekunder"] == 83, t
+    assert t["undantag"] == 2 and t["live"] == 3, t
+
+    # Uteblir svaret skall fältet vara BORTA, inte noll: en nolla ser ut som ett svar.
+    def halvt(sql):
+        return [["2026-10-01", 4, 3]] if "toDate" in sql else MISSLYCKAT
+    t2 = trafik(["x.se"], 14, fraga=halvt)
+    assert t2.get("mats") and t2.get("visningar") == 4, t2
+    for nyckel in ("handelser", "enheter", "sessionSekunder", "undantag", "live"):
+        assert nyckel not in t2, (nyckel, t2)
     # Utan fråga alls: saknas underlaget står fälten inte kvar som nollor.
     tom = trafik([], 14, fraga=låtsas)
     assert tom["mats"] is False and "sessioner" not in tom, tom

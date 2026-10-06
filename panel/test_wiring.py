@@ -416,8 +416,10 @@ console.log(bad.length ? "FEL " + bad.join(" | ") : "OK");
     # Navigeringen är EN kolumn. Rälens ikonkolumn bor nu i sidofältets rader: ikonen har
     # en fast ruta, så etiketterna börjar på samma x. Utan den ritas raden utan märke och
     # raderna hamnar snett igen (mätt: alla etiketter på samma x i den skarpa panelen).
-    check(".item .g { width: 15px" in html,
-          "the one navigation is a column: every icon sits in the same box, so labels line up")
+    # Ikonen får inte vara bredare än sin ruta: då skjuts etiketterna olika långt in och
+    # kolumnen spricker. Rutan är 18, ikonen 17,5 -- tio procent större än förut, samma rad.
+    check(".item .g { width: 18px" in html and ".item .g svg { width: 17.5px" in html,
+          "the one navigation is a column: every icon fits its box, so labels line up")
     check('id="rail"' not in html and "renderRail" not in html and ".railitem" not in html,
           "det finns en navigering, inte två (rälen är borta, inte bara tömd)")
     vblock = html.split("views: {", 1)[1].split("},", 1)[0]
