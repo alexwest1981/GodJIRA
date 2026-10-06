@@ -63,6 +63,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
     --t: 180ms;        /* det mesta: hover, läge, öppning */
     --t-slow: 320ms;   /* något dyker upp eller försvinner */
     --t-step: 26ms;    /* ett steg i entréns trappa */
+    --t-draw: 900ms;   /* en kurva som ritar sig själv får ta tid -- den bär ett svar */
     --ease: cubic-bezier(.22, .61, .36, 1);   /* ut, mjukt stopp */
     --ease-io: cubic-bezier(.4, 0, .2, 1);    /* fram och tillbaka */
   }
@@ -482,8 +483,21 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   .wl .r .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .wl .r .tside { margin-left: auto; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11.5px; white-space: nowrap; }
   /* Kurvan i sajtvyn: en linje, ingen fyllning. Utan regeln fylls polygonen svart. */
-  .spark { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linejoin: round; }
+  /* Kurvan: en yta under och en linje över, så både höjden och riktningen syns.
+     preserveAspectRatio=none gör att den fyller bredden utan att ritas om. */
+  .spark { display: block; width: 100%; height: 84px; }
+  .spark .lin { fill: none; stroke: var(--accent); stroke-width: 2;
+                stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+  .spark .yt { fill: var(--accent); opacity: .13; stroke: none; }
+  .spark .bas { stroke: var(--line-2); stroke-width: 1; vector-effect: non-scaling-stroke; }
   .spark + .meta { margin-top: 4px; }
+  /* Siffran och kurvan svarar på samma fråga: hur mycket, och åt vilket håll. */
+  .sparkbox { display: flex; flex-direction: column; gap: 2px; }
+  .sparkbox .trend { font-size: 11.5px; color: var(--muted); }
+  .sparkbox .trend .up { color: var(--green); }
+  .sparkbox .trend .ner { color: var(--red); }
+  .wl .r .bar { flex: 1; height: 6px; border-radius: 3px; background: var(--accent);
+                opacity: .28; width: var(--v, 0%); max-width: 46%; align-self: center; }
 
   /* ----------------------------------------------------------------- board */
   .cols { display: flex; flex-direction: column; gap: 20px; }
@@ -681,6 +695,17 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
     /* 6. En siffra som byter värde skall inte hoppa i bredd. Korten har regeln
        redan; här får tabellerna och raderna den. */
     table, .tside, .n, .stat .n { font-variant-numeric: tabular-nums; }
+
+    /* 7. Kurvan ritar sig själv: längden sätts av JS (getTotalLength) på --len, så
+       strecket dras in i stället för att ploppa fram. Ytan tonar in under det. */
+    @keyframes draw { from { stroke-dashoffset: var(--len, 1200); } to { stroke-dashoffset: 0; } }
+    @keyframes tona { from { opacity: 0; } }
+    .spark .lin { stroke-dasharray: var(--len, 1200); animation: draw var(--t-draw) var(--ease) both; }
+    .spark .yt { animation: tona var(--t-slow) var(--ease) calc(var(--t-step) * 8) both; }
+
+    /* 8. Toppsidornas staplar växer ut från noll, i samma trappa som raderna. */
+    @keyframes grow { from { width: 0; } }
+    .wl .r .bar { animation: grow var(--t-slow) var(--ease) both; }
   }
 
 </style>
@@ -2872,18 +2897,37 @@ async function siteLoad() {
   renderSites();
 }
 
-// Kurvan: en punkt per dygn. En siffra säger hur mycket, en kurva säger åt vilket håll.
-// Ett enda dygn ritas som en rak linje -- en punkt går inte att se riktningen i.
+// Kurvan: en punkt per dygn, som yta med en linje över. En siffra säger hur mycket,
+// en kurva säger åt vilket håll -- och linjen ritar sig själv när den kommer in, så
+// ögat hittar den. Ett enda dygn ritas som en rak linje: en punkt har ingen riktning.
 function spark(perDag) {
   const par = perDag || [];
-  const W = 160, H = 28;
+  const W = 600, H = 84, kant = 6;
   const hog = Math.max(1, ...par.map(r => Number(r[1]) || 0));
+  const x = i => par.length > 1 ? (i / (par.length - 1)) * W : W / 2;
+  const y = v => H - kant - ((Number(v) || 0) / hog) * (H - kant * 2);
   const punkter = par.length > 1
-    ? par.map((r, i) => ((i / (par.length - 1)) * W).toFixed(1) + "," +
-        (H - 2 - (Number(r[1]) || 0) / hog * (H - 6)).toFixed(1)).join(" ")
-    : "0," + (H - 2) + " " + W + "," + (H - 2);
-  return '<svg class="spark" viewBox="0 0 ' + W + " " + H + '" width="' + W + '" height="' + H +
-    '" aria-hidden="true"><polyline points="' + punkter + '"/></svg>';
+    ? par.map((r, i) => x(i).toFixed(1) + "," + y(r[1]).toFixed(1)).join(" ")
+    : "0," + y(0) + " " + W + "," + y(0);
+  const linje = par.length === 1
+    ? "0," + (H - kant) + " " + W + "," + (H - kant) : punkter;
+  return '<svg class="spark" viewBox="0 0 ' + W + " " + H + '" preserveAspectRatio="none" aria-hidden="true">' +
+    /* Inget att rita: bara baslinjen. En tom kurva som ändå ritar ett streck ser ut som
+       ett svar, och "inga besök" är ett annat svar än noll besök. */
+    (par.length ? '<polygon class="yt" points="0,' + H + " " + linje + " " + W + "," + H + '"/>' +
+      '<polyline class="lin" points="' + linje + '"/>' : "") +
+    '<line class="bas" x1="0" y1="' + (H - kant) + '" x2="' + W + '" y2="' + (H - kant) + '"/></svg>';
+}
+
+// Riktningen mot förra perioden. Ett tal utan riktning är en rapport; med riktningen
+// är det en mätning. Saknas jämförelsen står inget alls -- hellre tyst än påhittat.
+function riktning(nu, forra) {
+  const n = Number(nu) || 0, f = Number(forra) || 0;
+  if (f < 1) return "";
+  const d = Math.round(((n - f) / f) * 100);
+  if (!d) return '<span class="trend">· 0 %</span>';
+  return '<span class="trend"><span class="' + (d > 0 ? "up" : "ner") + '">' +
+    (d > 0 ? "↑ +" : "↓ ") + d + " %</span></span>";
 }
 
 function siteRow(s) {
@@ -2923,8 +2967,15 @@ function siteDetail(s) {
   const t = s.trafik || {};
   if (!t.mats) return drift + '<div class="empty">mäter inte trafiken</div>';
   if (t.fel) return drift + '<div class="empty">' + esc(t.fel) + "</div>";
-  const rader = lista => (lista || []).map(r => '<div class="r"><span class="key">' +
-    esc(r[0] || "/") + '</span><span class="tside">' + Number(r[1]) + "</span></div>").join("");
+  // Toppsidorna: en stapel per rad som visar andelen av den största, så listan går att
+  // läsa på formen och inte bara på talet.
+  const rader = lista => {
+    const par = lista || [];
+    const topp = Math.max(1, ...par.map(r => Number(r[1]) || 0));
+    return par.map(r => '<div class="r"><span class="key">' + esc(r[0] || "/") + "</span>" +
+      '<span class="bar" style="--v:' + Math.round((Number(r[1]) || 0) / topp * 100) + '%"></span>' +
+      '<span class="tside">' + (Number(r[1]) || 0) + "</span></div>").join("");
+  };
   const tot = t.totalt ? '<div class="meta">' + Number(t.totalt.visningar) + " besök / " +
     Number(t.totalt.personer) + " personer (" + esc(t.totalt.forst) + " → " + esc(t.totalt.senast) + ")</div>" : "";
   const k = s.salj || {};
@@ -2932,7 +2983,17 @@ function siteDetail(s) {
     ? '<div><span class="meta">kassa</span> ' + k.krTotalt.toFixed(2) + " kr · " + Number(k.antalTotalt) +
       (k.provTotalt ? ' <span class="meta">· ' + Number(k.provTotalt) + " provkörningar uteslutna</span>" : "") + "</div>"
     : "";
-  return drift + spark(t.perDag) + tot + pengar +
+  // Siffrorna först (samma kort som resten av panelen), sedan kurvan med riktningen:
+  // en siffra säger hur mycket, kurvan åt vilket håll.
+  const kort = kpi([
+    ["besök", t.visningar, "· " + (t.dagar || "") + " dygn"],
+    ["personer", t.personer, ""],
+    ["sessioner", t.sessioner, ""],
+  ]);
+  const rikt = riktning(t.visningar, t.forra);
+  const kurva = '<div class="sparkbox">' + spark(t.perDag) +
+    (rikt ? '<div class="meta">' + rikt + "</div>" : "") + "</div>";
+  return drift + kort + kurva + tot + pengar +
     '<div class="meta">mest besökta</div><div class="wl">' + (rader(t.toppSidor) || '<div class="empty">—</div>') + "</div>" +
     '<div class="meta">varifrån</div><div class="wl">' + (rader(t.kallor) || '<div class="empty">—</div>') + "</div>";
 }
@@ -5014,6 +5075,12 @@ new MutationObserver(() => {
   requestAnimationFrame(() => {
     sifferko = false;
     document.querySelectorAll(".facts .f .v, .stat .n").forEach(countUp);
+    /* Kurvans längd: strecket skall dras in, och bara elementet självt vet hur långt
+       det är. Sätts i samma frame som siffrorna, en gång per ritning. */
+    document.querySelectorAll(".spark .lin").forEach(lin => {
+      const len = lin.getTotalLength ? lin.getTotalLength() : 0;
+      if (len) lin.style.setProperty("--len", Math.ceil(len));
+    });
   });
 }).observe(document.querySelector("main"), { childList: true, subtree: true, characterData: true });
 

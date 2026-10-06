@@ -280,6 +280,18 @@ def trafik(vardar, dagar=14, fraga=hogql):
     ut["perDag"] = per_dag(per)
     ut["visningar"] = summa(per)
     ut["personer"] = summa(per, 2)
+    # Sessioner och riktningen: en siffra säger hur mycket, förra perioden säger åt
+    # vilket håll. Båda får kosta en fråga var -- de är hela skillnaden mellan en
+    # rapport och en mätning.
+    sessioner = forsok(fraga, "SELECT count(DISTINCT properties.$session_id) " + bas
+                       + " AND timestamp > '" + sedan + "'")
+    if sessioner and sessioner != MISSLYCKAT:
+        ut["sessioner"] = int(sessioner[0][0])
+    sedan_28 = (datetime.now(timezone.utc) - timedelta(days=dagar * 2)).strftime("%Y-%m-%d %H:%M:%S")
+    forra = forsok(fraga, "SELECT count() " + bas + " AND timestamp > '" + sedan_28
+                   + "' AND timestamp <= '" + sedan + "'")
+    if forra and forra != MISSLYCKAT:
+        ut["forra"] = int(forra[0][0])
     ut["toppSidor"] = forsok(fraga, "SELECT properties.$pathname, count() " + bas
                              + " GROUP BY 1 ORDER BY 2 DESC LIMIT 5") or []
     ut["kallor"] = forsok(fraga, "SELECT properties.$referring_domain, count() " + bas
@@ -685,6 +697,29 @@ def selftest():
     assert tjanst_lage("x.service", kor=kastar) == MISSLYCKAT
 
     # PostHog: snutten hittas i HTML:en, och ett natfel blir inte "saknas"
+    # Sessioner och riktningen: frågorna ställs och svaren hamnar på rätt plats. En
+    # injicerad fråga gör provet oberoende av nätet (och av att sajten har besök).
+    def låtsas(sql):
+        if "session_id" in sql:
+            return [[7]]
+        if "count()" in sql and "timestamp <=" in sql:
+            return [[10]]
+        if "$pathname" in sql:
+            return [["/", 5]]
+        if "$referring_domain" in sql:
+            return [["google", 3]]
+        if "min(timestamp)" in sql:
+            return [[12, 9, "2026-09-01 00:00:00", "2026-10-01 00:00:00"]]
+        return [["2026-10-01", 4, 3]]
+    t = trafik(["x.se"], 14, fraga=låtsas)
+    assert t["sessioner"] == 7, t
+    assert t["forra"] == 10, t
+    assert t["visningar"] == 4 and t["personer"] == 3, t
+    assert t["toppSidor"] == [["/", 5]] and t["kallor"] == [["google", 3]], t
+    # Utan fråga alls: saknas underlaget står fälten inte kvar som nollor.
+    tom = trafik([], 14, fraga=låtsas)
+    assert tom["mats"] is False and "sessioner" not in tom, tom
+
     assert posthog_installerad("http://x", hamta=lambda u: '<script>phc_abc</script>') is True
     assert posthog_installerad("http://x", hamta=lambda u: "<html></html>") is False
     assert posthog_installerad("http://x", hamta=kastar) == MISSLYCKAT

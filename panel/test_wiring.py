@@ -465,7 +465,8 @@ console.log(bad.length ? "FEL " + bad.join(" | ") : "OK");
           and "on_line(line if line.endswith" in server,
           "samma import kör både den buffrade vägen och strömmen")
     check("function driftRow(s)" in html and "const drift = driftRow(s);" in html
-          and "return drift + spark(t.perDag)" in html,
+          and "return drift +" in html
+          and "if (!t.mats) return drift +" in html,
           "den körande commiten står i sajtens detalj, inte bara för dem med trafik")
     check("VAKTER = [" in sites and "def vakt_lage(" in sites and "\"vakter\": [dict(v, **vakt_lage" in sites,
           "jobben som skall köra av sig själva läses med samma lätta anrop som det som körs")
