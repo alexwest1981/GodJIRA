@@ -1663,13 +1663,13 @@ def drift_read() -> dict:
     return dict(payload, ok=True)
 
 
-def sites_read() -> dict:
+def sites_read(dagar: int = 14) -> dict:
     """Sajterna: trafiken, kassan och livstecknet. Motorn raknar, panelen visar.
 
     Motorn (bin/jira_sites.py) ar den enda som vet vad en sajt ar -- panelen fragar den
     i stallet for att ha en andra asikt om vardnamn, markningar och trösklar.
     """
-    env = seam("sites", "--json", timeout=180)
+    env = seam("sites", "--json", "--dagar", str(dagar), timeout=180)
     payload = env.get("payload")
     if not isinstance(payload, dict):
         return {"ok": False, "error": (env.get("raw") or "motorn svarade inget")[:300]}
@@ -2498,7 +2498,7 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/", "/index.html"):
             self._send(200, UI.read_bytes(), "text/html; charset=utf-8")
             return
-        if path in ("/godjira.svg", "/favicon.ico"):
+        if path in ("/godjira.svg", "/world.svg", "/favicon.ico"):
             self._send(200, LOGO.read_bytes(), "image/svg+xml")
             return
         if path == "/api/state":
@@ -2508,7 +2508,14 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, cached("insights", insights_read, ttl=180))
             return
         if path == "/api/sites":
-            self._json(200, cached("sites", sites_read, ttl=120))
+            # Perioden är en del av cachenyckeln: 7 och 30 dygn är olika svar, inte samma.
+            # Frågan läses ur self.path -- path ovan är avklippt vid "?", precis som de
+            # andra rutterna gör det.
+            try:
+                dagar = max(1, min(365, int(parse_qs(urlparse(self.path).query).get("dagar", ["14"])[0])))
+            except ValueError:
+                dagar = 14
+            self._json(200, cached("sites:%d" % dagar, lambda: sites_read(dagar), ttl=120))
             return
         if path == "/api/posthog":
             # Med flit utan cache: vyn finns for att koppla pa och se svaret direkt.

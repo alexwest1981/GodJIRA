@@ -492,6 +492,16 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   .sparkbox .trend .ner { color: var(--red); }
   .wl .r .bar { flex: 1; height: 6px; border-radius: 3px; background: var(--accent);
                 opacity: .28; width: var(--v, 0%); max-width: 46%; align-self: center; }
+  /* Kartan: bilden är ytan, punkterna ligger i procent av SAMMA yta. Kartan är ritad i
+     equirectangular projektion (0..360 x 0..180), alltså x = lon + 180, y = 90 - lat --
+     ingen projektionsmatte som kan bli fel, och ingen ny dependency. */
+  .karta { position: relative; border: 1px solid var(--line-2); border-radius: 10px;
+           overflow: hidden; background: var(--panel); }
+  .karta img { display: block; width: 100%; height: auto; opacity: .5; }
+  .karta .punkter i { position: absolute; width: var(--s, 6px); height: var(--s, 6px);
+    margin: calc(var(--s, 6px) / -2) 0 0 calc(var(--s, 6px) / -2);
+    border-radius: 50%; background: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent); }
 
   /* ----------------------------------------------------------------- board */
   .cols { display: flex; flex-direction: column; gap: 20px; }
@@ -2928,15 +2938,16 @@ function renderInsights() {
 // Siffrorna kommer ur motorns svar (bin/jira_sites.py), aldrig ur panelen: en vy som
 // räknar själv är en andra åsikt om samma sak, och de två glider isär förr eller senare.
 // Panelen ritar, motorn räknar.
-const SITES = { data: null, error: "", valt: "" };
+const SITES = { data: null, error: "", valt: "", dagar: 14 };
 const POSTHOG = { data: null, error: "" };
 
-async function siteLoad() {
-  if (SITES.data) return;
+async function siteLoad(tvinga) {
+  if (SITES.data && !tvinga) return;
   try {
     // Kolla svarskoden först: en rutt som inte finns svarar "not found" som text, och
     // JSON.parse hade då gett "Unexpected token 'o'" i stället för det som faktiskt hände.
-    const svar = await fetch("/api/sites");
+    // Perioden är en del av frågan: 7 och 30 dygn är olika svar, inte samma med en annan rubrik.
+    const svar = await fetch("/api/sites?dagar=" + SITES.dagar);
     if (!svar.ok) throw new Error("HTTP " + svar.status);
     const a = await svar.json();
     if (!a.ok) throw new Error(a.error || "inget svar");
@@ -3054,10 +3065,36 @@ function siteDetail(s) {
     ? '<div class="meta">händelser</div><div class="wl">' + rader(t.handelser) + "</div>" : "";
   const enheter = t.enheter
     ? '<div class="meta">enheter</div><div class="wl">' + rader(t.enheter) + "</div>" : "";
+  // Perioden: samma fråga, tre svar. Knapparna är rälens .seg, samma kontroll som
+  // panelen använder för tema och flikar -- inget eget reglage att lära sig.
+  const period = '<div class="seg">' + [7, 14, 30].map(d =>
+    `<button data-act="sites-dagar" data-dagar="${d}" class="${(SITES.dagar || 14) === d ? "on" : ""}">` +
+    d + " dygn</button>").join("") + "</div>";
+  // Kartan: en bild i equirectangular projektion och en punkt per region. x = lon + 180,
+  // y = 90 - lat -- exakt den skala kartan är ritad i, alltså ingen projektionsmatte som
+  // kan bli fel. Punktens storlek är antalet personer, så en stor marknad syns utan att
+  // läsas. Utan punkter ritas ingen karta alls: en tom världskarta är ingen upplysning.
+  const karta = (t.punkter || []).length
+    ? '<div class="karta"><img src="/world.svg" alt="">' + (t.punkter || []).map(x =>
+        `<i style="--s:${Math.min(20, 6 + (Number(x[2]) || 1) * 2)}px;` +
+        `left:${(((Number(x[1]) + 180) / 360) * 100).toFixed(2)}%;` +
+        `top:${(((90 - Number(x[0])) / 180) * 100).toFixed(2)}%" ` +
+        `title="${esc((x[3] ? x[3] + " · " : "") + (Number(x[2]) || 0) + " personer")}"></i>`).join("") +
+      "</div>"
+    : "";
+  // Dagen för dag: tabellen kurvan inte kan visa. Kurvan säger riktningen, tabellen säger
+  // vilken dag. Nyaste dagen först -- det är den man letar efter.
+  const dagtabell = (t.perDag || []).length
+    ? '<table class="mini">' + t.perDag.slice().reverse().map(r =>
+        "<tr><td>" + esc(String(r[0]).slice(0, 10)) + "</td><td>" + (Number(r[1]) || 0) +
+        "</td><td>" + (Number(r[2]) || 0) + "</td></tr>").join("") + "</table>"
+    : "";
+  const lander = (t.lander || []).length
+    ? '<div class="meta">var de är</div><div class="wl">' + rader(t.lander) + "</div>" : "";
   const rikt = riktning(t.visningar, t.forra);
   const kurva = '<div class="sparkbox">' + spark(t.perDag) +
     (rikt ? '<div class="meta">' + rikt + "</div>" : "") + "</div>";
-  return drift + kort + extra + kurva + tot + pengar + handelser +
+  return drift + period + kort + extra + kurva + karta + lander + dagtabell + tot + pengar + handelser +
     '<div class="meta">mest besökta</div><div class="wl">' + (rader(t.toppSidor) || '<div class="empty">—</div>') + "</div>" +
     '<div class="meta">varifrån</div><div class="wl">' + (rader(t.kallor) || '<div class="empty">—</div>') + "</div>" +
     enheter;
@@ -4918,6 +4955,8 @@ document.addEventListener("click", e => {
     }
   }
   if (e.target.closest('[data-act="refresh"]')) return load(true);
+  const dag = e.target.closest('[data-act="sites-dagar"]');
+  if (dag) { SITES.dagar = Number(dag.dataset.dagar) || 14; return siteLoad(true); }
   const lay = e.target.closest('[data-act="lay"]');
   if (lay) return layoutToggle(lay.dataset.id);
   const mv = e.target.closest("[data-mv]");

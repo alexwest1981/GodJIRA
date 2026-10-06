@@ -323,6 +323,22 @@ def trafik(vardar, dagar=14, fraga=hogql):
                           + " AND timestamp > now() - INTERVAL 5 MINUTE"))
     if live and live != MISSLYCKAT:
         ut["live"] = int(live[0][0])
+    # Var de är: samma fråga ger både landet (för listan) och punkten (för kartan). PostHogs
+    # geo-databas är inte komplett -- en rad utan land eller koordinat hoppas över i stället
+    # för att ritas som en gissning i havet.
+    geo = forsok(fraga, ("SELECT properties.$geoip_country_name, properties.$geoip_country_code, "
+                         "properties.$geoip_latitude, properties.$geoip_longitude, "
+                         "count(DISTINCT person_id) FROM events WHERE " + vards
+                         + " AND timestamp > '" + sedan + "' GROUP BY 1,2,3,4 ORDER BY 5 DESC LIMIT 40"))
+    if geo and geo != MISSLYCKAT:
+        länder, punkter = {}, []
+        for namn, kod, lat, lon, antal in geo:
+            if not namn or lat is None or lon is None:
+                continue
+            länder[str(namn)] = länder.get(str(namn), 0) + int(antal)
+            punkter.append([round(float(lat), 2), round(float(lon), 2), int(antal), str(kod or "")])
+        ut["lander"] = sorted(länder.items(), key=lambda rad: -rad[1])[:8]
+        ut["punkter"] = punkter
     ut["toppSidor"] = forsok(fraga, "SELECT properties.$pathname, count() " + bas
                              + " GROUP BY 1 ORDER BY 2 DESC LIMIT 5") or []
     ut["kallor"] = forsok(fraga, "SELECT properties.$referring_domain, count() " + bas
@@ -579,7 +595,10 @@ def sajt_rapport(sajt, dagar=14):
 def rapport(dagar=14, dagens=None):
     return {"genererad": datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M"),
             "dagar": dagar,
-            "sajter": [(dagens(s) if dagens else sajt_rapport(s)) for s in SAJTER],
+            # Perioden skall hela vägen fram: det stod "dagar": dagar i svaret medan
+            # sajterna alltid mättes med fjorton. En siffra i svaret som inte gäller är
+            # värre än ingen siffra.
+            "sajter": [(dagens(s, dagar) if dagens else sajt_rapport(s, dagar)) for s in SAJTER],
             "tjanster": [dict(t, lage=tjanst_lage(t["enhet"])) for t in TJANSTER]}
 
 
@@ -741,6 +760,9 @@ def selftest():
             return [[3]]
         if "$device_type" in sql:
             return [["Mobile", 5], ["Desktop", 3]]
+        if "$geoip_country_name" in sql:
+            return [["Sweden", "SE", 57.7, 11.97, 5], ["United States", "US", 41.26, -95.85, 4],
+                    ["Nowhere", "XX", None, None, 2]]      # utan koordinat: hoppas över
         if "SELECT event" in sql:
             return [["$pageview", 9], ["checkout_started", 2]]
         if "count()" in sql and "timestamp <=" in sql:
@@ -756,11 +778,21 @@ def selftest():
     assert t["sessioner"] == 7, t
     assert t["forra"] == 10, t
     assert t["visningar"] == 4 and t["personer"] == 3, t
+    # Perioden fick inte vara dekorativ: rapport(7) skall ge sajter som MATS med sju.
+    fångade = []
+    def fånga(sajt, dagar=14):
+        fångade.append(dagar)
+        return {"nyckel": sajt["nyckel"], "trafik": {"dagar": dagar}}
+    hel = rapport(7, dagens=fånga)
+    assert hel["dagar"] == 7 and fångade == [7] * len(SAJTER), (hel["dagar"], fångade)
+
     assert t["toppSidor"] == [["/", 5]] and t["kallor"] == [["google", 3]], t
     assert t["handelser"] == [["$pageview", 9], ["checkout_started", 2]], t
     assert t["enheter"] == [["Mobile", 5], ["Desktop", 3]], t
     assert t["sessionSekunder"] == 83, t
     assert t["undantag"] == 2 and t["live"] == 3, t
+    assert t["lander"] == [("Sweden", 5), ("United States", 4)], t["lander"]
+    assert t["punkter"] == [[57.7, 11.97, 5, "SE"], [41.26, -95.85, 4, "US"]], t["punkter"]
 
     # Uteblir svaret skall fältet vara BORTA, inte noll: en nolla ser ut som ett svar.
     def halvt(sql):
@@ -817,6 +849,19 @@ def selftest():
     print("selftest: OK")
 
 
+def dagar_fran_argv(standard=14):
+    """--dagar N ur kommandoraden. Golv 1, tak 365: en period är ett antal dygn, och ett
+    svar på -3 eller 100000 är inte en period utan ett skrivfel."""
+    if "--dagar" in sys.argv:
+        i = sys.argv.index("--dagar")
+        if i + 1 < len(sys.argv):
+            try:
+                return max(1, min(365, int(sys.argv[i + 1])))
+            except ValueError:
+                pass
+    return standard
+
+
 if __name__ == "__main__":
     if "--selftest" in sys.argv:
         selftest()
@@ -824,8 +869,8 @@ if __name__ == "__main__":
         # Före --json: den lätta vägen (bara vad som körs) skall inte drunkna i den tunga.
         print(json.dumps(drift_rapport(), ensure_ascii=False))
     elif "--json" in sys.argv:
-        print(json.dumps(rapport(), ensure_ascii=False))
+        print(json.dumps(rapport(dagar_fran_argv()), ensure_ascii=False))
     elif "--posthog" in sys.argv:
         print(json.dumps(posthog_lage(), ensure_ascii=False))
     else:
-        skriv_ut(rapport())
+        skriv_ut(rapport(dagar_fran_argv()))
