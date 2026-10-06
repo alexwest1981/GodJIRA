@@ -31,6 +31,21 @@ class Tyst(SimpleHTTPRequestHandler):
         self.send_error(404, "Not Found")
         return None
 
+    def end_headers(self):
+        """Ingen skall hinna se en gammal sida.
+
+        Cloudflare cachar .css och .png pa egen hand nar origin inte sager nagot, och da kunde
+        Alex fa den NYA sidan med den GAMLA stilmallen -- sidan sag trasig ut utan att nagot
+        var trasigt (matt: cf-cache-status HIT, age 745 s, en stilmall fran 09:45 medan
+        HTML:en var farsk). no-store stanger av cachningen bade i kanten och i webblasaren, och
+        sidan ar fem filer pa en lokal maskin: att hamta om den kostar ingenting.
+
+        ponytail: no-store pa allt. Vill nagon senare spara bandbredd, lat bilderna fa en kort
+        max-age -- men aldrig HTML eller CSS.
+        """
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
+
     def log_message(self, format, *args):  # noqa: A002 -- basklassen har den namnet
         sys.stderr.write("%s - %s\n" % (self.address_string(), format % args))
 

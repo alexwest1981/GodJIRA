@@ -57,6 +57,11 @@ def main() -> int:
             kolla(status == 200 and marke in kropp,
                   "%s svarar och innehaller sitt marke" % sida, "%d, %d tecken" % (status, len(kropp)))
             kolla("set-cookie" not in {k.lower() for k in huvuden}, "%s satter ingen cookie" % sida)
+            # Utan no-store cachar Cloudflare .css och .png sjalv, och da kan en NY sida serveras
+            # med en GAMMAL stilmall -- den ser trasig ut utan att nagot ar trasigt. Matt en gang:
+            # cf-cache-status HIT, age 745 s, stilmall fran 09:45 mot farsk HTML.
+            kolla(huvuden.get("Cache-Control") == "no-store",
+                  "%s tillater ingen cachning" % sida, str(huvuden.get("Cache-Control")))
 
         _, _, startsida = hamta(port, "/")
         kolla("<script" not in startsida.lower(), "ingen JavaScript pa sidan")
