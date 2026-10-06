@@ -1525,16 +1525,13 @@ function renderSide() {
   // Ikonen tas ur ICONS först, precis som flikarna gör: glyfen i TEXT.views är en reserv.
   // Två av dem (☑ och ⚙) ritas som färgade emoji av teckensnittet, och då bröt raden mot
   // regeln att ikonerna är vita och monokroma.
-  // En rad är markerad när den ÄR valet, inte när den råkar höra till samma vy. Backlog är
-  // samma vy som Uppgifter men ett eget filter: att markera båda såg ut som två samtidiga
-  // val, och man kunde inte se vilken av dem man stod i.
-  const rad = v => synliga[v] ? `<div class="item ${v === view && !(v === "items" && F.pool) ? "on" : ""}" data-v="${v}">` +
+  const rad = v => synliga[v] ? `<div class="item ${v === view ? "on" : ""}" data-v="${v}">` +
     `<span class="g">${ICONS[v] || synliga[v][1] || ""}</span>${esc(synliga[v][0])}` +
     (antal[v] ? `<span class="c">${antal[v]}</span>` : "") + `</div>` : "";
   // Sammanhanget hör till sin avdelning: projektet och dess genvägar under Flödet, repona
   // under GitHub. Det är inte egna vyer, därför står de här och inte i menyn.
   const jira = `
-    <div class="item" data-v="items"><span class="g">◆</span>${esc(proj.key || "Jira")}<span class="c">${all}</span></div>
+    <div class="item ${view === "items" && !F.pool ? "on" : ""}" data-v="items"><span class="g">◆</span>${esc(proj.key || "Jira")}<span class="c">${all}</span></div>
     <div class="sub">
       <div class="item ${view === "items" && F.pool === "backlog" ? "on" : ""}" data-v="items" data-pool="backlog"><span class="g">↓</span>Backlog<span class="c">${backlog().length}</span></div>
     </div>
@@ -1575,9 +1572,13 @@ function renderSide() {
     // En enda vy OCH inget under den (Agenten, Sites): genvägen. Allt annat fäller.
     const genvag = har.length === 1 && !sammanhang[namn];
     if (genvag) return rubrik(namn, har[0], har[0], synliga[har[0]][0], "", false) + grupp(namn, "");
+    // Vyer som sammanhanget redan är en rad för ritas inte en gång till: "Uppgifter" finns
+    // som projektraden i jira-blocket (den bär projektnyckeln och ankrar Backlog), och två
+    // rader för samma tillstånd gjorde att markeringen hamnade på fel av dem.
+    const iSammanhang = namn === "flodet" ? ["items"] : [];
     return rubrik(namn, har[0], har[0], null,
                   namn === "github" ? ((STATE.github || {}).repos || []).length : "", true) +
-      grupp(namn, har.map(rad).join("") + (sammanhang[namn] || ""));
+      grupp(namn, har.filter(v => !iSammanhang.includes(v)).map(rad).join("") + (sammanhang[namn] || ""));
   }).filter(Boolean).join("");
   // Foten: panelens egna inställningar, avskilda från arbetet. Inställningarna först, för
   // det är den man letar efter; admin och setup följer med när de finns.

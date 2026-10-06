@@ -496,25 +496,39 @@ console.log(bad.length ? "FEL " + bad.join(" | ") : "OK");
     check("${ICONS[v] || synliga[v][1]" in html,
           "menyradernas ikoner tas ur ICONS, så ingen glyf ritas som färgad emoji")
 
-    # En rad är markerad när den ÄR valet: Backlog är samma vy som Uppgifter men ett eget
-    # filter, och båda markerade såg ut som två samtidiga val. Provas genom att köra rad()
-    # med de två lägena, inte genom att läsa koden.
+    # En rad är markerad när den ÄR valet. "Uppgifter" fanns bade som egen menyrad och som
+    # projektraden i jira-blocket -- tva rader for samma tillstand, och da hamnade
+    # markeringen pa fel av dem (Alex: "Klickar jag pa SCRUM i menyn sa markeras Uppgifter
+    # igen"). Projektraden ar kvar (den bar projektnyckeln och ankrar Backlog), menyraden ar
+    # borta. Provas genom att KORA blocket i node, inte genom att lasa koden.
     import subprocess
 
     rad = re.search(r"  const rad = v =>.*?: \"\";", html, re.S)
-    check(bool(rad), "rad() går att pröva för sig")
-    if rad:
+    jira = re.search(r"  const jira = `.*?`;", html, re.S)
+    check(bool(rad and jira), "menyns rader går att pröva för sig")
+    if rad and jira:
+        # Samma block, men som funktion: en mall literal byggs när den tilldelas, och provet
+        # behöver en färsk sträng för varje läge.
+        jira_fn = jira.group(0).replace("  const jira = `", "  const jiraNu = () => `", 1)
         prov = """
 const esc = s => String(s == null ? "" : s);
-const ICONS = {};
-const synliga = { items: ["Uppgifter", ""], repos: ["Repon", ""] };
+const ICONS = {}; const STATE = { projectCan: null };
+const synliga = { repos: ["Repon", ""] };
+const proj = { key: "SCRUM" }; const all = 12; const backlog = () => [3];
 let view = "items"; const F = { pool: "" }; const antal = {};
-""" + rad.group(0) + """
+""" + rad.group(0) + "\n" + jira_fn + """
 const t = (namn, ok) => console.log((ok ? "OK " : "FEL ") + namn);
-t("Uppgifter markerad när inget filter är valt",
-  (view = "items", F.pool = "", rad("items")).includes('class="item on"'));
-t("Uppgifter INTE markerad när Backlog är valt",
-  (view = "items", F.pool = "backlog", !rad("items").includes("item on")));
+// Blocket byggs på nytt varje gång view/pool ändras, så raderna läses ur den färska strängen.
+const rader = () => (jiraNu().match(/<div class="item[^"]*"[^>]*data-v="items"[^>]*>/g) || []);
+const pa = r => (r.match(/class="([^"]*)"/)[1] || "").split(" ").includes("on");
+const projekt = () => rader().filter(r => !r.includes("data-pool"))[0] || "";
+const backlogRad = () => rader().filter(r => r.includes("data-pool"))[0] || "";
+t("två rader för vyn: projektraden och Backlog",
+  rader().length === 2 && projekt().includes("SCRUM") === false);   // proj.key läses i markupen
+t("står i Uppgifter utan filter: projektraden markerad, Backlog inte",
+  (view = "items", F.pool = "", pa(projekt()) && !pa(backlogRad())));
+t("Backlog valt: Backlog markerad, projektraden inte",
+  (view = "items", F.pool = "backlog", pa(backlogRad()) && !pa(projekt())));
 t("Repon markerad när man står i Repon",
   (view = "repos", F.pool = "", rad("repos")).includes('class="item on"'));
 t("okänd vy ger ingen rad alls", rad("finns-inte") === "");
@@ -522,14 +536,14 @@ t("okänd vy ger ingen rad alls", rad("finns-inte") === "");
         kord = subprocess.run(["node", "-e", prov], capture_output=True, text=True)
         rader = [r for r in kord.stdout.strip().splitlines() if r.strip()]
         fel = [r for r in rader if not r.startswith("OK")]
-        check(len(rader) == 4 and not fel,
+        check(len(rader) == 5 and not fel,
               "en rad är markerad när den är valet -- inte när den hör till samma vy",
               (fel or ["%d prov kördes" % len(rader)])[0] + " " + kord.stderr[:120])
     check("const newest = (((STATE.github" not in html and "Inget valt: visa listan" in html
           and 'class="r" data-repo=' in html,
           "Repon är listan: inget repo öppnas av sig självt, och tomma läget visar repolistan")
     check("genvag" in html and "har.length === 1 && !sammanhang[namn]" in html
-          and "har.map(rad).join" in html
+          and "har.filter(v => !iSammanhang.includes(v)).map(rad).join" in html
           and 'data-fall="${namn}"' in html and 'data-v="${vy}"' in html,
           "rubriken med rader under sig fäller (och har då alla vyerna där), rubriken utan "
           "rader under sig navigerar -- och har ingen pil")
