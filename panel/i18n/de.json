@@ -71,7 +71,6 @@
  "Rensa samtalet": "Unterhaltung leeren",
  "Repon": "Repos",
  "Rörd": "Berührt",
- "Webbplatser": "Webseiten",
  "Sammanfattning": "Zusammenfassung",
  "Senast rörda": "Zuletzt berührt",
  "Senast rörda repon": "Zuletzt berührte Repos",
@@ -465,5 +464,6 @@
  "datum": "Datum",
  "antal": "Anzahl",
  "andel": "Anteil",
- "PostHog": "PostHog"
+ "PostHog": "PostHog",
+ "Sites": "Seiten"
 }

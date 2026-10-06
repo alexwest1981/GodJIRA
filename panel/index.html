@@ -829,7 +829,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
     <section class="view" id="v-sites">
       <div class="facts" id="siteTotals"></div>
       <div class="panel">
-        <h3>PostHog <span class="meta" id="sitesMeta"></span></h3>
+        <h3>Sites <span class="meta" id="sitesMeta"></span></h3>
         <div class="body"><div class="tablewrap"><table id="sitesTable"></table></div></div>
       </div>
       <div class="panel" id="siteDetailPanel" hidden>
@@ -1120,7 +1120,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
 <script>
 const TEXT = {
   views: { overview: ["Översikt", "◫"], insights: ["Projekt", "◎"], board: ["Tavlan", "▤"], items: ["Uppgifter", "☰"], repos: ["Repon", "⌥"],
-           sites: ["PostHog", "◔"],
+           sites: ["Sites", "◔"],
            import: ["Importera", "⇪"], setup: ["Kom igång", "★"], chat: ["Agenten", "◈"],
            admin: ["Admin", "⚑"], settings: ["Inställningar", "⚙"],
            mine: ["Mina uppgifter", "☑"] },
@@ -1466,13 +1466,13 @@ const RAIL = [
   ["sajterna", ["sites"]],
   ["systemet", ["settings", "admin", "setup"]],
 ];
-// Vyns namn är PostHog -- det är dit allt deras material kommer. Landet, källan och
-// mätaren heter fortfarande vad de är; bara skärmen bär produktens namn.
+// Vyns namn är Sites -- kort, och det är dit allt materialet kommer. Produktens namn
+// (PostHog) står kvar där det betyder produkten: kopplingen, kolumnen och "PostHog saknas".
 // Avdelningarnas namn. Utskriften går genom panelens egna i18n-byte, så orden är sådana
 // som redan finns i ordlistan (Flödet, Agenterna, Sajterna, Inställningar) eller redan
 // står i gränssnittet (GitHub).
 const DELNAMN = { flodet: "Flödet", github: "GitHub", agenterna: "Agenterna",
-                  sajterna: "PostHog", systemet: "Inställningar" };
+                  sajterna: "Sites", systemet: "Inställningar" };
 // Foten: panelens egna inställningar. De hör till panelen, inte till arbetet, och skall
 // därför inte ligga bland de vanliga valen.
 const FOT = ["settings", "admin", "setup"];
@@ -3189,13 +3189,13 @@ function renderSites() {
     const uppe = sajter.filter(s => (s.liv || {}).uppe).length;
     const sum = fn => sajter.reduce((n, s) => n + (fn(s) || 0), 0);
     box.innerHTML = kpi([
-      ["Webbplatser", uppe + " / " + sajter.length, "uppe"],
+      ["Sites", uppe + " / " + sajter.length, "uppe"],
       ["besök", sum(s => (s.trafik || {}).visningar), "· " + SITES.data.dagar + " dygn"],
       ["personer", sum(s => (s.trafik || {}).personer), ""],
       ["kassa", sum(s => (s.salj || {}).krTotalt).toFixed(2) + " kr", ""],
     ]);
   }
-  lista.innerHTML = '<thead><tr><th style="width:22%">Webbplatser</th><th style="width:16%">uppe</th>' +
+  lista.innerHTML = '<thead><tr><th style="width:22%">Sites</th><th style="width:16%">uppe</th>' +
     "<th>besök</th><th style=\"width:26%\">kassa</th><th style=\"width:16%\">PostHog</th></tr></thead><tbody>" +
     (sajter.map(siteRow).join("") || '<tr><td colspan="5" class="empty">—</td></tr>') + "</tbody>";
   lista.querySelectorAll("[data-site]").forEach(rad => rad.addEventListener("click", () => {

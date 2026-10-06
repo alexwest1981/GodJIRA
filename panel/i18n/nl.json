@@ -71,7 +71,6 @@
  "Rensa samtalet": "Gesprek wissen",
  "Repon": "Repo's",
  "Rörd": "Aangeraakt",
- "Webbplatser": "Websites",
  "Sammanfattning": "Samenvatting",
  "Senast rörda": "Onlangs aangeraakt",
  "Senast rörda repon": "Onlangs aangeraakte repo's",
@@ -465,5 +464,6 @@
  "datum": "datum",
  "antal": "aantal",
  "andel": "aandeel",
- "PostHog": "PostHog"
+ "PostHog": "PostHog",
+ "Sites": "Sites"
 }

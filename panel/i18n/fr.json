@@ -71,7 +71,6 @@
  "Rensa samtalet": "Effacer la conversation",
  "Repon": "Dépôts",
  "Rörd": "Modifié",
- "Webbplatser": "Sites web",
  "Sammanfattning": "Résumé",
  "Senast rörda": "Récemment modifiés",
  "Senast rörda repon": "Dépôts récemment modifiés",
@@ -465,5 +464,6 @@
  "datum": "date",
  "antal": "nombre",
  "andel": "part",
- "PostHog": "PostHog"
+ "PostHog": "PostHog",
+ "Sites": "Sites"
 }

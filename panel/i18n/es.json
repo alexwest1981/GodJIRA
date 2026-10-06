@@ -71,7 +71,6 @@
  "Rensa samtalet": "Limpiar la conversación",
  "Repon": "Repos",
  "Rörd": "Tocado",
- "Webbplatser": "Sitios web",
  "Sammanfattning": "Síntesis",
  "Senast rörda": "Tocados recientemente",
  "Senast rörda repon": "Repos tocados recientemente",
@@ -465,5 +464,6 @@
  "datum": "fecha",
  "antal": "cantidad",
  "andel": "proporción",
- "PostHog": "PostHog"
+ "PostHog": "PostHog",
+ "Sites": "Sitios"
 }

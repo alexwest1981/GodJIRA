@@ -71,7 +71,6 @@
  "Rensa samtalet": "Rensa samtalet",
  "Repon": "Repon",
  "Rörd": "Rörd",
- "Webbplatser": "Webbplatser",
  "Sammanfattning": "Sammanfattning",
  "Senast rörda": "Senast rörda",
  "Senast rörda repon": "Senast rörda repon",
@@ -465,5 +464,6 @@
  "datum": "datum",
  "antal": "antal",
  "andel": "andel",
- "PostHog": "PostHog"
+ "PostHog": "PostHog",
+ "Sites": "Sites"
 }

@@ -71,7 +71,6 @@
  "Rensa samtalet": "Wyczyść rozmowę",
  "Repon": "Repozytoria",
  "Rörd": "Ruszane",
- "Webbplatser": "Strony internetowe",
  "Sammanfattning": "Podsumowanie",
  "Senast rörda": "Ostatnio ruszane",
  "Senast rörda repon": "Ostatnio ruszane repozytoria",
@@ -465,5 +464,6 @@
  "datum": "data",
  "antal": "liczba",
  "andel": "udział",
- "PostHog": "PostHog"
+ "PostHog": "PostHog",
+ "Sites": "Strony"
 }

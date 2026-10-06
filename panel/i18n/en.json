@@ -71,7 +71,6 @@
  "Rensa samtalet": "Clear the conversation",
  "Repon": "Repos",
  "Rörd": "Touched",
- "Webbplatser": "Websites",
  "Sammanfattning": "Summary",
  "Senast rörda": "Recently touched",
  "Senast rörda repon": "Most recently touched repos",
@@ -465,5 +464,6 @@
  "datum": "date",
  "antal": "count",
  "andel": "share",
- "PostHog": "PostHog"
+ "PostHog": "PostHog",
+ "Sites": "Sites"
 }
