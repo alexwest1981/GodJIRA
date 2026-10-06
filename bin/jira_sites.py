@@ -47,7 +47,7 @@ SAJTER = [
      "kassa_fil": "~/.config/alibit/billing.env",
      "kassa_namn": "REDTHREAD_BILLING_STRIPE_SECRET_KEY"},
     {"nyckel": "higgies", "namn": "Higgies", "url": "http://127.0.0.1:3000/",
-     "vardar": [], "tjanst": "higgies.service", "salj": None, "kassa": None},
+     "vardar": ["127.0.0.1:3000", "localhost:3000"], "tjanst": "higgies.service", "salj": None, "kassa": None},
     {"nyckel": "godjira", "namn": "GodJIRA", "url": "http://127.0.0.1:8788/",
      "vardar": [], "tjanst": "godjira-panel.service", "salj": None, "kassa": None},
 ]

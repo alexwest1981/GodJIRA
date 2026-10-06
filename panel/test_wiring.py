@@ -360,7 +360,7 @@ console.log(bad.length ? "FEL " + bad.join(" | ") : "OK");
         sections = set(re.findall(r'<section class="view[^"]*" id="v-(\w+)"', html))
         check(named == sections, "varje vy finns i bade tabellen och sidan",
               "bara i tabellen: %s - bara som sektion: %s" % (sorted(named - sections), sorted(sections - named)))
-    check('STATE.projectCan' in html and 'data-v="board"' in html,
+    check("STATE.projectCan" in html and "nytt projekt" in html,
           "the sidebar says whether a project may be created")
     check("def project_can" in (HERE / "server.py").read_text(),
           "the API carries the permission answer")
@@ -464,12 +464,15 @@ console.log(bad.length ? "FEL " + bad.join(" | ") : "OK");
     check("def import_parse(payload: dict, on_line=None)" in server
           and "on_line(line if line.endswith" in server,
           "samma import kör både den buffrade vägen och strömmen")
-    check("const RAIL = [" in html and html.count('class="raildel"') + len(re.findall(r'<div class="raildel">', html)) >= 1
+    check("const RAIL = [" in html and "const DELNAMN = {" in html
+          and 'RAIL.filter(([namn]) => namn !== "systemet")' in html
           and "Object.fromEntries(navViews())" in html,
-          "rälen är avdelningar (fem i en tabell), och behörigheten bestämmer fortfarande vad som syns")
-    check('data-v="overview"><span class="g">◫</span>' not in html
-          and html.count('class="item ${view === "overview"') == 0,
-          "sidofältet upprepar inte rälens navigation (Översikt/Importera/Alla uppgifter)")
+          "rälen är avdelningar (en tabell), inställningarna är inte en egen avdelning, och behörigheten bestämmer vad som syns")
+    check("const FOT = [" in html and '<div class="fot">' in html
+          and "margin-top: auto" in html and "FOT.filter(v => synliga[v]).map(rad)" in html,
+          "inställningarna ligger sist i sidofältet, i sin egen fot")
+    check('data-v="board"><span class="g">▤</span>' not in html,
+          "tavlan står inte både i menyn och som genväg (samma mål i två ordförråd)")
 
     check("function driftRow(s)" in html and "const drift = driftRow(s);" in html
           and "return drift +" in html
