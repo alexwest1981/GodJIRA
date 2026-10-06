@@ -578,7 +578,10 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
     margin: 5px 0 9px; font-size: 13px; line-height: 1.35;
     display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
   }
-  .card .c2 { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; min-width: 0; margin-top: auto; }
+  /* Raden med prioritet, poäng och sprint foljer titeln i stallet for att tryckas till
+     kortets botten. Med margin-top: auto + height: 100% hamnade markeringen pa kortets
+     hojd -- olika langt fran titeln beroende pa hur langt kortet var. */
+  .card .c2 { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; min-width: 0; margin-top: 0; }
   /* Etiketterna i kortets fotrad får inte krympa. Utan det krymper flex dem till en flisa så
      snart raden är trång -- "SCRUM Sprint 4: AutoCore 3.0" kapas till ett par tecken, och
      prioritetsmarkeringen trycks ner på egen rad. Raden bryter hellre: flex-shrink 0. */
