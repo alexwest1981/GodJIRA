@@ -39,6 +39,9 @@ ROOT = Path(__file__).resolve().parent.parent
 SEAM = ROOT / "n8n" / "bin" / "flow-call.sh"
 UI = Path(__file__).resolve().parent / "index.html"
 LOGO = Path(__file__).resolve().parent.parent / "assets" / "godjira.svg"
+# Kartan är sin egen fil. Låg den kvar under LOGO i rutt-tabellen nedan visade sajtvyns
+# karta en stor GodJIRA i stället för en världskarta -- och det såg ut som ett trasigt skal.
+KARTA = Path(__file__).resolve().parent.parent / "assets" / "world.svg"
 # Panelens egna inställningar (PostHog-nyckeln m.fl.). Hemligheter bor hos användaren i en
 # 0600-fil -- aldrig i repot, och aldrig i ett svar till webbläsaren.
 PANEL_KONFIG = Path.home() / ".config" / "godjira" / "panel.json"
@@ -2499,7 +2502,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, UI.read_bytes(), "text/html; charset=utf-8")
             return
         if path in ("/godjira.svg", "/world.svg", "/favicon.ico"):
-            self._send(200, LOGO.read_bytes(), "image/svg+xml")
+            # Två SVG:er, två filer. Samma innehållstyp, men rätt fil per adress.
+            self._send(200, (KARTA if path == "/world.svg" else LOGO).read_bytes(), "image/svg+xml")
             return
         if path == "/api/state":
             self._send(200, json.dumps(state(), ensure_ascii=False).encode(), "application/json; charset=utf-8")

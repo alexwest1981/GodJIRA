@@ -577,6 +577,19 @@ console.log(lines.join("\\n"));
         felrader = bad + (["%d rader, väntade 15" % len(lines)] if len(lines) != 15 else [])
         check(not felrader, "sökningen hittar rätt sak och går till rätt ställe",
               felrader[0] if felrader else "")
+
+    # Två SVG:er på två adresser, och rätt fil på varje. Förut serverades märket på båda,
+    # så kartan i sajtvyn ritade en stor GodJIRA mitt i huvudytan (mätt: samma 53 550 byte
+    # på /world.svg som på /godjira.svg).
+    def hamta(adress: str) -> bytes:
+        with urllib.request.urlopen(PANEL + adress, timeout=60) as svar:
+            return svar.read()
+
+    karta, marke = hamta("/world.svg"), hamta("/godjira.svg")
+    check(karta == (HERE.parent / "assets" / "world.svg").read_bytes() and karta != marke,
+          "kartan på /world.svg är kartan, inte märket")
+    check(b'viewBox="0 0 360 180"' in karta and b'viewBox="0 0 360 180"' not in marke,
+          "kartan har kartans egen ram -- 360x180 grader, som punkterna räknas i")
     print()
     if failed:
         print("FAILED: " + ", ".join(failed))
