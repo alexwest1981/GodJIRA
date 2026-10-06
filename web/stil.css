@@ -72,6 +72,10 @@ html { scroll-behavior: smooth; }
 .nav-links a, .nav-cta { color: var(--dov); font-size: 13px; text-decoration: none; border-bottom: 0; transition: color .2s; }
 .nav-links a:hover, .nav-cta:hover { color: #fff; }
 .nav-cta { border: 1px solid var(--linje); border-radius: 99px; padding: 11px 17px; color: var(--text); }
+/* Språkbytet ligger utanför .nav-links med flit: den raden göms på smala skärmar, och
+   den som läser på engelska skall kunna gå tillbaka även i telefonen. */
+.site-nav .sprak { color: var(--dov); font-size: 13px; text-decoration: none; margin-right: 20px; transition: color .2s; }
+.site-nav .sprak:hover { color: #fff; }
 .nav-cta span, .button span { margin-left: 9px; color: var(--accent); }
 
 .hero { max-width: 1240px; min-height: 630px; margin: 0 auto; padding: 118px 28px 100px; display: grid; grid-template-columns: 1.1fr .9fr; align-items: center; border-bottom: 1px solid var(--linje); position: relative; }

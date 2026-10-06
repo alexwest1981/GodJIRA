@@ -36,7 +36,7 @@ for img in $images; do
 		mkdir -p /tmp/h && git config --global --add safe.directory /app 2>/dev/null
 		printf "  %s\n" "$(python3 --version 2>&1)"
 		# 1. Does every file even parse on this interpreter?
-		bad=$(python3 -m py_compile $(find bin panel tools -name "*.py") 2>&1 | head -3)
+		bad=$(python3 -m py_compile $(find bin panel tools web -name "*.py") 2>&1 | head -3)
 		[ -n "$bad" ] && { echo "  SYNTAXFEL:"; echo "$bad" | sed "s/^/    /"; }
 		# 2. The suites, each printing its own last line.
 		for t in panel/test_i18n.py panel/test_guard.py panel/test_coldstart.py; do

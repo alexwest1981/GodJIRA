@@ -42,6 +42,7 @@ jobs:
           python3 panel/test_coldstart.py
           python3 panel/test_palette.py
           python3 panel/test_install.py
+          python3 web/test_webb.py
           python3 bin/jira_flow.py --selftest
 
   distros:
