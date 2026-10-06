@@ -60,3 +60,100 @@ figcaption { color: var(--dov); font-size: 14.5px; margin-top: 8px; }
 footer { border-top: 1px solid var(--linje); margin-top: 56px; padding-top: 18px; color: var(--dov); font-size: 15px; }
 footer a { color: var(--dov); }
 .datum { color: var(--dov); font-size: 15px; margin: 0 0 26px; }
+
+/* ---- Startsidan ----------------------------------------------------------
+   Formen (hero med eyebrow, numrerade sektioner, terminalrutan, footern) är
+   hämtad från en v0-skiss och skriven om som ren CSS: inga beroenden, inget
+   byggsteg, ingen JavaScript. Färgerna är sidans egna — v0:s lime är utbytt
+   mot accenten, och skissen ritade panelen i HTML där vi visar skärmdumpar. */
+
+html { scroll-behavior: smooth; }
+.site-shell { background: var(--botten); color: var(--text); overflow: hidden; }
+.site-nav { height: 78px; max-width: 1240px; margin: 0 auto; padding: 0 28px; display: flex; align-items: center; justify-content: space-between; gap: 0; border-bottom: 1px solid var(--linje); }
+.brand { display: inline-flex; align-items: center; gap: 11px; color: var(--text); font-size: 19px; font-weight: 700; letter-spacing: -.04em; text-decoration: none; }
+.brand img { width: 28px; height: 28px; filter: brightness(0) invert(1); }
+.nav-links { display: flex; gap: 30px; margin-left: auto; margin-right: 38px; }
+.nav-links a, .nav-cta { color: var(--dov); font-size: 13px; text-decoration: none; border-bottom: 0; transition: color .2s; }
+.nav-links a:hover, .nav-cta:hover { color: #fff; }
+.nav-cta { border: 1px solid var(--linje); border-radius: 99px; padding: 11px 17px; color: var(--text); }
+.nav-cta span, .button span { margin-left: 9px; color: var(--accent); }
+
+.hero { max-width: 1240px; min-height: 630px; margin: 0 auto; padding: 118px 28px 100px; display: grid; grid-template-columns: 1.28fr .72fr; align-items: center; border-bottom: 1px solid var(--linje); position: relative; }
+.hero:before { content: ''; position: absolute; width: 700px; height: 700px; top: -280px; right: -240px; background: radial-gradient(circle, rgba(224,131,86,.10), transparent 65%); pointer-events: none; }
+.eyebrow { color: var(--accent); font-size: 11px; letter-spacing: .18em; font-weight: 700; margin: 0 0 22px; }
+.status-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 15px var(--accent); margin-right: 9px; }
+.hero h1 { font-size: clamp(38px, 4.4vw, 62px); line-height: 1.02; letter-spacing: -.05em; font-weight: 600; max-width: 780px; margin: 0; text-wrap: balance; }
+.hero h1 em, .section-intro h2 em, .install-panel h2 em { color: var(--accent); font-style: normal; }
+.hero-lead { color: var(--dov); max-width: 520px; font-size: 17px; line-height: 1.65; margin: 34px 0 30px; }
+.hero-actions { display: flex; gap: 12px; flex-wrap: wrap; }
+.button { display: inline-flex; align-items: center; border-radius: 99px; padding: 14px 20px; font-size: 13px; font-weight: 700; text-decoration: none; transition: transform .2s, background .2s; }
+.button:hover { transform: translateY(-2px); }
+.button-primary { background: var(--accent); color: #14100c; }
+.button-primary span { color: #14100c; }
+.button-secondary { border: 1px solid var(--linje); color: var(--text); }
+.button-secondary:hover { background: rgba(255,255,255,.06); }
+.hero-note { color: #8d8880; font-size: 13px; margin-top: 22px; }
+.hero-mark { height: 390px; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; color: #fff; font-weight: 700; letter-spacing: .32em; font-size: 12px; }
+.hero-mark img { width: 205px; height: 205px; object-fit: contain; filter: brightness(0) invert(1); position: relative; z-index: 1; }
+.mark-glow { position: absolute; width: 250px; height: 250px; border-radius: 50%; background: radial-gradient(circle, rgba(224,131,86,.22), rgba(224,131,86,.02) 58%, transparent 70%); filter: blur(12px); }
+
+.preview-section, .features-section, .install-section { max-width: 1240px; margin: 0 auto; padding: 115px 28px; border-bottom: 1px solid var(--linje); }
+.section-intro { display: flex; justify-content: space-between; align-items: end; gap: 50px; margin-bottom: 54px; }
+.section-intro h2, .install-panel h2 { font-size: clamp(34px, 4.6vw, 60px); line-height: .98; letter-spacing: -.055em; margin: 0; padding-top: 0; border-top: 0; font-weight: 600; }
+.section-intro > p { max-width: 380px; color: var(--dov); line-height: 1.7; margin: 0 0 4px; font-size: 15px; }
+.compact { margin-bottom: 54px; }
+
+.skarm { margin: 0; }
+.skarm-bar { display: flex; align-items: center; gap: 6px; padding: 14px 17px; background: #101314; border: 1px solid #303738; border-bottom: 0; border-radius: 14px 14px 0 0; }
+.skarm-bar span { width: 7px; height: 7px; border-radius: 50%; background: #4a5150; }
+.skarm-bar small { margin-left: 8px; color: #7d7f7c; font-size: 11px; }
+.skarm img { display: block; width: 100%; height: auto; border: 1px solid #303738; border-top: 0; border-radius: 0 0 14px 14px; box-shadow: 0 35px 90px rgba(0,0,0,.45); }
+.bilder { display: grid; grid-template-columns: 1fr 1fr; gap: 38px 28px; margin-top: 58px; }
+.bilder figure { margin: 0; }
+.bilder img { border-radius: 10px; }
+
+.feature-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; border-top: 1px solid var(--linje); border-bottom: 1px solid var(--linje); }
+.feature { padding: 30px 28px 30px 0; border-right: 1px solid var(--linje); }
+.feature + .feature { padding-left: 28px; }
+.feature:last-child { border-right: 0; }
+.feature > span { color: var(--accent); font-size: 11px; font-weight: 700; letter-spacing: .14em; }
+.feature h3 { font-size: 20px; letter-spacing: -.03em; margin: 40px 0 12px; }
+.feature p { color: var(--dov); font-size: 14px; line-height: 1.7; max-width: 280px; margin: 0; }
+
+.install-panel { display: grid; grid-template-columns: .8fr 1.2fr; gap: 70px; align-items: center; margin-bottom: 58px; }
+.install-panel > div:first-child > p { color: var(--dov); line-height: 1.7; max-width: 360px; margin: 0 0 22px; }
+.terminal { background: #101314; border: 1px solid #303839; border-radius: 12px; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,.3); }
+.terminal-bar { padding: 14px 17px; border-bottom: 1px solid #293031; display: flex; gap: 6px; align-items: center; }
+.terminal-bar span { width: 7px; height: 7px; border-radius: 50%; background: #4a5150; }
+.terminal-bar small { margin-left: 8px; color: #7d7f7c; font-size: 11px; }
+.terminal code { display: block; background: none; padding: 24px 26px; color: #b4bcb8; font-size: 13px; line-height: 2; border-radius: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.terminal code b { color: var(--accent); }
+.terminal code i { color: var(--accent); font-style: normal; }
+.terminal > a { display: block; padding: 14px 26px; border-top: 1px solid #293031; color: var(--accent); font-size: 12px; text-decoration: none; }
+.terminal > a span { float: right; }
+.lista { max-width: 74ch; }
+.site-footer { max-width: 1240px; padding: 34px 28px 46px; margin: 0 auto; display: flex; align-items: center; gap: 30px; color: #7d7972; font-size: 13px; border-top: 0; }
+.site-footer .brand { color: var(--text); font-size: 15px; margin-right: auto; }
+.site-footer .brand img { width: 22px; height: 22px; }
+.site-footer p { margin: 0; }
+.site-footer a { color: #7d7972; }
+
+@media (max-width: 900px) {
+  .hero { grid-template-columns: 1fr; padding: 88px 22px 68px; min-height: auto; }
+  .hero-mark { height: 280px; margin-top: 24px; }
+  .hero-mark img { width: 150px; height: 150px; }
+  .nav-links { display: none; }
+  .preview-section, .features-section, .install-section { padding: 76px 22px; }
+  .section-intro, .install-panel { display: block; }
+  .section-intro > p { margin-top: 26px; }
+  .bilder { grid-template-columns: 1fr; gap: 30px; }
+  .feature-grid { display: block; }
+  .feature, .feature + .feature { border-right: 0; border-bottom: 1px solid var(--linje); padding: 26px 0; }
+  .site-footer { display: block; }
+  .site-footer p { margin: 18px 0 8px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .button, .nav-links a, .nav-cta { transition: none; }
+  .button:hover { transform: none; }
+}
