@@ -41,7 +41,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
     --text: light-dark(#1a1e1d, #e8eef1);
     --text-2: light-dark(#3c4240, #c3ccd1);
     --muted: light-dark(#5a605e, #9fabb2);
-    --accent: light-dark(#00775c, #04997a);
+    --accent: light-dark(#00775c, #1cc09d);
     --navy: #1a6ba8; --green: light-dark(#25743b, #7bcf6a);
     --amber: light-dark(#973c00, #e0a33e); --red: light-dark(#a5261d, #e5545f);
     /* Mörkt läge, andra rampen: kanvasen djupare (#0f0f10 -> #08090b) och kortet ett steg
@@ -51,9 +51,9 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
        --glow/--glow-2 (ljuskällan bakom kanvasen). Provas i test_palette.py. */
     --shadow: light-dark(0 1px 2px rgba(16, 24, 22, .07), 0 12px 28px -14px rgba(0, 0, 0, .75));
     --edge: light-dark(rgba(255, 255, 255, .9), rgba(255, 255, 255, .05));
-    --toplite: light-dark(rgba(255, 255, 255, 0), rgba(255, 255, 255, .035));
-    --glow: light-dark(rgba(0, 119, 92, .05), rgba(4, 153, 122, .11));
-    --glow-2: light-dark(rgba(26, 107, 168, .05), rgba(77, 141, 246, .08));
+    --toplite: light-dark(rgba(255, 255, 255, 0), rgba(255, 255, 255, .055));
+    --glow: light-dark(rgba(0, 119, 92, .05), rgba(28, 192, 157, .17));
+    --glow-2: light-dark(rgba(26, 107, 168, .05), rgba(77, 141, 246, .10));
     --r: 10px;
     /* Rörelsen. Före detta fanns tre transitioner och en keyframe i tolv vyer, och
        varje ny knapp hittade på sin egen tid. Tiderna bor här, reglerna ligger i
@@ -557,7 +557,10 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   .bgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(264px, 1fr)); gap: 8px; padding: 1px; grid-auto-rows: 1fr; }
   .bgrid > a { display: block; height: 100%; }
   .card {
-    background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 11px;
+    /* Toningen från v0: ljuset faller in uppifrån vänster i stallet for att ytan ligger platt.
+       Den anvander --toplite, som redan finns och som ar genomskinlig i ljust tema. */
+    background: var(--card); background-image: linear-gradient(145deg, var(--toplite), transparent 58%);
+    border: 1px solid var(--line); border-radius: var(--r);
     height: 100%; display: flex; flex-direction: column;
   }
   .card:hover { background: var(--card-hi); border-color: var(--line-2); }
@@ -676,6 +679,10 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
      av appens egna block (.wl/.r) -- bara färgen är ny. */
   .wl .r.need { cursor: pointer; }
   .wl .r.need:hover { background: var(--card-hi); }
+  /* En agents feltext ar hur lang som helst. Den far en rad med ... har, och hela
+     texten i title -- annars ritar den ut sig sjalv mitt i ett ord och ser trasig ut. */
+  .wl .r.need .meta { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical;
+    overflow: hidden; }
   .wl .r.need.block { border-left: 2px solid var(--red); }
   .wl .r.need.wait { border-left: 2px solid var(--amber); }
   .wl .r.need.info { border-left: 2px solid transparent; }
@@ -4838,7 +4845,7 @@ function renderNeeds() {
     '<span class="dot"></span>' +
     '<span class="t">' + (n.count > 1 ? n.count + " " : "") + esc(n.label) +
       (n.key ? ' <span class="key">' + esc(n.key) + "</span>" : "") +
-      (n.detail ? ' <span class="meta">' + esc(n.detail) + "</span>" : "") + "</span>" +
+      (n.detail ? ' <span class="meta" title="' + esc(n.detail) + '">' + esc(n.detail) + "</span>" : "") + "</span>" +
     ((n.keys || []).length
       ? '<span class="tside">' + n.keys.map(k => '<span class="key">' + esc(k) + "</span>").join(" ") + "</span>"
       : "") +
