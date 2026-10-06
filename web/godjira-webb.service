@@ -1,0 +1,19 @@
+[Unit]
+Description=GodJIRA:s infosida (godjira.se, bunden till 127.0.0.1)
+Documentation=https://github.com/alexwest1981/GodJIRA
+After=network-online.target
+
+[Service]
+Type=simple
+# install.sh skriver den har filen och byter ut @ROOT@ och @PYTHON@ pa vagen, precis som
+# panelens unit. Infosidan ar statisk HTML och ett par PNG -- bara standardbiblioteket.
+WorkingDirectory=@ROOT@
+ExecStart=@PYTHON@ @ROOT@/web/serva.py
+Environment=WEBB_PORT=8790
+Environment=WEBB_BIND=127.0.0.1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,19 @@
+[Unit]
+Description=GodJIRA — publik adress (Cloudflare Tunnel, godjira.se)
+Documentation=https://github.com/alexwest1981/GodJIRA
+After=network-online.target godjira-webb.service
+
+[Service]
+Type=simple
+# Token i en 600-fil, inte i enhetsfilen: enheten ar lasbar for alla, hemligheten ar det inte.
+# Filen skapas av install.sh (eller for hand) och innehaller TUNNEL_TOKEN=...
+EnvironmentFile=%h/.config/godjira/cloudflared.env
+ExecStart=%h/.local/bin/cloudflared tunnel --no-autoupdate run --token $TUNNEL_TOKEN
+# En tunnel som tappar anslutningen skall komma tillbaka av sig sjalv.
+Restart=always
+RestartSec=10
+KillMode=mixed
+TimeoutStopSec=5
+
+[Install]
+WantedBy=default.target

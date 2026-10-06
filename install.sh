@@ -192,6 +192,14 @@ if [ -n "$n8n_bin" ]; then
 	fill "$root/panel/godjira-watch.timer" "$HOME/.config/systemd/user/godjira-watch.timer"
 	[ "$have_systemctl" = no ] || systemctl --user enable --now godjira-watch.timer
 
+	# Infosidan och dess tunnel: godjira.se ar en sida, inte panelen. Den ligger pa en egen
+	# port (8790) och i en egen tjanst, sa att panelen aldrig star bakom en publik adress.
+	# Tunneln behover TUNNEL_TOKEN ur ~/.config/godjira/cloudflared.env -- utan den startar
+	# den inte, och det syns i `systemctl --user status godjira-tunnel`.
+	fill "$root/web/godjira-webb.service" "$HOME/.config/systemd/user/godjira-webb.service"
+	fill "$root/web/godjira-tunnel.service" "$HOME/.config/systemd/user/godjira-tunnel.service"
+	[ "$have_systemctl" = no ] || systemctl --user enable --now godjira-webb.service
+
 	fill "$root/n8n/n8n.service" "$HOME/.config/systemd/user/n8n.service"
 	fill "$root/panel/godjira-flodet.desktop" "$HOME/.local/share/applications/godjira-flodet.desktop"
 	[ "$have_systemctl" = no ] || systemctl --user enable --now n8n.service

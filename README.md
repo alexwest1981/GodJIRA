@@ -207,6 +207,26 @@ Wayland shell shipped by Arch and Omarchy. Everywhere else the panel is the prog
 a window from any browser, nothing to install. The widget's packaging outside Arch
 is not measured here — treat it as an Omarchy extra rather than a supported target.
 
+## The website (godjira.se)
+
+`web/` is the page that tells people what this is: how to try it, how to install it,
+what to expect, and the legal texts that belong to a page a stranger can read
+(`integritet.html`, `villkor.html`). It is static HTML and one stylesheet — no
+JavaScript, no cookies, no external requests — and `web/test_webb.py` measures exactly
+that claim rather than asserting it.
+
+| | |
+|---|---|
+| Zone | `godjira.se`, Cloudflare zone `0b5bd2dd5df9ca6e821174962b8b1b21`, nameservers `mckinley`/`piers.ns.cloudflare.com` (moved from `ns01`/`ns02.one.com` at the registrar) |
+| Tunnel | `godjira`, id `1a69cba1-fb42-4c9e-b69e-864788888f98`, ingress `godjira.se` and `www.godjira.se` → `http://127.0.0.1:8790`, then `http_status:404` |
+| Serves | `web/serva.py` on `127.0.0.1:8790` — **its own port and its own service**, never the panel's 8788 |
+| Units | `web/godjira-webb.service` and `web/godjira-tunnel.service` (written by `install.sh`; the tunnel token lives in `~/.config/godjira/cloudflared.env`, mode 600) |
+| Mail | MX `route1/2/3.mx.cloudflare.net` (10/20/30) and SPF `include:_spf.mx.cloudflare.net`; Email Routing forwards `godjira@godjira.se` once the destination address is verified |
+
+The one invariant worth stating out loud: **the panel is never behind a public
+hostname.** It reads your Jira boards and it can start an agent run; only the static
+site is published, from a separate process on a separate port.
+
 ## What it exposes, and to whom
 
 The panel listens on `127.0.0.1` unless you say otherwise, and every request passes two

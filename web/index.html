@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GodJIRA — Jira-klienten i ditt skal</title>
+<meta name="description" content="GodJIRA är en Jira-klient för din egen dator: tavla, backlog, tidslinje, rapporter och kodkarta, med GitHub och flödet bredvid. Öppen källkod (MIT), inget konto, ingen tjänst.">
+<link rel="stylesheet" href="stil.css">
+</head>
+<body>
+<div class="sida">
+
+<header>
+  <div class="rad">
+    <span class="marke">God<b>JIRA</b></span>
+    <p>Jira-klienten i ditt skal — en egen app på din dator.</p>
+  </div>
+  <nav>
+    <a href="index.html" aria-current="page">Om GodJIRA</a>
+    <a href="#installera">Installera</a>
+    <a href="integritet.html">Integritet</a>
+    <a href="villkor.html">Villkor</a>
+    <a href="https://github.com/alexwest1981/GodJIRA">GitHub</a>
+  </nav>
+</header>
+
+<h1>Din Jira-tavla, i stället för i en flik</h1>
+<p class="ingress">GodJIRA är ett program du kör själv. Det visar ditt Jira-konto — tavlan med
+drag och släpp, backlog, tidslinje, rapporter, ärendelistan och kodkartan — med GitHub och
+n8n-flödet bredvid, och pratar nio språk. Ingenting ligger i molnet hos mig: appen är din
+dator, din nyckel och din Jira-instans.</p>
+
+<figure>
+  <img src="bilder/oversikt.png" alt="GodJIRA: översikten med Jira, GitHub och flödet i samma fönster" width="1200">
+  <figcaption>Översikten. Skärmbilderna på den här sidan är appens inbyggda exempeldata — inte ett riktigt konto.</figcaption>
+</figure>
+
+<h2>Prova först, koppla sedan</h2>
+<p>Appen startar på egen exempeldata. Du behöver inget Jira-konto, ingen nyckel och ingenting
+att ångra för att se om den passar dig:</p>
+<pre><code>git clone https://github.com/alexwest1981/GodJIRA.git ~/Projects/godjira
+cd ~/Projects/godjira &amp;&amp; python3 panel/server.py</code></pre>
+<p>Öppna <code>http://127.0.0.1:8788</code>. Tavlan, ärendelistan, rapporterna och
+flödesritningen är levande på exempeldata, kontokortet säger <em>mock</em>, och ingenting
+skrivs till Jira. När du vill koppla in ditt eget konto är <strong>Kom igång</strong> dörren:
+en Jira-API-nyckel och <code>gh auth login</code>. Ingen nyckel, ingen nyckelringspost, ingen
+fil i repot lämnas efter en titt.</p>
+
+<h2>Så funkar det</h2>
+<div class="rutor">
+  <div class="ruta">
+    <h3>Panelen är programmet</h3>
+    <p>En lokal webbserver utan beroenden — Python och ingenting mer. Du öppnar den i vilken
+    webbläsare som helst, eller som ett eget fönster från menyn.</p>
+  </div>
+  <div class="ruta">
+    <h3>Panelvyn är en vy</h3>
+    <p>Om du kör Omarchy finns ett tillägg i skalets list. Det visar samma panel — det är
+    kärnan som är appen, vyn är bara en dörr in.</p>
+  </div>
+  <div class="ruta">
+    <h3>Nyckeln är din</h3>
+    <p>Jira-nyckeln och GitHub-inloggningen ligger i din sessionsnyckelring: aldrig i en fil,
+    aldrig i en logg, och aldrig skickad till webbläsaren.</p>
+  </div>
+  <div class="ruta">
+    <h3>Flödet är ditt</h3>
+    <p>Har du n8n ritar panelen upp ditt eget flöde ur dess fil, och kan låta agenter ta ett
+    ärende i en egen arbetskopia — med gren och pull request tillbaka.</p>
+  </div>
+</div>
+
+<figure>
+  <img src="bilder/tavla.png" alt="Tavlan: kanban-kolumner ur sprinten" width="1200">
+  <figcaption>Tavlan — samma ärenden som i Jira, med drag och släpp när du har behörighet.</figcaption>
+</figure>
+
+<h2 id="installera">Installera</h2>
+<p>För hela installationen — tjänsten, menykonen, fönsterregeln, panelvyn och flödet om du har
+n8n — kör du installationsskriptet i klonen:</p>
+<pre><code>cd ~/Projects/godjira &amp;&amp; ./install.sh</code></pre>
+<p>Den skriver en systemdtjänst bunden till <code>127.0.0.1</code>, en menykon, en regel som
+gör fönstret flytande och centrerat, och — bara om skalet eller n8n redan finns — panelvyn och
+flödet. Sist kontrollerar den att panelen svarar i stället för att säga att den är klar.</p>
+
+<table class="tabell">
+  <tr><th>Krav</th><th>Vad som gäller</th></tr>
+  <tr><td>Python</td><td>3.9 eller nyare. Panelen använder bara standardbiblioteket — det finns inget att installera med pip.</td></tr>
+  <tr><td>Operativsystem</td><td>Testad i containrar på Debian stable, Ubuntu 22.04 och 24.04, Fedora, Alpine och Rocky 9.</td></tr>
+  <tr><td>Skrivbord</td><td>Valfritt. Panelvyn i skalets list kräver Omarchy (Arch och Quickshell); panelen själv fungerar var som helst.</td></tr>
+  <tr><td>Konton</td><td>Ett Jira Cloud-konto och, för GitHub-delarna, <code>gh auth login</code>. Båda är valfria för att titta.</td></tr>
+</table>
+
+<h2>Vad du kan vänta dig</h2>
+<ul>
+  <li>En klient för <em>ditt</em> konto — jag har ingen server, inget abonnemang och ingen
+      inloggning. Det finns ingenting att betala för och ingenstans att bli avstängd.</li>
+  <li>Nio språk i både panelen och panelvyn; ett språkval, inte ett per webbläsare.</li>
+  <li>Skrivskyddet är inbyggt: ingenting ändras i Jira utan att du först ser och godkänner
+      det. Ett dokument kan läsas in och bli ärenden — men först när du säger ja.</li>
+  <li>Appen stannar på din maskin. Vill du bli av med allt den sparat: ta bort
+      <code>~/.config/jira-flow/</code> och <code>~/.local/state/jira-flow/</code>, och
+      nyckeln ur nyckelringen med <code>secret-tool clear service godjira account &lt;din adress&gt;</code>.</li>
+  <li>Öppen källkod under MIT-licensen. Läs koden, bygg vidare, eller strunta i den.</li>
+</ul>
+
+<h2>Länkar</h2>
+<ul>
+  <li><a href="https://github.com/alexwest1981/GodJIRA">Källkoden och hela dokumentationen</a> —
+      README:n beskriver varje vy, varje kommando och var data ligger.</li>
+  <li><a href="https://github.com/alexwest1981/GodJIRA/blob/main/LICENSE">MIT-licensen</a>.</li>
+  <li><a href="integritet.html">Integritet</a> — vad den här sidan gör, och vad appen gör med dina uppgifter.</li>
+  <li><a href="villkor.html">Villkor</a>.</li>
+</ul>
+
+<footer>
+  <p>GodJIRA · MIT · © 2026 Alex Weström · <a href="https://github.com/alexwest1981/GodJIRA">github.com/alexwest1981/GodJIRA</a></p>
+</footer>
+
+</div>
+</body>
+</html>

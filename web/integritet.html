@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Integritet — GodJIRA</title>
+<meta name="description" content="Vad godjira.se gör med dina uppgifter, och vad appen GodJIRA gör med dem på din egen dator.">
+<link rel="stylesheet" href="stil.css">
+</head>
+<body>
+<div class="sida">
+
+<header>
+  <div class="rad">
+    <span class="marke">God<b>JIRA</b></span>
+    <p>Integritet — den här sidan, och appen.</p>
+  </div>
+  <nav>
+    <a href="index.html">Om GodJIRA</a>
+    <a href="index.html#installera">Installera</a>
+    <a href="integritet.html" aria-current="page">Integritet</a>
+    <a href="villkor.html">Villkor</a>
+    <a href="https://github.com/alexwest1981/GodJIRA">GitHub</a>
+  </nav>
+</header>
+
+<h1>Integritet</h1>
+<p class="datum">Gäller från 6 oktober 2026.</p>
+
+<p class="ingress">Kort version: den här sidan samlar inte in någonting om dig, och appen skickar
+ingenting till mig. Det finns ingen statistik, inga cookies och inget konto.</p>
+
+<h2>Den här webbplatsen</h2>
+<p>Sidorna du läser är vanliga filer på en server. Det finns:</p>
+<ul>
+  <li><strong>Inga cookies</strong> och inget som sparas i din webbläsare.</li>
+  <li><strong>Ingen statistik och ingen spårning</strong> — ingen PostHog, ingen Google
+      Analytics, inga pixlar.</li>
+  <li><strong>Ingen JavaScript.</strong> Sidorna är HTML och en stilmall; det finns inget
+      skript att köra.</li>
+  <li><strong>Inga anrop till någon annan.</strong> Typsnitt, bilder och stilmall hämtas från
+      samma server som sidan — ingenting skickas till en tredje part genom att du öppnar den.</li>
+</ul>
+<p>Det går att kontrollera själv: öppna webbläsarens nätverkspanel och ladda om. Allt du ser
+kommer från <code>godjira.se</code>.</p>
+
+<h3>Det servern ändå ser</h3>
+<p>Sidan ligger bakom Cloudflare, och en webbserver får alltid veta vad den svarar på. Varje
+begäran loggas därför med IP-adress, tidpunkt och vilken adress som efterfrågades. Loggarna
+används till att hålla sidan uppe och stoppa missbruk, och hanteras och gallras enligt
+<a href="https://www.cloudflare.com/privacypolicy/">Cloudflares integritetspolicy</a>. Jag
+analyserar dem inte och bygger inga profiler av dem.</p>
+
+<h2>Appen GodJIRA — på din dator</h2>
+<p>Appen är ett program som körs hos dig. Den har ingen server hos mig och skickar ingenting
+till mig. Därför gäller följande, och det står också i
+<a href="https://github.com/alexwest1981/GodJIRA">README:n</a>:</p>
+<ul>
+  <li><strong>Dina nycklar ligger i din nyckelring.</strong> Jira-nyckeln och GitHub-inloggningen
+      sparas i din sessionsnyckelring — aldrig i en fil, aldrig i en logg, och skickas aldrig
+      till webbläsaren. Panelen kan svara på <em>om</em> en nyckel finns, inte vad den är.</li>
+  <li><strong>Det appen sparar ligger hos dig.</strong> Inställningar och kopplingar i
+      <code>~/.config/jira-flow/</code> (med rättigheterna 600), händelseloggen i
+      <code>~/.local/state/jira-flow/actions.log</code>.</li>
+  <li><strong>Ingen telemetri.</strong> Appen rapporterar inte hem, varken vid start eller
+      under körning.</li>
+  <li><strong>Anropen går till dina egna tjänster.</strong> När du kopplat in ett konto pratar
+      appen med Jira och GitHub med din nyckel — samma anrop du själv skulle gjort i deras
+      gränssnitt. Det är de anropen, och inga andra.</li>
+</ul>
+<p>Vill du bli av med allt: ta bort <code>~/.config/jira-flow/</code> och
+<code>~/.local/state/jira-flow/</code>, och nyckeln ur nyckelringen med
+<code>secret-tool clear service godjira account &lt;din adress&gt;</code>. Sedan finns
+ingenting kvar.</p>
+
+<h2>Personuppgiftsansvarig och dina rättigheter</h2>
+<p>Ansvarig för den här webbplatsen är <strong>Alex Weström</strong>, privatperson i Sverige.
+Frågor, begäran om registerutdrag eller begäran om radering:
+<strong>godjira@godjira.se</strong>.</p>
+<p>Jag har inga uppgifter om dig utöver det som står i serverloggen. Du har rätt att få veta om
+jag har något om dig, att få det rättat eller raderat, och att klaga till
+<a href="https://www.imy.se/">Integritetsskyddsmyndigheten</a>. Eftersom loggarna gallras
+löpande kan det som gäller dig redan vara borta när du frågar — det är avsiktligt.</p>
+
+<h2>Ändringar</h2>
+<p>Ändras sidan ändras också den här texten, och datumet högst upp flyttas fram. Den här sidan
+innehåller ingen rättslig rådgivning och är inte längre än den behöver vara.</p>
+
+<footer>
+  <p>GodJIRA · MIT · © 2026 Alex Weström · <a href="index.html">Tillbaka till start</a></p>
+</footer>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,72 @@
+/* GodJIRA — sidans enda stilmall. Ingen JavaScript, inga externa typsnitt, inga anrop
+   ut till någon: allt ligger på samma server, och mörkt/ljust följer systemet. */
+:root {
+  --botten: #fbfaf8;
+  --text: #1c1b19;
+  --dov: #6b6862;
+  --linje: #e3e0da;
+  --kort: #ffffff;
+  --accent: #b4451f;
+  --kod: #f3f1ec;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --botten: #171614;
+    --text: #ece9e3;
+    --dov: #9b978f;
+    --linje: #302e2a;
+    --kort: #1e1d1a;
+    --accent: #e08356;
+    --kod: #211f1c;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--botten);
+  color: var(--text);
+  font: 17px/1.65 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+.sida { max-width: 76ch; margin: 0 auto; padding: 0 22px 72px; }
+
+header { border-bottom: 1px solid var(--linje); padding: 26px 0 18px; margin-bottom: 40px; }
+header .rad { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 22px; }
+.marke { font-size: 25px; font-weight: 650; letter-spacing: -.02em; }
+.marke b { color: var(--accent); font-weight: 650; }
+header p { margin: 6px 0 0; color: var(--dov); }
+nav { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 6px 18px; }
+nav a { color: var(--dov); text-decoration: none; border-bottom: 1px solid transparent; }
+nav a:hover, nav a[aria-current] { color: var(--text); border-bottom-color: var(--accent); }
+
+h1 { font-size: 34px; line-height: 1.2; letter-spacing: -.02em; margin: 0 0 10px; }
+h2 { font-size: 21px; letter-spacing: -.01em; margin: 44px 0 10px; padding-top: 20px; border-top: 1px solid var(--linje); }
+h3 { font-size: 17px; margin: 26px 0 6px; }
+p, ul, ol { margin: 0 0 14px; }
+li { margin-bottom: 6px; }
+.ingress { font-size: 19px; color: var(--dov); }
+a { color: var(--accent); }
+code, pre, kbd {
+  font-family: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  font-size: 14.5px;
+}
+code { background: var(--kod); padding: 1px 5px; border-radius: 4px; }
+pre {
+  background: var(--kod); border: 1px solid var(--linje); border-radius: 8px;
+  padding: 14px 16px; overflow-x: auto; margin: 0 0 16px;
+}
+pre code { background: none; padding: 0; }
+figure { margin: 22px 0; }
+figure img { width: 100%; height: auto; border: 1px solid var(--linje); border-radius: 10px; display: block; }
+figcaption { color: var(--dov); font-size: 14.5px; margin-top: 8px; }
+.rutor { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; margin: 18px 0 8px; }
+.ruta { background: var(--kort); border: 1px solid var(--linje); border-radius: 10px; padding: 15px 17px; }
+.ruta h3 { margin: 0 0 4px; }
+.ruta p { margin: 0; color: var(--dov); font-size: 15.5px; }
+.tabell { width: 100%; border-collapse: collapse; font-size: 15.5px; margin: 0 0 18px; }
+.tabell th, .tabell td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--linje); vertical-align: top; }
+.tabell th { color: var(--dov); font-weight: 600; }
+.tabell td.nr { text-align: right; font-variant-numeric: tabular-nums; }
+footer { border-top: 1px solid var(--linje); margin-top: 56px; padding-top: 18px; color: var(--dov); font-size: 15px; }
+footer a { color: var(--dov); }
+.datum { color: var(--dov); font-size: 15px; margin: 0 0 26px; }
