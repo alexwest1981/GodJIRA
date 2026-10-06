@@ -60,6 +60,15 @@ check([n["label"] for n in queue] == ["körningen väntar på din merge", "körn
 check(queue[0]["url"].endswith("/pull/1") and "behöver ett beslut" in queue[1]["detail"],
       "raden bär PR-adressen och körningens egen orsak")
 
+# Men en körning som föll på ett ärende som redan är stängt tjatar inte: ärendet är klart,
+# och liggarens rad står kvar under Körningar. Samma körning på ett öppet ärende väntar.
+queue = server.needs_list(state_of(issues=[issue("SCRUM-7", category="done")],
+                                   runs=[{"key": "SCRUM-7", "ok": False, "note": "föll"}]))
+check(not [n for n in queue if n["kind"] == "failed"], "en körning på ett stängt ärende väntar inte")
+queue = server.needs_list(state_of(issues=[issue("SCRUM-7")],
+                                   runs=[{"key": "SCRUM-7", "ok": False, "note": "föll"}]))
+check([n for n in queue if n["kind"] == "failed"], "samma körning på ett öppet ärende väntar")
+
 # Ärenden: bara dina egna, bara de som inte är klara. Talet är hela talet.
 items = [issue("SCRUM-1", when=100), issue("SCRUM-2", who="mail", when=200),
        issue("SCRUM-3", category="done", when=300), issue("SCRUM-4", who="annan", when=400),

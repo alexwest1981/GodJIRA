@@ -1931,6 +1931,10 @@ def needs_list(state: dict, limit: int = 4) -> list:
     seen: set = set()
     issues = [i for i in (boards[0].get("issues") or []) + (boards[0].get("backlog") or [])
               if not (i.get("key") in seen or seen.add(i.get("key")))]
+    # Ärenden som redan är klara. En körning som föll på ett sådant tjatar inte i kön --
+    # ärendet är avslutat, och raden står kvar i liggaren under Körningar.
+    closed = {str(i.get("key") or "") for i in issues
+              if (i.get("statusCategory") or "") == "done"}
 
     # 0. Bygget först: rött på huvudgrenen betyder att det som ligger i main inte går att
     #    lita på, och då är allt annat på den grenen sekundärt.
@@ -1954,7 +1958,9 @@ def needs_list(state: dict, limit: int = 4) -> list:
                       "view": str(p.get("view") or "sites")})
 
     # 1. Körningar. En körning som öppnat en PR väntar på din merge -- det är människans
-    #    grind, och den skall synas. En körning som inte kom igenom väntar på ett beslut.
+    #    grind, och den skall synas. En körning som inte kom igenom väntar på ett beslut,
+    #    men bara så länge ärendet är öppet: är det redan stängt är körningen historia
+    #    (raden står kvar i liggaren under Körningar), inte något som väntar på dig.
     for run in runs[:6]:
         key = str(run.get("key") or "")
         if not key:
@@ -1963,7 +1969,7 @@ def needs_list(state: dict, limit: int = 4) -> list:
             needs.append({"kind": "merge", "level": "wait", "count": 1, "key": key,
                           "label": "körningen väntar på din merge", "detail": run.get("branch") or "",
                           "url": run.get("pr") or "", "view": "overview"})
-        elif run.get("ok") is False:
+        elif run.get("ok") is False and key not in closed:
             needs.append({"kind": "failed", "level": "wait", "count": 1, "key": key,
                           "label": "körningen gick inte igenom",
                           "detail": (run.get("note") or run.get("answer") or "")[:160],
