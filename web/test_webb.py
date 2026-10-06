@@ -9,6 +9,11 @@ det: att inga cookies satts, att varje sida har exakt ett skript, att det ar sam
 alla tre, att den pekar pa EU-hosten och sparar i minnet (alltsa ingenting i webblasaren),
 och att ingen bild eller stilmall hamtas fran en annan vard.
 
+Rakningen av skript gors pa VAR egen server: Cloudflare lagger sjalv till sin
+e-postskyddare (email-decode.min.js) pa den sida som visar en adress, sa integritet.html har
+tva skript ute och ett har (matt 2026-10-06). Det provet kan inte se -- det kor aldrig genom
+Cloudflare. Ska loftet "ett enda skript" galla ordagrant maste den installningen stangas av.
+
 Sidan finns ocksa pa engelska (/en/). Provet mater inte att oversattningen ar BRA -- det gor
 ogat, pa skarmdumpen -- utan att den ar HEL: ingen svensk rad far sta kvar, stilmallen och
 bilderna maste ha blivit absoluta (sidan ligger ett steg djupare), och sprakvalet skall ga
