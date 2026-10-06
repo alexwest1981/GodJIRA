@@ -339,6 +339,8 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   .railitem:hover { background: var(--panel); color: var(--text-2); }
   .railitem.on { background: var(--panel); color: var(--text); }
   .railitem.on .g { color: var(--accent); }
+  /* Avdelningarna syns som ett streck: rälen är en ikonkolumn, inte en rubriklista. */
+  .raildel { height: 1px; margin: 6px 11px; background: var(--line-2); }
 
   /* -------------------------------------------------------------- sidebar */
   .side {
@@ -1418,10 +1420,27 @@ const ICONS = {
 
 const navViews = () => Object.entries(TEXT.views).filter(([v]) => v !== "admin" || adminVisible());
 
+// Rälen är fem avdelningar, inte tolv lösryckta ikoner. Ordningen är fast och vyn
+// hämtas ur navViews() -- alltså bestämmer fortfarande behörigheten vad som syns; här
+// bestäms bara var det står. En avdelning vars vyer inte får visas ritar ingenting alls,
+// och strecket hamnar före avdelningen så att grupperna syns som grupper.
+const RAIL = [
+  ["flodet", ["overview", "mine", "board", "items", "import"]],
+  ["github", ["repos", "insights"]],
+  ["agenterna", ["chat"]],
+  ["sajterna", ["sites"]],
+  ["systemet", ["settings", "admin", "setup"]],
+];
+
 function renderRail() {
-  document.getElementById("rail").innerHTML = `<div class="mark" title="GodJIRA"></div>` + navViews().map(([v, [label, glyph]]) =>
-    `<div class="railitem ${v === view ? "on" : ""}" data-v="${v}" title="${esc(label)}">` +
-    `<span class="g">${ICONS[v] || ""}</span><span class="n">${esc(label)}</span></div>`).join("");
+  const synliga = Object.fromEntries(navViews());
+  const rad = ([v, par]) => `<div class="railitem ${v === view ? "on" : ""}" data-v="${v}" ` +
+    `title="${esc(par[0])}"><span class="g">${ICONS[v] || ""}</span><span class="n">${esc(par[0])}</span></div>`;
+  document.getElementById("rail").innerHTML = `<div class="mark" title="GodJIRA"></div>` +
+    RAIL.map(([, vyer], i) => {
+      const rader = vyer.filter(v => synliga[v]).map(v => rad([v, synliga[v]])).join("");
+      return rader ? (i ? '<div class="raildel"></div>' : "") + rader : "";
+    }).join("");
   applyLayout();   // rälen ritas om vid varje hämtning: valet måste på igen
 }
 
@@ -1451,9 +1470,9 @@ function renderSide() {
   document.getElementById("side").innerHTML = `
     <div class="head"><b>GodJIRA</b><span class="grow"></span>
       <button class="ghost" title="hämta färskt" data-act="refresh">↻</button></div>
-    <div class="item ${view === "overview" ? "on" : ""}" data-v="overview"><span class="g">◫</span>Översikt</div>
-    <div class="item ${view === "items" && F.pool !== "backlog" ? "on" : ""}" data-v="items"><span class="g">☰</span>${TEXT.allTasks}<span class="c">${all + ghItems().length}</span></div>
-    <div class="item ${view === "import" ? "on" : ""}" data-v="import"><span class="g">⇪</span>Importera<span class="c">${IMP.created.length || ""}</span></div>
+    /* Rälen äger navigeringen. Här står bara det som hör till SAMMANHANGET -- projektet,
+       tavlan och repona -- alltså det som inte är en egen vy. Att upprepa Översikt,
+       Importera och Alla uppgifter här gav samma mål i två ordförråd. */
     <div class="sect">Jira</div>
     ${STATE.projectCan && STATE.projectCan.may === false ? `<div class="item muted" title="${esc(STATE.projectCan.reason || "behörigheten saknas")}"><span class="g">＋</span>nytt projekt<span class="c">nej</span></div>` : ""}
     <div class="item" data-v="items"><span class="g">◆</span>${esc(proj.key || "Jira")}<span class="c">${all}</span></div>

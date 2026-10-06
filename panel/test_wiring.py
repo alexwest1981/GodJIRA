@@ -464,6 +464,13 @@ console.log(bad.length ? "FEL " + bad.join(" | ") : "OK");
     check("def import_parse(payload: dict, on_line=None)" in server
           and "on_line(line if line.endswith" in server,
           "samma import kör både den buffrade vägen och strömmen")
+    check("const RAIL = [" in html and html.count('class="raildel"') + len(re.findall(r'<div class="raildel">', html)) >= 1
+          and "Object.fromEntries(navViews())" in html,
+          "rälen är avdelningar (fem i en tabell), och behörigheten bestämmer fortfarande vad som syns")
+    check('data-v="overview"><span class="g">◫</span>' not in html
+          and html.count('class="item ${view === "overview"') == 0,
+          "sidofältet upprepar inte rälens navigation (Översikt/Importera/Alla uppgifter)")
+
     check("function driftRow(s)" in html and "const drift = driftRow(s);" in html
           and "return drift +" in html
           and "if (!t.mats) return drift +" in html,
