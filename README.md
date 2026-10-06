@@ -215,6 +215,9 @@ what to expect, and the legal texts that belong to a page a stranger can read
 JavaScript, no cookies, no external requests — and `web/test_webb.py` measures exactly
 that claim rather than asserting it.
 
+**Live:** https://godjira.se — zone active 2026-10-06, http redirects to https (301) and
+HSTS is set (`max-age=31536000; includeSubDomains`).
+
 | | |
 |---|---|
 | Zone | `godjira.se`, Cloudflare zone `0b5bd2dd5df9ca6e821174962b8b1b21`, nameservers `mckinley`/`piers.ns.cloudflare.com` (moved from `ns01`/`ns02.one.com` at the registrar) |
