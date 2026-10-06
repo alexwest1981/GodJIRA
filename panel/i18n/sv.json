@@ -458,5 +458,11 @@
  "just nu": "just nu",
  "sessionstid": "sessionstid",
  "händelser": "händelser",
- "enheter": "enheter"
+ "enheter": "enheter",
+ "land": "land",
+ "sida": "sida",
+ "källa": "källa",
+ "datum": "datum",
+ "antal": "antal",
+ "andel": "andel"
 }

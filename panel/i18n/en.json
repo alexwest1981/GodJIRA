@@ -458,5 +458,11 @@
  "just nu": "right now",
  "sessionstid": "session time",
  "händelser": "events",
- "enheter": "devices"
+ "enheter": "devices",
+ "land": "country",
+ "sida": "page",
+ "källa": "source",
+ "datum": "date",
+ "antal": "count",
+ "andel": "share"
 }

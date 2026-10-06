@@ -458,5 +458,11 @@
  "just nu": "gerade jetzt",
  "sessionstid": "Sitzungsdauer",
  "händelser": "Ereignisse",
- "enheter": "Geräte"
+ "enheter": "Geräte",
+ "land": "Land",
+ "sida": "Seite",
+ "källa": "Quelle",
+ "datum": "Datum",
+ "antal": "Anzahl",
+ "andel": "Anteil"
 }

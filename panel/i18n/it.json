@@ -458,5 +458,11 @@
  "just nu": "adesso",
  "sessionstid": "durata sessione",
  "händelser": "eventi",
- "enheter": "dispositivi"
+ "enheter": "dispositivi",
+ "land": "paese",
+ "sida": "pagina",
+ "källa": "fonte",
+ "datum": "data",
+ "antal": "quantità",
+ "andel": "quota"
 }

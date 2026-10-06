@@ -458,5 +458,11 @@
  "just nu": "ahora mismo",
  "sessionstid": "duración de sesión",
  "händelser": "eventos",
- "enheter": "dispositivos"
+ "enheter": "dispositivos",
+ "land": "país",
+ "sida": "página",
+ "källa": "fuente",
+ "datum": "fecha",
+ "antal": "cantidad",
+ "andel": "proporción"
 }

@@ -458,5 +458,11 @@
  "just nu": "nu",
  "sessionstid": "sessieduur",
  "händelser": "gebeurtenissen",
- "enheter": "apparaten"
+ "enheter": "apparaten",
+ "land": "land",
+ "sida": "pagina",
+ "källa": "bron",
+ "datum": "datum",
+ "antal": "aantal",
+ "andel": "aandeel"
 }
