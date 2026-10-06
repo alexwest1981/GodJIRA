@@ -24,7 +24,7 @@ import serva  # noqa: E402
 
 ROT = Path(__file__).resolve().parent
 SIDOR = {"index.html": "GodJIRA", "integritet.html": "Personuppgiftsansvarig",
-         "villkor.html": "MIT-licensen"}
+         "villkor.html": "AGPL-3.0"}
 UTANFOR = ("http://", "https://", "//cdn", "//fonts")
 
 kontroller: list[tuple[bool, str, str]] = []

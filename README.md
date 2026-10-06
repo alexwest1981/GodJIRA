@@ -845,3 +845,23 @@ qmllint -I /usr/share/omarchy/shell -I /usr/lib/qt6/qml BarWidget.qml
   from what is on screen is the one that does it in practice). A rebuild is only
   real when the data changed: assigning an equal-content array to the Repeater
   changes nothing, QML skips the update and the delegates survive.
+
+## License
+
+GodJIRA is free software under the **GNU Affero General Public License, version 3**
+(`LICENSE`) — © 2026 Alex Weström.
+
+AGPL is a deliberate choice rather than a permissive one: anyone may use, study, change and
+redistribute this program, but a derivative has to stay free. A modified GodJIRA has to be
+handed on with its source and on the same terms, and anyone who runs one as a service over a
+network has to offer that source to the service's users. Nobody gets to close it and call it
+their own. There are no third-party dependencies here, so the licence question is only about
+this repository's own code.
+
+**The name and the mark are not part of the licence.** A fork carries its own name and its own
+icon: "GodJIRA" and the Godzilla mark belong to this project's author, and no licence here
+grants any right to them. A registered trademark is a separate thing — this paragraph is a
+notice, not a registration.
+
+The AGPL text is unmodified, taken from SPDX's copy of the official licence; the copyright
+line above is the only thing this repository adds to it.
