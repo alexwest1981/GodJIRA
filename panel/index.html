@@ -493,15 +493,19 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   /* Äkta tabell för sajtens listor. Siffrorna är högerställda och i tabular-nums, så
      kolumnen går att läsa nedåt; stapelns längd är andelen av den största raden. */
   table.tal { width: 100%; border-collapse: collapse; font-size: 12.5px; table-layout: auto; }
-  table.tal th { padding: 2px 8px 4px 0; border-bottom: 1px solid var(--line-2); background: none;
+  table.tal th { padding: 2px 10px 4px 0; border-bottom: 1px solid var(--line-2); background: none;
                  color: var(--muted); font-size: 10.5px; font-weight: 500;
-                 text-transform: uppercase; letter-spacing: .06em; }
-  table.tal td { padding: 4px 8px 4px 0; border-bottom: 1px solid var(--line); vertical-align: middle; }
+                 text-transform: uppercase; letter-spacing: .06em; white-space: nowrap; }
+  /* Varannan rad tonad: ögat följer rätt rad över hela bredden i stället för att hoppa
+     mellan siffran och namnet. Samma ton som appens rad-hover. */
+  table.tal tr:nth-child(even) td {
+    background: light-dark(rgba(0, 0, 0, .028), rgba(255, 255, 255, .022)); }
+  table.tal td { padding: 5px 10px 5px 0; border-bottom: 1px solid var(--line); vertical-align: middle; }
   table.tal tr:last-child td { border-bottom: 0; }
   table.tal td:first-child { max-width: 200px; }
   table.tal th:nth-child(2) { width: 32%; }
   table.tal th.n, table.tal td.n { text-align: right; font-variant-numeric: tabular-nums;
-                                   width: 58px; padding-right: 0; }
+                                   width: 64px; min-width: 64px; padding-right: 0; white-space: nowrap; }
   table.tal .btrack { display: block; height: 8px; border-radius: 4px;
                       background: var(--line); overflow: hidden; }
   table.tal .btrack i { display: block; height: 100%; background: var(--accent); }
@@ -511,10 +515,17 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   .karta { position: relative; border: 1px solid var(--line-2); border-radius: 10px;
            overflow: hidden; background: var(--panel); }
   .karta img { display: block; width: 100%; height: auto; opacity: .5; }
-  .karta .punkter i { position: absolute; width: var(--s, 6px); height: var(--s, 6px);
+  /* Väljaren är .karta i -- inte .karta .punkter i: markupen har ingen sådan behållare, och
+     då träffade regeln ingenting alls (punkterna ritades som tomma inline-element, osynliga). */
+  .karta i { position: absolute; width: var(--s, 6px); height: var(--s, 6px);
     margin: calc(var(--s, 6px) / -2) 0 0 calc(var(--s, 6px) / -2);
     border-radius: 50%; background: var(--accent);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent); }
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+    transition: transform var(--t, .18s), box-shadow var(--t, .18s); }
+  /* Kartan och landslistan hör ihop: samma data-kod, och den ena lyser upp när man pekar
+     på den andra. */
+  .karta i.hot { transform: scale(1.7); box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 26%, transparent); }
+  table.tal tr.hot td { background: var(--card-hi); }
 
   /* ----------------------------------------------------------------- board */
   .cols { display: flex; flex-direction: column; gap: 20px; }
@@ -3058,7 +3069,9 @@ function siteDetail(s) {
       '<th class="n">' + esc("antal") + '</th><th class="n">' + esc("andel") + "</th></tr>" +
       par.map(r => {
         const n = Number(r[1]) || 0;
-        return "<tr><td>" + esc(r[0] || "/") + "</td>" +
+        // Tredje värdet är koden (bara landet har en). Den gör raden och kartans punkt till
+        // samma sak: pekar man på den ena lyser den andra.
+        return "<tr" + (r[2] ? ' data-kod="' + esc(r[2]) + '"' : "") + "><td>" + esc(r[0] || "/") + "</td>" +
           '<td class="del"><span class="btrack"><i style="width:' +
           Math.round(n / topp * 100) + '%"></i></span></td>' +
           '<td class="n">' + n + '</td><td class="n">' + Math.round(n / summa * 100) + " %</td></tr>";
@@ -3105,6 +3118,7 @@ function siteDetail(s) {
         `<i style="--s:${Math.min(20, 6 + (Number(x[2]) || 1) * 2)}px;` +
         `left:${(((Number(x[1]) + 180) / 360) * 100).toFixed(2)}%;` +
         `top:${(((90 - Number(x[0])) / 180) * 100).toFixed(2)}%" ` +
+        `data-kod="${esc(x[3] || "")}" ` +
         `title="${esc((x[3] ? x[3] + " · " : "") + (Number(x[2]) || 0) + " personer")}"></i>`).join("") +
       "</div>"
     : "";
@@ -4982,6 +4996,16 @@ document.addEventListener("click", e => {
     }
   }
   if (e.target.closest('[data-act="refresh"]')) return load(true);
+  // Kartan och landslistan hör ihop: samma data-kod, och den ena lyser upp när man pekar på
+  // den andra. Ett attribut är allt de delar -- ingen tabell över namn till punkter att hålla
+  // reda på, och inget som kan bli inaktuellt.
+  if (e.type === "mouseover" || e.type === "mouseout") {
+    const mal = e.target.closest && e.target.closest("[data-kod]");
+    const kod = mal && mal.dataset ? mal.dataset.kod : "";
+    if (kod) document.querySelectorAll('[data-kod="' + kod + '"]')
+      .forEach(el => el.classList.toggle("hot", e.type === "mouseover"));
+    return;
+  }
   const dag = e.target.closest('[data-act="sites-dagar"]');
   if (dag) { SITES.dagar = Number(dag.dataset.dagar) || 14; return siteLoad(true); }
   const lay = e.target.closest('[data-act="lay"]');

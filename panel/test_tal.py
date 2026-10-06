@@ -29,9 +29,23 @@ t("stapelns längd är värdet", h.includes("width:100%") && h.includes("width:5
 t("procenten är andelen av summan", h.includes(">67 %<") && h.includes(">33 %<"));
 t("siffrorna står i egna celler", h.includes('class="n">8<') && h.includes('class="n">4<'));
 t("tom lista ger ingen tabell", rader([], "namn") === "" && rader(null) === "");
+const k = rader([["Sweden", 12, "SE"]], "land");
+t("landet får sin kod på raden", k.includes('data-kod="SE"'));
+t("en rad utan kod får inget attribut", !h.includes("data-kod"));
 """.format(t=(ESC.group(0) + RADER.group(0)) if (ESC and RADER) else "")
 
-ANTAL = 6
+ANTAL = 8
+
+# Kartans punkter: regeln måste peka på något markupen faktiskt skriver. Första versionen
+# letade efter en .punkter-behållare som aldrig fanns, så punkterna ritades som tomma
+# inline-element -- osynliga -- medan listan bredvid visade länder.
+# Kommentarer skalas av först: den här filens egna kommentarer nämner felet, och ett prov
+# som fälls av sin egen förklaring är inget prov.
+KOD = re.sub(r"^\s*//.*$", "", re.sub(r"/\*.*?\*/", "", HTML, flags=re.S), flags=re.M)
+STIL = [
+    (".karta i {" in KOD, "punkterna har en regel som träffar dem (.karta i)"),
+    (".karta .punkter" not in KOD, "ingen regel pekar på en klass markupen inte skriver"),
+]
 
 
 def main() -> int:
@@ -42,15 +56,18 @@ def main() -> int:
     rader = [r for r in kord.stdout.strip().splitlines() if r.strip()]
     for rad in rader:
         print("  " + ("ok   " if rad.startswith("OK") else "FAIL ") + rad[3:])
+    for ok, vad in STIL:
+        print("  " + ("ok   " if ok else "FAIL ") + vad)
     if kord.stderr.strip():
         print("node: " + kord.stderr.strip()[:300])
+    fel = [r[3:] for r in rader if not r.startswith("OK")] + [vad for ok, vad in STIL if not ok]
     if len(rader) != ANTAL:
-        print("FAILED: %d prov kördes, väntade %d" % (len(rader), ANTAL))
+        fel.append("%d prov kördes, väntade %d" % (len(rader), ANTAL))
+    if fel:
+        print("FAILED: " + ", ".join(fel))
         return 1
-    if any(not r.startswith("OK") for r in rader):
-        print("FAILED: " + ", ".join(r[3:] for r in rader if not r.startswith("OK")))
-        return 1
-    print("all good: tabellerna har rubrikrad, proportionerliga staplar och procent")
+    print("all good: tabellerna har rubrikrad, proportionerliga staplar och procent, "
+          "och kartans punkter syns")
     return 0
 
 

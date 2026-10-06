@@ -331,13 +331,16 @@ def trafik(vardar, dagar=14, fraga=hogql):
                          "count(DISTINCT person_id) FROM events WHERE " + vards
                          + " AND timestamp > '" + sedan + "' GROUP BY 1,2,3,4 ORDER BY 5 DESC LIMIT 40"))
     if geo and geo != MISSLYCKAT:
-        länder, punkter = {}, []
+        länder, koder, punkter = {}, {}, []
         for namn, kod, lat, lon, antal in geo:
             if not namn or lat is None or lon is None:
                 continue
             länder[str(namn)] = länder.get(str(namn), 0) + int(antal)
+            koder[str(namn)] = str(kod or "")
             punkter.append([round(float(lat), 2), round(float(lon), 2), int(antal), str(kod or "")])
-        ut["lander"] = sorted(länder.items(), key=lambda rad: -rad[1])[:8]
+        # Landet far sin kod med sig: det ar den kartans punkter och listans rader delar.
+        ut["lander"] = [[namn, antal, koder.get(namn, "")]
+                        for namn, antal in sorted(länder.items(), key=lambda rad: -rad[1])[:8]]
         ut["punkter"] = punkter
     ut["toppSidor"] = forsok(fraga, "SELECT properties.$pathname, count() " + bas
                              + " GROUP BY 1 ORDER BY 2 DESC LIMIT 5") or []
@@ -791,7 +794,7 @@ def selftest():
     assert t["enheter"] == [["Mobile", 5], ["Desktop", 3]], t
     assert t["sessionSekunder"] == 83, t
     assert t["undantag"] == 2 and t["live"] == 3, t
-    assert t["lander"] == [("Sweden", 5), ("United States", 4)], t["lander"]
+    assert t["lander"] == [["Sweden", 5, "SE"], ["United States", 4, "US"]], t["lander"]
     assert t["punkter"] == [[57.7, 11.97, 5, "SE"], [41.26, -95.85, 4, "US"]], t["punkter"]
 
     # Uteblir svaret skall fältet vara BORTA, inte noll: en nolla ser ut som ett svar.

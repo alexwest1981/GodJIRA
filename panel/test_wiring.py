@@ -590,6 +590,19 @@ console.log(lines.join("\\n"));
           "kartan på /world.svg är kartan, inte märket")
     check(b'viewBox="0 0 360 180"' in karta and b'viewBox="0 0 360 180"' not in marke,
           "kartan har kartans egen ram -- 360x180 grader, som punkterna räknas i")
+
+    # Vändningen, matt mot världen själv: Antarktis är det enda land som går runt hela jorden,
+    # så det skall ligga som en fullbredds-remsa i nederkant. Förut låg den i överkant, och då
+    # hamnade Alex i Australien.
+    grader = [tuple(map(float, p.split())) for p in
+              re.findall(r"-?\d+\.\d+ -?\d+\.\d+", karta.decode("utf-8", "replace").split('d="', 1)[1])]
+    nederst = [p for p in grader if p[1] > 171]
+    check(len(nederst) > 100 and (max(x for x, _ in nederst) - min(x for x, _ in nederst)) > 300,
+          "Antarktis ligger i nederkant -- kartan är inte uppochner")
+    for namn, lat, lon in (("Stockholm", 59.33, 18.07), ("Sydney", -33.87, 151.21)):
+        x, y = lon + 180, 90 - lat
+        check(any(abs(px - x) < 6 and abs(py - y) < 6 for px, py in grader),
+              "%s ligger på land på kartan" % namn)
     print()
     if failed:
         print("FAILED: " + ", ".join(failed))
