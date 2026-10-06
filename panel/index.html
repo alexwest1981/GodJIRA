@@ -301,44 +301,18 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   .empty { color: var(--text-2); font-size: 12.5px; padding: 3px 0; }
   .err { color: var(--red); }
 
-  /* ------------------------------------------------------------ icon rail */
-  .rail {
-    /* Riktig sidebar, inte en ikonrad: ikon och etikett på samma rad, etiketterna i en
-       kolumn. Den gamla raden staplade glyf över text och centrerade allt -- glyferna
-       (⌥ ⇪ ⚑) har olika bredd, så raderna hamnade snett, och ⚙ ritades som färgemoji.
-       Ikonerna är SVG nu: samma ruta, samma vikt, ingen typsnittsroulette. */
-    width: 176px; flex: 0 0 176px; background: var(--rail); border-right: 1px solid var(--line);
-    align-items: stretch; gap: 2px; padding: 12px 10px; height: 100%;
+  /* En navigering. Rälens två roller tog sidofältet över: märket är en liten mask i
+     huvudet, och avdelningarna är rubriker med sin ikon i stället för egna ikonrader.
+     Kvar blir en kolumn som säger både var man är och vad som finns -- och 176 px
+     bredd till innehållet. */
+  .side .head .mark {
+    position: relative; flex: 0 0 26px; width: 26px; height: 22px;
   }
-  .rail .mark {
-    /* Rutan ÄR logotypen: masken fyller den, så måttet går att mäta i webbläsaren i
-       stället för att räknas fram. Rälens egen padding (10 px) och gapet (2 px) ingår
-       i marginalerna: 8 + 12 = 20 px ovanför, 38 + 2 = 40 px under. Bredden 136 px
-       lämnar 20 px luft till var sida (176 - 2x20). */
-    position: relative;
-    width: 136px; height: 106px;
-    align-self: center; margin: 8px 0 38px;
-  }
-  /* Rälens märke målas i stället för att filtreras: en mask lägger formen, färgen kommer
-     från --text (nära svart i ljust, nära vitt i mörkt). Ett filter hade färgat hela
-     rutan, chippet inräknat. */
-  .rail .mark::before {
+  .side .head .mark::before {
     content: ""; position: absolute; inset: 0; background-color: var(--text);
     -webkit-mask: url(/godjira.svg) center / contain no-repeat;
     mask: url(/godjira.svg) center / contain no-repeat;
   }
-  .railitem {
-    /* Ikonkolumn på fast bredd: där den börjar börjar varje etikett, och det är hela
-       skillnaden mot förut. Hela raden är hover-yta, inte bara orden. */
-    display: grid; grid-template-columns: 22px 1fr; align-items: center; gap: 10px;
-    width: 100%; padding: 7px 9px; border-radius: 8px;
-    color: var(--muted); cursor: pointer; font-size: 10px; letter-spacing: .04em; text-transform: uppercase;
-  }
-  .railitem .g { display: flex; align-items: center; justify-content: center; width: 22px; height: 16px; }
-  .railitem .n { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-  .railitem:hover { background: var(--panel); color: var(--text-2); }
-  .railitem.on { background: var(--panel); color: var(--text); }
-  .railitem.on .g { color: var(--accent); }
 
   /* -------------------------------------------------------------- sidebar */
   .side {
@@ -363,7 +337,18 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   .item:hover { background: var(--panel); color: var(--text); }
   .item.on { background: var(--card-hi); color: var(--text); }
   .item .c { margin-left: auto; color: var(--muted); font-size: 11.5px; }
-  .sect { margin: 14px 0 4px; padding: 0 9px; font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); }
+  .sect { display: flex; align-items: center; gap: 6px; margin: 14px 0 4px; padding: 0 9px; font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); cursor: pointer; user-select: none; }
+  .sect:hover { color: var(--text-2); }
+  /* Pilen är ritad, inte en glyf: två kanter blir en triangel, och den vrids i lagret. */
+  .sect .pil { margin-left: auto; width: 0; height: 0; border-left: 4px solid currentColor;
+               border-top: 3.5px solid transparent; border-bottom: 3.5px solid transparent;
+               transform: rotate(90deg); }
+  .sect.falt .pil { transform: rotate(0deg); }
+  /* Ihopfälld grupp försvinner helt. Ingen [hidden] här: en display-regel på elementet
+     vinner över den, och då syns raderna fast de är fällda. */
+  .grupp.falt { display: none; }
+  .sect .g { display: flex; color: var(--muted); }
+  .sect .g svg { width: 12px; height: 12px; }
   /* Foten ligger alltid sist i sidofältet (flex-kolumnen), med ett streck ovanför:
      panelens egna inställningar skall inte läsas som en avdelning i arbetet. */
   .fot { margin-top: auto; padding-top: 10px; border-top: 1px solid var(--line); }
@@ -591,11 +576,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
       radial-gradient(1080px 520px at 10% -10%, var(--glow), transparent 62%),
       radial-gradient(820px 460px at 102% -6%, var(--glow-2), transparent 60%);
   }
-  .rail, .side, main { position: relative; z-index: 1; }
-  .rail {
-    background: color-mix(in srgb, var(--rail) 82%, transparent);
-    backdrop-filter: blur(14px);
-  }
+  .side, main { position: relative; z-index: 1; }
   .side { background: color-mix(in srgb, var(--side) 94%, transparent); }
   .panel, .stat, .facts .f, .site-card, .card {
     background-image: linear-gradient(180deg, var(--toplite), transparent 46%);
@@ -660,7 +641,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
 
     /* 1. Allt tryckbart rör sig likadant: färg snabbt, lyft långsamt. Fokusringen
        ägs redan av :focus-visible längre upp -- den rör vi inte här. */
-    button, .ghost, .seg button, .railitem, .inp, .facts .f, .card, .say,
+    button, .ghost, .seg button, .item, .inp, .facts .f, .card, .say,
     .stat, .site-card, tr td, .panel {
       transition: background-color var(--t-fast) var(--ease),
                   border-color var(--t-fast) var(--ease),
@@ -668,7 +649,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
                   box-shadow var(--t) var(--ease),
                   transform var(--t-fast) var(--ease);
     }
-    button:active, .ghost:active, .seg button:active, .railitem:active {
+    button:active, .ghost:active, .seg button:active, .item:active {
       transform: translateY(.5px);
     }
 
@@ -681,8 +662,10 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
        ritas som skugga, inte som pseudo-element, så inga marginaler rörs. */
     .wl .r:hover { background: var(--card-hi); box-shadow: inset 2px 0 0 var(--accent); }
 
-    /* 4. Räl och flikar: aktiv rad får samma kant, så läget syns på formen. */
-    .railitem.on { box-shadow: inset 2px 0 0 var(--accent); }
+    /* 4. Navigeringen: aktiv rad får en accentkant, och rubrikens pil vrids när
+       avdelningen fälls ihop -- en rörelse som svarar på ett klick, inte dekoration. */
+    .item.on { box-shadow: inset 2px 0 0 var(--accent); }
+    .sect .pil { transition: transform var(--t) var(--ease); }
     .seg button.on { box-shadow: inset 0 -2px 0 var(--accent); }
 
     /* 5. Entrén: varje vy tonar in underifrån, i en trappa så ögat hinner med.
@@ -722,7 +705,6 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   </div>
 </div>
 
-<nav class="rail col" id="rail"></nav>
 <aside class="side col" id="side"></aside>
 
 <main>
@@ -1440,21 +1422,23 @@ const DELNAMN = { flodet: "Flödet", github: "GitHub", agenterna: "Agenterna",
 // Foten: panelens egna inställningar. De hör till panelen, inte till arbetet, och skall
 // därför inte ligga bland de vanliga valen.
 const FOT = ["settings", "admin", "setup"];
+// Ihopfällda avdelningar. Sidofältet ritas om vid varje hämtning (varje minut), så valet
+// MÅSTE bo utanför ritningen -- annars fäller nästa hämtning upp allt igen. Samma
+// try/catch-vana som panelens övriga val (tema, ordning, avstängningar).
+const FALL_KEY = "godjira-ihopfallt";
+const fallna = () => {
+  try { return new Set(JSON.parse(localStorage.getItem(FALL_KEY) || "[]")); } catch { return new Set(); }
+};
+const vik = (namn) => {
+  const s = fallna();
+  s.has(namn) ? s.delete(namn) : s.add(namn);
+  try { localStorage.setItem(FALL_KEY, JSON.stringify([...s])); } catch { /* utan lagring */ }
+  renderSide();
+};
 
-function renderRail() {
-  const synliga = Object.fromEntries(navViews());
-  // Rälen är fyra avdelningar, inte tolv ikoner. Inställningarna ligger i sidofältets
-  // fot, alltså finns "systemet" inte här -- annars vore de två dörrar till samma rum.
-  document.getElementById("rail").innerHTML = `<div class="mark" title="GodJIRA"></div>` +
-    RAIL.filter(([namn]) => namn !== "systemet").map(([namn, vyer]) => {
-      const har = vyer.filter(v => synliga[v]);
-      if (!har.length) return "";
-      return `<div class="railitem ${har.includes(view) ? "on" : ""}" data-v="${har[0]}" ` +
-        `title="${esc(DELNAMN[namn])}"><span class="g">${ICONS[har[0]] || ""}</span>` +
-        `<span class="n">${esc(DELNAMN[namn])}</span></div>`;
-    }).join("");
-  applyLayout();   // rälen ritas om vid varje hämtning: valet måste på igen
-}
+// Rälen är borta: navigeringen är sidofältet, och avdelningarna är dess rubriker.
+// Kvar av rälen är märket (i huvudet) och ikonerna (på rubrikerna) -- meningen fanns i
+// innehållet, inte i att ha två kolumner som sade samma sak.
 
 // Repolistan bor i sidofältet, för 59 rader i huvudrutan blev 50 m skroll innan
 // detaljen. Sökningen filtrerar raderna på plats i stället för att rita om: ett
@@ -1503,21 +1487,33 @@ function renderSide() {
       <div class="sub repolist" id="repoList">${repoRows()}</div>
     </div>`;
   const sammanhang = { flodet: jira, github: github };
+  const falt = (namn) => fallna().has(namn);
+  // Rubriken ÄR knappen: pilen visar läget, aria-expanded säger det till skärmläsaren,
+  // och data-fall bär namnet som klicket letar efter.
+  const rubrik = (namn, ikon) =>
+    `<div class="sect${falt(namn) ? " falt" : ""}" data-fall="${namn}" role="button" tabindex="0" ` +
+    `aria-expanded="${!falt(namn)}"><span class="g">${ICONS[ikon] || ""}</span>` +
+    `${esc(DELNAMN[namn] || namn)}<span class="pil" aria-hidden="true"></span></div>`;
+  const grupp = (namn, innehall) =>
+    `<div class="grupp${falt(namn) ? " falt" : ""}">${innehall}</div>`;
   const avdelningar = RAIL.filter(([namn]) => namn !== "systemet").map(([namn, vyer]) => {
-    const rader = vyer.filter(v => synliga[v]).map(rad).join("");
+    const har = vyer.filter(v => synliga[v]);
+    const rader = har.map(rad).join("");
     if (!rader && !sammanhang[namn]) return "";
-    return `<div class="sect">${esc(DELNAMN[namn] || namn)}</div>` + rader + (sammanhang[namn] || "");
+    // Rubriken bär avdelningens ikon (kvar från rälen) och en pil: den går att fälla ihop,
+    // och då försvinner allt under den -- repolistan, projektets genvägar, allt.
+    return rubrik(namn, har[0]) + grupp(namn, rader + (sammanhang[namn] || ""));
   }).filter(Boolean).join("");
   // Foten: panelens egna inställningar, avskilda från arbetet. Inställningarna först, för
   // det är den man letar efter; admin och setup följer med när de finns.
   const fot = FOT.filter(v => synliga[v]).map(rad).join("");
   document.getElementById("side").innerHTML = `
-    <div class="head"><b>GodJIRA</b><span class="grow"></span>
+    <div class="head"><span class="mark" title="GodJIRA"></span><b>GodJIRA</b><span class="grow"></span>
       <button class="ghost" title="hämta färskt" data-act="refresh">↻</button></div>
     ${avdelningar}
     <div class="who">${esc((j.account || {}).displayName || "")}<br>
       <span class="key">${esc((j.account || {}).email || "")}</span><br>${esc(j.mode || "")} · uppdaterad ${hhmm()}</div>
-    <div class="fot">${fot}</div>`;
+    <div class="fot">${rubrik("systemet", "settings")}${grupp("systemet", fot)}</div>`;
 }
 
 function renderCrumbs() {
@@ -1707,7 +1703,7 @@ function hiddenNow() {
 function applyLayout() {
   const off = new Set(hiddenNow());
   for (const el of document.querySelectorAll("[data-ov]")) el.hidden = off.has("ov:" + el.dataset.ov);
-  for (const el of document.querySelectorAll(".railitem[data-v]")) {
+  for (const el of document.querySelectorAll(".side .item[data-v]")) {
     if (!LOCKED_VIEWS.includes(el.dataset.v)) el.hidden = off.has("view:" + el.dataset.v);
   }
   applyOrder();
@@ -4681,7 +4677,7 @@ function renderNeeds() {
 
 function render() {
   if (!STATE) return;
-  renderRail(); renderSide(); renderCrumbs(); renderFilters(); renderItemProject();
+  renderSide(); renderCrumbs(); renderFilters(); renderItemProject();
   renderTokenAlert(); renderSettings(); renderTheme();
   if (view === "insights") renderInsights();
   if (view === "sites") renderSites();
@@ -4872,6 +4868,10 @@ document.addEventListener("dragend", () => {
 });
 
 document.addEventListener("click", e => {
+  // Rubriken i sidofältet fäller ihop sin avdelning. Först i hanteraren: en rubrik är
+  // ingen vy, så klicket skall aldrig bära vidare till något annat.
+  const rubrik = e.target.closest && e.target.closest("[data-fall]");
+  if (rubrik) { vik(rubrik.dataset.fall); return; }
   // Raderna i kunskapsgrafen öppnar nästa enhet -- men länken inuti raden (ärendenyckeln)
   // skall öppna Jira. Bara länkar som NAVIGERAR går före: bakåt och stäng är ankare utan
   // href, och en vakt på varje <a> svalde deras klick (mätt: bakåt gjorde ingenting).

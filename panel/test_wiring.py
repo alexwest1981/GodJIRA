@@ -413,10 +413,13 @@ console.log(bad.length ? "FEL " + bad.join(" | ") : "OK");
           "the repo page has tabs and the map is one of them")
     check('karta: ["Karta"' not in html and 'if (v === "karta")' in html,
           "the map left the rail, and its old route still lands")
-    # Rälen: en ikonkolumn med fast bredd, och en ikon per vy. Mätt i den skarpa panelen:
-    # alla nio etiketterna börjar på samma x (51), ikonrutorna är 16x16, inget svämmar
-    # över. Utan ikon ritas raden utan märke, och raderna hamnar snett igen.
-    check("grid-template-columns: 22px 1fr" in html, "the rail is an icon column, not a stack")
+    # Navigeringen är EN kolumn. Rälens ikonkolumn bor nu i sidofältets rader: ikonen har
+    # en fast ruta, så etiketterna börjar på samma x. Utan den ritas raden utan märke och
+    # raderna hamnar snett igen (mätt: alla etiketter på samma x i den skarpa panelen).
+    check(".item .g { width: 15px" in html,
+          "the one navigation is a column: every icon sits in the same box, so labels line up")
+    check('id="rail"' not in html and "renderRail" not in html and ".railitem" not in html,
+          "det finns en navigering, inte två (rälen är borta, inte bara tömd)")
     vblock = html.split("views: {", 1)[1].split("},", 1)[0]
     vkeys = set(re.findall(r"(\w+):\s*\[", vblock))
     ikeys = set(re.findall(r"^\s{2}(\w+):\s*'<svg", html, re.M))
@@ -466,8 +469,14 @@ console.log(bad.length ? "FEL " + bad.join(" | ") : "OK");
           "samma import kör både den buffrade vägen och strömmen")
     check("const RAIL = [" in html and "const DELNAMN = {" in html
           and 'RAIL.filter(([namn]) => namn !== "systemet")' in html
+          and '<span class="pil"' in html
           and "Object.fromEntries(navViews())" in html,
-          "rälen är avdelningar (en tabell), inställningarna är inte en egen avdelning, och behörigheten bestämmer vad som syns")
+          "avdelningarna är rubriker i sidofältet (en tabell, med sin ikon), inställningarna är ingen avdelning, och behörigheten bestämmer vad som syns")
+    check('data-fall="' in html and 'role="button"' in html and "const FALL_KEY =" in html
+          and "const vik = (namn) => {" in html and "renderSide();" in html.split("const vik")[1][:200],
+          "varje del i sidofältet går att fälla ihop, och valet ligger utanför ritningen")
+    check(".grupp.falt { display: none; }" in html and 'closest("[data-fall]")' in html,
+          "ihopfälld grupp försvinner (utan [hidden], som en display-regel hade vunnit över)")
     check("const FOT = [" in html and '<div class="fot">' in html
           and "margin-top: auto" in html and "FOT.filter(v => synliga[v]).map(rad)" in html,
           "inställningarna ligger sist i sidofältet, i sin egen fot")
