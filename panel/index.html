@@ -193,7 +193,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   .gbar.sprint.on { background: var(--accent); color: var(--bg); }
 
   .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 10px; }
-  .facts .f { border: 1px solid var(--line); border-radius: 10px; padding: 17px 18px; min-height: 118px; background: var(--card); }
+  .facts .f { border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; background: var(--card); }
   /* Långa commit-budskap skall bryta, inte trycka ihop sig med datumet intill. */
   .r .t { min-width: 0; overflow-wrap: anywhere; }
   .r .tside { flex: 0 0 auto; margin-left: 12px; }
@@ -204,8 +204,14 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
      bättre än att bryta mitt i ett ord. */
   .facts .v { color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   h3 .meta { white-space: normal; }
-  .facts .f .l { font-size: 11px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
-  .facts .f .v { font-size: 22px; font-weight: 650; letter-spacing: -.04em; margin-top: 8px; overflow: hidden; text-overflow: ellipsis; }
+  .facts .f .l { font-size: 10px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+  /* Mockens statistikruta hor bara KPI-raderna till. Att lagga den pa allt .facts gjorde
+     textrutorna i Admin (varden är meningar, inte tal) for trang -- texten klipptes och
+     rutorna vaxte pa hojden i stallet. Darfor: stora rutor bara med .kpi. */
+  .facts.kpi .f { border-radius: 10px; padding: 17px 18px; min-height: 118px; }
+  .facts.kpi .f .l { font-size: 11px; }
+  .facts.kpi .f .v { font-size: 22px; font-weight: 650; letter-spacing: -.04em; margin-top: 8px; }
+  .facts .f .v { font-size: 13px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; }
   /* Kartan i repodetaljen: rutan under kopplingen. Luckorna ligger överst -- det är
      dem man tittar efter -- och listorna är täta, för de är långa. */
   .scanbox { margin-top: 16px; border: 1px solid var(--line); border-radius: 10px;
@@ -570,6 +576,10 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
     display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
   }
   .card .c2 { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; min-width: 0; margin-top: auto; }
+  /* Etiketterna i kortets fotrad får inte krympa. Utan det krymper flex dem till en flisa så
+     snart raden är trång -- "SCRUM Sprint 4: AutoCore 3.0" kapas till ett par tecken, och
+     prioritetsmarkeringen trycks ner på egen rad. Raden bryter hellre: flex-shrink 0. */
+  .card .c2 > * { flex: 0 0 auto; max-width: 100%; }
   .typeg { font-size: 12px; line-height: 1; }
 
   .avatar {
@@ -798,7 +808,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
         <h3>Agenterna <span class="meta" id="agentsMeta"></span></h3>
         <div class="body">
           <div class="orbs" id="agentsOrbs"></div>
-          <div class="facts" id="agentsFacts"></div>
+          <div class="facts kpi" id="agentsFacts"></div>
           <div class="bars" id="agentsSources"></div>
         </div>
       </div>
@@ -835,7 +845,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
     </section>
 
     <section class="view" id="v-sites">
-      <div class="facts" id="siteTotals"></div>
+      <div class="facts kpi" id="siteTotals"></div>
       <div class="panel">
         <h3>Sites <span class="meta" id="sitesMeta"></span></h3>
         <div class="body"><div class="tablewrap"><table id="sitesTable"></table></div></div>
@@ -2888,7 +2898,7 @@ async function insightLoad() {
   renderInsights();
 }
 
-const kpi = rows => '<div class="facts">' + rows.map(([label, value, note]) =>
+const kpi = rows => '<div class="facts kpi">' + rows.map(([label, value, note]) =>
   `<div class="f"><div class="l">${esc(label)}</div><div class="v">${value}` +
   ` <span class="meta">${esc(note)}</span></div></div>`).join("") + '</div>';
 
