@@ -1521,8 +1521,11 @@ function renderSide() {
   const antal = { items: all + ghItems().length, board: open, import: IMP.created.length || "" };
   // En rad per vy, med etikett och ikon ur samma tabell som rälen läser. Är vyn inte
   // tillåten (behörigheten) ritas ingen rad -- meningen med en meny är det som går att välja.
+  // Ikonen tas ur ICONS först, precis som flikarna gör: glyfen i TEXT.views är en reserv.
+  // Två av dem (☑ och ⚙) ritas som färgade emoji av teckensnittet, och då bröt raden mot
+  // regeln att ikonerna är vita och monokroma.
   const rad = v => synliga[v] ? `<div class="item ${v === view ? "on" : ""}" data-v="${v}">` +
-    `<span class="g">${synliga[v][1] || ""}</span>${esc(synliga[v][0])}` +
+    `<span class="g">${ICONS[v] || synliga[v][1] || ""}</span>${esc(synliga[v][0])}` +
     (antal[v] ? `<span class="c">${antal[v]}</span>` : "") + `</div>` : "";
   // Sammanhanget hör till sin avdelning: projektet och dess genvägar under Flödet, repona
   // under GitHub. Det är inte egna vyer, därför står de här och inte i menyn.

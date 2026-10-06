@@ -491,6 +491,10 @@ console.log(bad.length ? "FEL " + bad.join(" | ") : "OK");
     # Två sorters rubrik, och skillnaden är vad som finns under dem.
     # Med rader: hela rubriken fäller (data-fall), och då ligger ALLA vyerna i undermenyn.
     # Utan rader: rubriken navigerar (data-v), och har ingen pil -- inget att fälla.
+    # Ikonerna kommer ur ICONS (monokroma svg), inte ur glyfen i TEXT.views: två av glyferna
+    # (☑ och ⚙) ritas som färgade emoji, och då blev "Mina uppgifter" blå/vit.
+    check("${ICONS[v] || synliga[v][1]" in html,
+          "menyradernas ikoner tas ur ICONS, så ingen glyf ritas som färgad emoji")
     check("const newest = (((STATE.github" not in html and "Inget valt: visa listan" in html
           and 'class="r" data-repo=' in html,
           "Repon är listan: inget repo öppnas av sig självt, och tomma läget visar repolistan")
