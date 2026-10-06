@@ -29,19 +29,19 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
        #f9f9f9. Stegen klättrar fortfarande uppåt, och texten mörknar något
        (#1a1e1d) så svart-på-vitt-glansen försvinner. Accenten mörknades ett steg
        (#007d61 -> #00775c) för att hålla 4,5:1 mot den nya kanvasen. */
-    --bg: light-dark(#e7eae9, #08090b);
-    --rail: light-dark(#ecefee, #0e1113);
-    --side: light-dark(#f2f4f3, #131719);
-    --panel: light-dark(#f4f6f5, #171c1f);
-    --card: light-dark(#fdfdfc, #1c2226);
-    --card-hi: light-dark(#f3f5f4, #232a2e);
+    --bg: light-dark(#e3ebe7, #070c0a);
+    --rail: light-dark(#e9f0ed, #0c1412);
+    --side: light-dark(#eef4f1, #111b18);
+    --panel: light-dark(#f1f7f4, #15211d);
+    --card: light-dark(#fbfefc, #1a2722);
+    --card-hi: light-dark(#eff5f2, #212f29);
     --line: light-dark(#dfe3e1, #222a2e);
     --line-2: light-dark(#d5d9d7, #2c3439);
     --line-3: light-dark(#c9cecb, #38424a);
     --text: light-dark(#1a1e1d, #e8eef1);
     --text-2: light-dark(#3c4240, #c3ccd1);
     --muted: light-dark(#5a605e, #9fabb2);
-    --accent: light-dark(#00775c, #1cc09d);
+    --accent: light-dark(#00775c, #23c7a5);
     --navy: #1a6ba8; --green: light-dark(#25743b, #7bcf6a);
     --amber: light-dark(#973c00, #e0a33e); --red: light-dark(#a5261d, #e5545f);
     /* Mörkt läge, andra rampen: kanvasen djupare (#0f0f10 -> #08090b) och kortet ett steg
@@ -52,8 +52,8 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
     --shadow: light-dark(0 1px 2px rgba(16, 24, 22, .07), 0 12px 28px -14px rgba(0, 0, 0, .75));
     --edge: light-dark(rgba(255, 255, 255, .9), rgba(255, 255, 255, .05));
     --toplite: light-dark(rgba(255, 255, 255, 0), rgba(255, 255, 255, .055));
-    --glow: light-dark(rgba(0, 119, 92, .05), rgba(28, 192, 157, .17));
-    --glow-2: light-dark(rgba(26, 107, 168, .05), rgba(77, 141, 246, .10));
+    --glow: light-dark(rgba(0, 119, 92, .20), rgba(35, 199, 165, .30));
+    --glow-2: light-dark(rgba(26, 107, 168, .07), rgba(77, 141, 246, .17));
     --r: 10px;
     /* Rörelsen. Före detta fanns tre transitioner och en keyframe i tolv vyer, och
        varje ny knapp hittade på sin egen tid. Tiderna bor här, reglerna ligger i
@@ -202,7 +202,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   [hidden] { display: none !important; }
   /* Långa värden (sökvägar, reponamn) klipps på en rad med hela värdet i title --
      bättre än att bryta mitt i ett ord. */
-  .facts .v { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .facts .v { color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   h3 .meta { white-space: normal; }
   .facts .f .l { font-size: 10px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
   .facts .f .v { font-size: 13px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; }
@@ -343,11 +343,11 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
      bär ett streck -- tredje nivån syns utan att någon text behöver säga det. */
   .grupp > .item { padding-left: 27px; }
   .item:hover .g { color: var(--text-2); }
-  .item.on .g { color: var(--text); }
+  .item.on .g { color: var(--accent); }
   .item:hover { background: var(--panel); color: var(--text); }
-  .item.on { background: var(--card-hi); color: var(--text); }
+  .item.on { background: color-mix(in oklch, var(--accent) 32%, var(--card-hi)); color: var(--accent); }
   .item .c { margin-left: auto; color: var(--muted); font-size: 11.5px; }
-  .sect { display: flex; align-items: center; gap: 6px; margin: 14px 0 4px; padding: 0 9px; font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); cursor: pointer; user-select: none; }
+  .sect { display: flex; align-items: center; gap: 6px; margin: 14px 0 4px; padding: 0 9px; font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--accent); cursor: pointer; user-select: none; }
   .sect:hover { color: var(--text-2); }
   /* Pilen är ritad, inte en glyf: två kanter blir en triangel, och den vrids i lagret. */
   .sect .pil { margin-left: auto; width: 0; height: 0; border-left: 4px solid currentColor;
@@ -629,8 +629,8 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   body::before {
     content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
     background:
-      radial-gradient(1080px 520px at 10% -10%, var(--glow), transparent 62%),
-      radial-gradient(820px 460px at 102% -6%, var(--glow-2), transparent 60%);
+      radial-gradient(1500px 720px at 12% -12%, var(--glow), transparent 64%),
+      radial-gradient(1150px 620px at 104% -6%, var(--glow-2), transparent 62%);
   }
   .side, main { position: relative; z-index: 1; }
   .side { background: color-mix(in srgb, var(--side) 94%, transparent); }
