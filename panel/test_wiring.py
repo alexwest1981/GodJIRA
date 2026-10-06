@@ -488,10 +488,16 @@ console.log(bad.length ? "FEL " + bad.join(" | ") : "OK");
     # Rubriken är en rad: klicket går till avdelningens första vy (GitHub -> Repon), pilen
     # fäller, och en avdelning med en enda vy får ingen dubbelrad under sig. Förut kostade
     # GitHub tre klick till repolistan, och Agenterna/Agenten var två namn för samma sak.
-    check("har.length === 1" in html and "har.slice(1)" in html
+    # Två sorters rubrik, och skillnaden är vad som finns under dem.
+    # Med rader: hela rubriken fäller (data-fall), och då ligger ALLA vyerna i undermenyn.
+    # Utan rader: rubriken navigerar (data-v), och har ingen pil -- inget att fälla.
+    check("genvag" in html and "har.length === 1 && !sammanhang[namn]" in html
+          and "har.map(rad).join" in html
           and 'data-fall="${namn}"' in html and 'data-v="${vy}"' in html,
-          "rubriken är en rad: klicket går till avdelningens första vy, pilen fäller ihop, "
-          "och en avdelning med en enda vy får ingen dubbelrad under sig")
+          "rubriken med rader under sig fäller (och har då alla vyerna där), rubriken utan "
+          "rader under sig navigerar -- och har ingen pil")
+    check('show("overview")' in html and "show(readHash())" in html.split("hashchange")[1],
+          "appen startar alltid i Overview, men bakåt/framåt i sessionen går via adressen")
     check('data-v="board"><span class="g">▤</span>' not in html,
           "tavlan står inte både i menyn och som genväg (samma mål i två ordförråd)")
 
