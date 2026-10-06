@@ -1,25 +1,14 @@
-/* GodJIRA — sidans enda stilmall. Ingen JavaScript, inga externa typsnitt, inga anrop
-   ut till någon: allt ligger på samma server, och mörkt/ljust följer systemet. */
+/* GodJIRA — sidans enda stilmall. Vit text på svart botten. */
 :root {
-  --botten: #fbfaf8;
-  --text: #1c1b19;
-  --dov: #6b6862;
-  --linje: #e3e0da;
-  --kort: #ffffff;
-  --accent: #b4451f;
-  --kod: #f3f1ec;
+  --botten: #0a0a0a;
+  --text: #ece9e3;
+  --dov: #9b978f;
+  --linje: #2a2a2a;
+  --kort: #141414;
+  --accent: #e08356;
+  --kod: #1c1c1c;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --botten: #171614;
-    --text: #ece9e3;
-    --dov: #9b978f;
-    --linje: #302e2a;
-    --kort: #1e1d1a;
-    --accent: #e08356;
-    --kod: #211f1c;
-  }
-}
+
 * { box-sizing: border-box; }
 body {
   margin: 0;
@@ -32,8 +21,9 @@ body {
 
 header { border-bottom: 1px solid var(--linje); padding: 26px 0 18px; margin-bottom: 40px; }
 header .rad { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 22px; }
-.marke { font-size: 25px; font-weight: 650; letter-spacing: -.02em; }
+.marke { font-size: 25px; font-weight: 650; letter-spacing: -.02em; display:flex; align-items:center; gap: 8px;}
 .marke b { color: var(--accent); font-weight: 650; }
+.logo { height: 26px; width: auto; filter: brightness(0) invert(1); }
 header p { margin: 6px 0 0; color: var(--dov); }
 nav { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 6px 18px; }
 nav a { color: var(--dov); text-decoration: none; border-bottom: 1px solid transparent; }
@@ -56,7 +46,7 @@ pre {
   padding: 14px 16px; overflow-x: auto; margin: 0 0 16px;
 }
 pre code { background: none; padding: 0; }
-figure { margin: 22px 0; }
+figure { margin: 32px 0; }
 figure img { width: 100%; height: auto; border: 1px solid var(--linje); border-radius: 10px; display: block; }
 figcaption { color: var(--dov); font-size: 14.5px; margin-top: 8px; }
 .rutor { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; margin: 18px 0 8px; }
