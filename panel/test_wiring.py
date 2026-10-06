@@ -495,6 +495,36 @@ console.log(bad.length ? "FEL " + bad.join(" | ") : "OK");
     # (☑ och ⚙) ritas som färgade emoji, och då blev "Mina uppgifter" blå/vit.
     check("${ICONS[v] || synliga[v][1]" in html,
           "menyradernas ikoner tas ur ICONS, så ingen glyf ritas som färgad emoji")
+
+    # En rad är markerad när den ÄR valet: Backlog är samma vy som Uppgifter men ett eget
+    # filter, och båda markerade såg ut som två samtidiga val. Provas genom att köra rad()
+    # med de två lägena, inte genom att läsa koden.
+    import subprocess
+
+    rad = re.search(r"  const rad = v =>.*?: \"\";", html, re.S)
+    check(bool(rad), "rad() går att pröva för sig")
+    if rad:
+        prov = """
+const esc = s => String(s == null ? "" : s);
+const ICONS = {};
+const synliga = { items: ["Uppgifter", ""], repos: ["Repon", ""] };
+let view = "items"; const F = { pool: "" }; const antal = {};
+""" + rad.group(0) + """
+const t = (namn, ok) => console.log((ok ? "OK " : "FEL ") + namn);
+t("Uppgifter markerad när inget filter är valt",
+  (view = "items", F.pool = "", rad("items")).includes('class="item on"'));
+t("Uppgifter INTE markerad när Backlog är valt",
+  (view = "items", F.pool = "backlog", !rad("items").includes("item on")));
+t("Repon markerad när man står i Repon",
+  (view = "repos", F.pool = "", rad("repos")).includes('class="item on"'));
+t("okänd vy ger ingen rad alls", rad("finns-inte") === "");
+"""
+        kord = subprocess.run(["node", "-e", prov], capture_output=True, text=True)
+        rader = [r for r in kord.stdout.strip().splitlines() if r.strip()]
+        fel = [r for r in rader if not r.startswith("OK")]
+        check(len(rader) == 4 and not fel,
+              "en rad är markerad när den är valet -- inte när den hör till samma vy",
+              (fel or ["%d prov kördes" % len(rader)])[0] + " " + kord.stderr[:120])
     check("const newest = (((STATE.github" not in html and "Inget valt: visa listan" in html
           and 'class="r" data-repo=' in html,
           "Repon är listan: inget repo öppnas av sig självt, och tomma läget visar repolistan")
