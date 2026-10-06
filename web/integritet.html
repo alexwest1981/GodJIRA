@@ -7,15 +7,14 @@
 <meta name="description" content="Vad godjira.se gör med dina uppgifter, och vad appen GodJIRA gör med dem på din egen dator.">
 <link rel="stylesheet" href="stil.css">
 <script>
-  /* PostHog (EU) — anonym besöksmätning, samma token som de andra sajterna (de skiljs på
-     $host i PostHog). persistence: 'memory' — ingenting sparas i webbläsaren, alltså står
-     integritetssidans "inga cookies" kvar. Se skillen posthog-analytics. */
+  /* PostHog (EU) — besöksmätning, samma token som de andra sajterna (de skiljs på $host i
+     PostHog) och samma läge som dem: en cookie med ett slumptal gör att två sidor hör till
+     samma besök. Integritetssidan säger det rakt ut. Se skillen posthog-analytics. */
   !function(t,e){var o,n,p,r;e.__SV||(window.posthog=e,e._i=[],e.init=function(i,s,a){function g(t,e){var o=e.split(".");2==o.length&&(t=t[o[0]],e=o[1]),t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}}(p=t.createElement("script")).type="text/javascript",p.crossOrigin="anonymous",p.async=!0,p.src=s.api_host.replace(".i.posthog.com","-assets.i.posthog.com")+"/static/array.js",(r=t.getElementsByTagName("script")[0]).parentNode.insertBefore(p,r);var u=e;for(void 0!==a?u=e[a]=[]:a="posthog",u.people=u.people||[],Object.defineProperty(u,"toString",{configurable:!0,enumerable:!0,writable:!0,value:function(t){var e="posthog";return"posthog"!==a&&(e+="."+a),t||(e+=" (stub)"),e}}),Object.defineProperty(u.people,"toString",{configurable:!0,enumerable:!0,writable:!0,value:function(){return u.toString(1)+".people (stub)"}}),o="init capture register register_once register_for_session unregister unregister_for_session getFeatureFlag getFeatureFlagResult isFeatureEnabled reloadFeatureFlags updateEarlyAccessFeatureEnrollment getEarlyAccessFeatures on onFeatureFlags onSessionId getSurveys getActiveMatchingSurveys renderSurvey canRenderSurvey getNextSurveyStep identify setPersonProperties group resetGroups setPersonPropertiesForFlags resetPersonPropertiesForFlags setGroupPropertiesForFlags resetGroupPropertiesForFlags reset get_distinct_id getGroups get_session_id get_session_replay_url alias set_config startSessionRecording stopSessionRecording sessionRecordingStarted captureException loadToolbar get_property getSessionProperty createPersonProfile opt_in_capturing opt_out_capturing has_opted_in_capturing has_opted_out_capturing clear_opt_in_out_capturing debug".split(" "),n=0;n<o.length;n++)g(u,o[n]);e._i.push([i,s,a])},e.__SV=1)}(document,window.posthog||[]);
   posthog.init('phc_AndqvtAG43JsQWKRgJSRDu84TZvfCxoCFGH5AMY8mZcK', {
     api_host: 'https://eu.i.posthog.com',
     defaults: '2026-05-30',
-    person_profiles: 'identified_only',
-    persistence: 'memory'
+    person_profiles: 'identified_only'
   })
 </script>
 </head>
@@ -41,12 +40,15 @@
 <p class="datum">Gäller från 6 oktober 2026.</p>
 
 <p class="ingress">Kort version: den här sidan räknar besök anonymt, och appen skickar
-ingenting till mig. Det finns inga cookies och inget konto.</p>
+ingenting till mig. Det finns inget konto och ingenting att logga in på.</p>
 
 <h2>Den här webbplatsen</h2>
 <p>Sidorna du läser är vanliga filer på en server. Det finns:</p>
 <ul>
-  <li><strong>Inga cookies</strong> och inget som sparas i din webbläsare.</li>
+  <li><strong>En cookie, för räkningen.</strong> Besöksräkningen sätter en cookie med ett
+      slumptal i — samma värde står också i webbläsarens lokala lagring. Talet gör att ditt
+      besök skiljs från andras och att två sidor hör till samma besök. Inget namn, ingen
+      e-postadress, ingenting om dig — och det försvinner när du rensar webbläsaren.</li>
   <li><strong>Anonym besöksräkning</strong> — PostHog i EU räknar sidvisningar. Ingen Google
       Analytics, inga pixlar, ingen spårning mellan sajter.</li>
   <li><strong>Ett enda skript av oss.</strong> Sidan är HTML, en stilmall och ett litet skript
@@ -66,9 +68,9 @@ används till att hålla sidan uppe och stoppa missbruk, och hanteras och gallra
 <a href="https://www.cloudflare.com/privacypolicy/">Cloudflares integritetspolicy</a>. Jag
 analyserar dem inte och bygger inga profiler av dem.</p>
 
-<p>Besöksräkningen går till PostHog i EU (Frankfurt). Den sparar ingen IP-adress, gör inga
-personprofiler och sätter inga cookies — den räknar sidvisningar och vilken adress du kom
-ifrån. Ingenting kopplas till dig som person.</p>
+<p>Besöksräkningen går till PostHog i EU (Frankfurt). Den sparar ingen IP-adress och gör inga
+personprofiler; cookien den sätter är ett slumptal. Den räknar sidvisningar, vilken adress du
+kom ifrån och vilka sidor som hör till samma besök. Ingenting kopplas till dig som person.</p>
 
 <h2>Appen GodJIRA — på din dator</h2>
 <p>Appen är ett program som körs hos dig. Den har ingen server hos mig och skickar ingenting

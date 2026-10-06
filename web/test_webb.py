@@ -3,11 +3,11 @@
 nagot utifran.
 
 Sidorna ar statiska HTML-filer med ETT enda skript: besoksräkningen (PostHog, EU). Det star
-i integritet.html ("Inga cookies", "Anonym besoksräkning", "Ett enda skript", "Bara ett
-anrop ut"), och ett pastaende utan matning ar vard ingenting. Det har provet kollar just
-det: att inga cookies satts, att varje sida har exakt ett skript, att det ar samma snutt i
-alla tre, att den pekar pa EU-hosten och sparar i minnet (alltsa ingenting i webblasaren),
-och att ingen bild eller stilmall hamtas fran en annan vard.
+i integritet.html ("En cookie, för räkningen", "Anonym besoksräkning", "Ett enda skript av
+oss", "Bara ett anrop ut"), och ett pastaende utan matning ar vard ingenting. Det har provet
+kollar just det: att servern inte satter nagon cookie (snutten satter sin egen i
+webblasaren), att varje sida har exakt ett skript, att det ar samma snutt i alla tre, att den
+pekar pa EU-hosten, och att ingen bild eller stilmall hamtas fran en annan vard.
 
 Rakningen av skript gors pa VAR egen server: Cloudflare lagger sjalv till sin
 e-postskyddare (email-decode.min.js) pa den sida som visar en adress, sa integritet.html har
@@ -90,8 +90,8 @@ def main() -> int:
         snutt = (snuttar["index.html"] or [""])[0]
         kolla("phc_" in snutt, "snutten bar projekt-token (phc_)")
         kolla("eu.i.posthog.com" in snutt, "snutten pekar pa EU-hosten")
-        kolla(re.search(r"persistence:\s*'memory'", snutt) is not None,
-              "snutten sparar ingenting i webblasaren (persistence: memory)")
+        kolla(re.search(r"persistence:\s*'memory'", snutt) is None,
+              "snutten anvander standardlaget (cookien som sidan beskriver)")
         kolla(not re.search(r"<script[^>]+src=", startsida, re.I), "inget skript laddas fran en fil")
         # Bilderna och stilmallen skall komma fran samma server. En enda extern sokvag racker
         # for att pastaendet om integritet skall vara falskt.
