@@ -3805,9 +3805,14 @@ def mine_parts(description: str) -> tuple:
 def when_of(iso: str) -> float:
     """Jiras tidsstämpel som epoch. Går den inte att läsa blir den 0, och då skrivs
     förklaringen om -- hellre en onödig körning än en förklaring som blivit gammal."""
+    text = str(iso or "").strip().replace("Z", "+00:00")
+    # Jira skriver offseten utan kolon ("+0000"), och datetime.fromisoformat läser
+    # den formen först från 3.11 (mätt i python:3.9: "Invalid isoformat string").
+    # Utan kolonet blir tiden 0, alltså alltid "färsk", och förklaringen skrevs
+    # aldrig om -- själva felet. Kolonet in, och tolken gör resten.
+    text = re.sub(r"([+-]\d{2})(\d{2})$", r"\1:\2", text)
     try:
-        return datetime.fromisoformat(
-            str(iso or "").strip().replace("Z", "+00:00")).timestamp()
+        return datetime.fromisoformat(text).timestamp()
     except ValueError:
         return 0.0
 

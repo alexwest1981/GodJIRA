@@ -557,12 +557,7 @@ def issue_fields(raw):
     itype = fields.get("issuetype") or {}
     priority = fields.get("priority") or {}
     updated = fields.get("updated") or ""
-    updated_ms = 0
-    try:
-        dt = datetime.datetime.fromisoformat(updated.replace("Z", "+00:00"))
-        updated_ms = int(dt.timestamp() * 1000)
-    except (ValueError, AttributeError):
-        pass
+    updated_ms = parse_iso(updated)
     # The sprint field is an array (a team-managed issue can sit in several);
     # the last entry is the current one. Parent is how team-managed issues hang
     # off an epic or a subtask off its parent.
@@ -740,7 +735,10 @@ def parse_iso(value):
     if not value:
         return 0
     try:
-        dt = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        # Jira skriver offseten utan kolon ("+0000"): se närliggande kommentar i
+        # jira_flow.when_of -- fromisoformat läser den först från 3.11.
+        text = str(value).replace("Z", "+00:00")
+        dt = datetime.datetime.fromisoformat(re.sub(r"([+-]\d{2})(\d{2})$", r"\1:\2", text))
         return int(dt.timestamp() * 1000)
     except (ValueError, AttributeError):
         return 0
@@ -3558,6 +3556,12 @@ def selftest():
     assert jira_started("2026-09-29") == "2026-09-29T09:00:00.000+0000"
     assert jira_started("2026-09-29T08:15:00.000+0000") == "2026-09-29T08:15:00.000+0000"
     assert jira_started("") == ""
+    # ... och samma form skall läsas tillbaka, för det är den Jira svarar med.
+    # Offseten utan kolon ("+0000") läses först från 3.11; utan den här raden blir
+    # tiden 0 på Python 3.9 och 3.10, och då är varje "updated" från Jira noll.
+    assert parse_iso("2026-10-05T15:48:00.000+0000") == 1791215280000
+    assert parse_iso("2026-10-05T15:48:00.000Z") == 1791215280000
+    assert parse_iso("inte en tid") == 0
     # En sprintrad har en ägare; tomma svar blir None, inte en halv rad.
     assert sprint_row({"id": 7, "name": "S1", "state": "future"})["id"] == "7"
     assert sprint_row({"name": "utan id"}) is None
