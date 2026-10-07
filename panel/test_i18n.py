@@ -55,7 +55,10 @@ for path in translated_files:
     # portugisiska) skrivs likadant med flit. Utan listan räknades de som oöversatta och
     # en riktig översättning kunde falla på att den var *för* lik originalet.
     SAME_OK = {"Admin", "Jira", "Jira + GitHub", "sprint", "Projekt", "Titel", "st",
-               "under", "Automatik", "Repos", "tokens"}
+               "under", "Automatik", "Repos", "tokens",
+               # Rapportens rader: "Rapport" är samma ord i svenska, franska och
+               # nederländska, och "Per person" är samma i svenska och engelska.
+               "Rapport", "Per person"}
     same = sorted(k for k, v in table.items() if k == v and k not in SAME_OK)
     check(not missing, "{}: {} nycklar saknas, t.ex. {}".format(code, len(missing), missing[:3]))
     check(not extra, "{}: {} nycklar finns inte i källistan, t.ex. {}".format(code, len(extra), extra[:3]))

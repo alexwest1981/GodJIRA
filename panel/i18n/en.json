@@ -464,5 +464,20 @@
  "antal": "count",
  "andel": "share",
  "PostHog": "PostHog",
- "Sites": "Sites"
+ "Sites": "Sites",
+ "Rapport": "Report",
+ "Sprintens läge": "Sprint status",
+ "ingen aktiv sprint": "no active sprint",
+ "dagar kvar": "days left",
+ "kvar": "left",
+ "Att ta upp i dag": "To raise today",
+ "inget att ta upp — tavlan är i ordning": "nothing to raise — the board is in order",
+ "Per person": "Per person",
+ "öppna i sprinten": "open in the sprint",
+ "ingen har ett öppet ärende i sprinten": "nobody has an open issue in the sprint",
+ "sprinten har inget mål": "the sprint has no goal",
+ "ingen har börjat": "nobody has started",
+ "orört länge": "untouched for a while",
+ "utan skattning": "without an estimate",
+ "stängda utan ansvarig": "closed without an owner"
 }

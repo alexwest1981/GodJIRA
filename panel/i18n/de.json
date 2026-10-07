@@ -464,5 +464,20 @@
  "antal": "Anzahl",
  "andel": "Anteil",
  "PostHog": "PostHog",
- "Sites": "Seiten"
+ "Sites": "Seiten",
+ "Rapport": "Bericht",
+ "Sprintens läge": "Sprint-Status",
+ "ingen aktiv sprint": "kein aktiver Sprint",
+ "dagar kvar": "Tage übrig",
+ "kvar": "übrig",
+ "Att ta upp i dag": "Heute ansprechen",
+ "inget att ta upp — tavlan är i ordning": "nichts anzusprechen — das Board ist in Ordnung",
+ "Per person": "Pro Person",
+ "öppna i sprinten": "offen im Sprint",
+ "ingen har ett öppet ärende i sprinten": "niemand hat einen offenen Vorgang im Sprint",
+ "sprinten har inget mål": "der Sprint hat kein Ziel",
+ "ingen har börjat": "niemand hat begonnen",
+ "orört länge": "lange unberührt",
+ "utan skattning": "ohne Schätzung",
+ "stängda utan ansvarig": "ohne Verantwortlichen geschlossen"
 }

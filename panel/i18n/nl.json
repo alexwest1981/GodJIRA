@@ -464,5 +464,20 @@
  "antal": "aantal",
  "andel": "aandeel",
  "PostHog": "PostHog",
- "Sites": "Sites"
+ "Sites": "Sites",
+ "Rapport": "Rapport",
+ "Sprintens läge": "Sprintstatus",
+ "ingen aktiv sprint": "geen actieve sprint",
+ "dagar kvar": "dagen resterend",
+ "kvar": "resterend",
+ "Att ta upp i dag": "Vandaag bespreken",
+ "inget att ta upp — tavlan är i ordning": "niets te bespreken — het bord is in orde",
+ "Per person": "Per persoon",
+ "öppna i sprinten": "open in de sprint",
+ "ingen har ett öppet ärende i sprinten": "niemand heeft een open ticket in de sprint",
+ "sprinten har inget mål": "de sprint heeft geen doel",
+ "ingen har börjat": "niemand is begonnen",
+ "orört länge": "lang ongemoeid",
+ "utan skattning": "zonder schatting",
+ "stängda utan ansvarig": "gesloten zonder verantwoordelijke"
 }

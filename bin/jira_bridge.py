@@ -648,6 +648,7 @@ def real_snapshot(cfg):
                 "id": str(row.get("id") or ""),
                 "name": row.get("name") or "",
                 "state": state,
+                "goal": row.get("goal") or "",
                 "startMs": parse_iso(row.get("startDate")),
                 "endMs": parse_iso(row.get("endDate")),
             }
@@ -686,6 +687,28 @@ def real_snapshot(cfg):
         backlog_keys = set(issue["key"] for issue in backlog)
         if backlog_keys:
             board_issues = [i for i in board_issues if i["key"] not in backlog_keys]
+
+        # Sprintmedlemskapet måste komma ur Jiras EGEN sprintvy, inte ur ärendets
+        # sprintfält. Fältet är en lista som kan stå kvar med en sprint som Jiras index
+        # inte längre räknar ärendet till: mätt 2026-10-07 bar 8 stängda ärenden sprint
+        # 134 i fältet medan /rest/agile/1.0/sprint/134/issue svarade 14 -- den som
+        # räknade på fältet visade 22 ärenden i sprinten i stället för 14, alltså 12
+        # klara i stället för 4. En sprintmätning skall visa vad Jira visar.
+        # ponytail: bara den AKTIVA sprinten hämtas (en förfrågan mer i snapshotet).
+        # Stängda sprintars medlemskap läses fortfarande ur fältet, vilket räcker för
+        # tidslinjen som bara ritar dem; skall gamla sprintar mätas får den här raden
+        # flyttas in i sprint-loopen ovan.
+        if sprint:
+            try:
+                i_sprint = {row.get("key") for row in paginate(
+                    cfg, "/rest/agile/1.0/sprint/{}/issue".format(sprint["id"]))}
+                for issue in board_issues + backlog:
+                    if issue["key"] in i_sprint:
+                        issue["sprintId"], issue["sprintName"] = sprint["id"], sprint["name"]
+                    elif issue["sprintId"] == sprint["id"]:
+                        issue["sprintId"], issue["sprintName"] = "", ""
+            except RuntimeError:
+                pass    # sprintvyn svarade inte: fältet får stå hellre än en kraschad snapshot
 
         boards.append({
             "id": str(bid),

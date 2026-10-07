@@ -18,6 +18,7 @@ Det som faktiskt kan gå fel utan att någon märker det:
 from __future__ import annotations
 
 import importlib.util
+import json
 import time
 from pathlib import Path
 
@@ -140,6 +141,84 @@ check(d["repos"][0]["language"] == "Python" and d["pullRequests"][0]["repo"] == 
       "repon och pr:erna följer med", (d["repos"][0], d["pullRequests"][0]))
 check(any("ledtid" in n for n in d["notes"]), "det som inte går att visa sägs rakt ut", d["notes"])
 check(server.development({}, {}, now=NOW)["openBugs"] == 0, "utan svar blir det nollor, inte krasch")
+
+# --- rapporten (scrummästarens flik) -----------------------------------------
+# Sprinten är 7, den har inget mål, och ingen har börjat på något -- men ärenden
+# stängs. Två av de öppna saknar ägare, ett saknar skattning, ett har legat orört
+# i tio dygn, och ett stängt i veckan saknar namn.
+board = {
+    "sprint": {"id": "7", "name": "Sprint 7", "goal": "", "startMs": NOW - 2 * DAY,
+               "endMs": NOW + 3 * DAY},
+    "issues": [
+        issue("S-1", sprintId="7", statusCategory="done", resolutionMs=NOW - DAY,
+              assigneeName="Ada", storyPoints=3),
+        issue("S-2", sprintId="7", statusCategory="done", resolutionMs=NOW - 2 * DAY,
+              assigneeName="", storyPoints=1),
+        issue("S-3", sprintId="7", statusCategory="new", assigneeName="Ada", storyPoints=5),
+        issue("S-4", sprintId="7", statusCategory="new", assigneeName="", storyPoints=2),
+        issue("S-5", sprintId="7", statusCategory="new", assigneeName="Ada"),
+        issue("S-6", sprintId="", statusCategory="new", assigneeName="",
+              updatedMs=NOW - 10 * DAY, storyPoints=1),
+        issue("S-7", sprintId="", statusCategory="done", resolutionMs=NOW - 3 * DAY,
+              assigneeName="", storyPoints=1),
+        issue("S-8", sprintId="", statusCategory="new", assigneeName="Bo", storyPoints=8,
+              updatedMs=NOW - 10 * DAY),
+    ],
+    "backlog": [issue("S-9", sprintId="", statusCategory="new", assigneeName="")],
+}
+r = server.rapport({"boards": [board]}, now=NOW)
+f = r["facts"]
+check(f["issues"] == 5 and f["done"] == 2 and f["open"] == 3,
+      "sprintens ärenden, klara och kvar räknas", f)
+check(f["pointsDone"] == 4.0 and f["pointsOpen"] == 7.0, "poängen följer med", f)
+check(f["inProgress"] == 0, "ingen är i arbete, och det mäts på statuskategorin", f)
+check(r["sprint"]["daysLeft"] == 3, "dagar kvar räknas i kalenderdagar", r["sprint"])
+check(r["sprint"]["start"] == NOW - 2 * DAY and r["sprint"]["end"] == NOW + 3 * DAY,
+      "sprintens egna datum följer med", r["sprint"])
+kinds = {row["kind"] for row in r["rows"]}
+check({"goal", "noWork", "unowned", "stale", "unestimated", "closedUnowned"} <= kinds,
+      "alla sex raderna tänds av sitt eget skäl", sorted(kinds))
+check(all(row["level"] in ("block", "wait", "info") for row in r["rows"]),
+      "allvarsgraden är en av de tre panelen känner", [row["level"] for row in r["rows"]])
+goal = [row for row in r["rows"] if row["kind"] == "goal"][0]
+check("inget mål" in goal["label"] and goal["detail"] == "Sprint 7",
+      "målet saknas och sprinten namnges", goal)
+nowork = [row for row in r["rows"] if row["kind"] == "noWork"][0]
+check(nowork["count"] == 3 and nowork["detail"] == "3 stängda senaste veckan",
+      "ingen har börjat, och talet den bygger på står där", nowork)
+unowned = [row for row in r["rows"] if row["kind"] == "unowned"][0]
+check(unowned["count"] == 1 and unowned["keys"] == ["S-4"],
+      "bara sprintens egna ägarlösa räknas", unowned)
+stale = [row for row in r["rows"] if row["kind"] == "stale"][0]
+check(stale["count"] == 2 and stale["keys"][0] == "S-6",
+      "orört listas äldst först, och utanför sprinten också", stale)
+unestimated = [row for row in r["rows"] if row["kind"] == "unestimated"][0]
+check(unestimated["count"] == 2 and "S-5" in unestimated["keys"] and "S-9" in unestimated["keys"],
+      "utan skattning gäller allt öppet, inte bara sprinten", unestimated)
+closed = [row for row in r["rows"] if row["kind"] == "closedUnowned"][0]
+check(closed["count"] == 2, "stängda utan ansvarig senaste veckan", closed)
+check([p["name"] for p in r["people"]] == ["Ada"] and r["people"][0]["open"] == 2,
+      "per person: öppna i sprinten, flest först, och ingen påhittad för oassignerade",
+      r["people"])
+check(r["people"][0]["points"] == 5.0, "personens poäng är de öppnas", r["people"][0])
+check(all(p["name"] for p in r["people"]), "ingen rad utan namn i personlistan", r["people"])
+
+# Ett mål som finns skall tysta raden, och ett pågående ärende skall tysta "ingen har börjat".
+lugn = json.loads(json.dumps(board))
+lugn["sprint"]["goal"] = "leverera bokningen"
+lugn["issues"][2]["statusCategory"] = "indeterminate"
+r2 = server.rapport({"boards": [lugn]}, now=NOW)
+kinds2 = {row["kind"] for row in r2["rows"]}
+check("goal" not in kinds2 and "noWork" not in kinds2,
+      "mål och påbörjat arbete tar bort sina rader", sorted(kinds2))
+check(r2["facts"]["inProgress"] == 1, "det pågående ärendet räknas", r2["facts"])
+
+# Utan aktiv sprint: en rad som säger det, i stället för en krasch eller en tom ruta.
+utan = server.rapport({"boards": [{"sprint": {}, "issues": [issue("S-1")], "backlog": []}]}, now=NOW)
+check(utan["rows"] and utan["rows"][0]["kind"] == "noSprint" and utan["facts"]["issues"] == 0,
+      "utan aktiv sprint sägs det rakt ut", utan["rows"])
+check(server.rapport({}, now=NOW)["rows"][0]["kind"] == "noSprint",
+      "ett tomt svar ger en rad, inte en krasch")
 
 # --- eller utan klocka --------------------------------------------------------
 fresh = server.summary([issue("S-1", statusCategory="done", resolutionMs=time.time() * 1000)], now=0)

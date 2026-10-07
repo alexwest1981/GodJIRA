@@ -1471,6 +1471,9 @@ Det som faktiskt kan gå fel utan att någon märker det:
 import time
 
 DAY_MS = 86400000.0
+# Hur länge ett ärende får ligga orört innan rapporten säger till. En vecka är en ratt,
+# inte en sanning: kortare ger fler rader, längre ger tystare rapport.
+RAPPORT_DYGN = float(os.environ.get("GODJIRA_RAPPORT_DYGN") or 7)
 
 
 def _now(now: float) -> float:
@@ -1649,6 +1652,114 @@ def development(jira: dict, github: dict, now: float = 0.0) -> dict:
     }
 
 
+def rapport(jira: dict, now: float = 0.0, limit: int = 8) -> dict:
+    """Scrummästarens rapport: sprintens läge, och det som skall tas upp i dag.
+
+    Ren funktion över samma svar som resten av panelen -- inga anrop, ingen skrivning,
+    så den går att prova med handgjord data. Varje rad bär talet den bygger på, och
+    `keys` kapas medan `count` alltid är det sanna antalet: en kapad rad utan tal ser
+    komplett ut. Raderna är samma slags rader som kön på Översikt -- etiketten kommer
+    från servern, allvarsgraden i `level`, nycklarna i `keys`.
+
+    Raderna är med flit få. Varje rad måste vara något att GÖRA i dag, annars är den
+    brus: "utan ansvarig" i backloggen står redan i kön på Översikt och upprepas inte
+    här, och epics som saknar ägare fångas av skattningsraden.
+    """
+    now = _now(now)
+    board = (jira.get("boards") or [{}])[0]
+    sprint = board.get("sprint") or {}
+    sid = str(sprint.get("id") or "")
+    issues = (board.get("issues") or []) + (board.get("backlog") or [])
+    öppna_allt = [i for i in issues if (i.get("statusCategory") or "") != "done"]
+    aktiv = [i for i in issues if sid and str(i.get("sprintId") or "") == sid]
+    öppna = [i for i in aktiv if (i.get("statusCategory") or "") != "done"]
+    klara = [i for i in aktiv if (i.get("statusCategory") or "") == "done"]
+    # Statuskategorin är måttet: "new" är inte påbörjat, "indeterminate" är i arbete
+    # (In Progress och In Review delar kategori), "done" är klart.
+    arbete = [i for i in aktiv if (i.get("statusCategory") or "") == "indeterminate"]
+    stängda_vecka = [i for i in issues if (i.get("statusCategory") or "") == "done"
+                     and now - 7 * DAY_MS <= (i.get("resolutionMs") or 0) <= now]
+    poäng = lambda xs: round(sum(float(i.get("storyPoints") or 0) for i in xs), 1)
+    slut = int(sprint.get("endMs") or 0)
+
+    rader: list = []
+
+    def rad(kind: str, level: str, count: int, label: str, detail: str = "", keys=None) -> None:
+        rader.append({"kind": kind, "level": level, "count": count, "label": label,
+                      "detail": detail, "keys": [str(k.get("key") or "") for k in (keys or [])][:limit],
+                      "view": "insights"})
+
+    if not sid:
+        rad("noSprint", "info", 1, "ingen aktiv sprint",
+            "{} öppna ärenden".format(len(öppna_allt)), öppna_allt)
+    else:
+        if not str(sprint.get("goal") or "").strip():
+            rad("goal", "wait", 1, "sprinten har inget mål", str(sprint.get("name") or ""))
+        # Ingen har börjat, men det stängs ärenden: tavlan vet inte vad som händer.
+        if öppna and not arbete and stängda_vecka:
+            rad("noWork", "wait", len(öppna), "ingen har börjat",
+                "{} stängda senaste veckan".format(len(stängda_vecka)), öppna)
+        utan_ägare = [i for i in öppna if not (i.get("assigneeName") or i.get("assigneeEmail"))]
+        if utan_ägare:
+            rad("unowned", "wait", len(utan_ägare), "utan ansvarig",
+                str(sprint.get("name") or ""), utan_ägare)
+
+    # Orört: en rad som ingen rört på en vecka är den som glöms bort, och den bär ofta
+    # en deadline i sin egen titel. Veckan är en ratt (RAPPORT_DYGN), inte en sanning.
+    tysta = sorted([i for i in öppna_allt
+                    if (i.get("updatedMs") or 0) and now - (i.get("updatedMs") or 0) > RAPPORT_DYGN * DAY_MS],
+                   key=lambda i: i.get("updatedMs") or 0)
+    if tysta:
+        äldst = tysta[0]
+        rad("stale", "wait", len(tysta), "orört länge",
+            "{} d · {}".format(round((now - (äldst.get("updatedMs") or 0)) / DAY_MS, 1),
+                               äldst.get("key") or ""), tysta)
+
+    oskattade = [i for i in öppna_allt if not i.get("storyPoints")]
+    if oskattade:
+        rad("unestimated", "info", len(oskattade), "utan skattning",
+            "{} öppna".format(len(öppna_allt)), oskattade)
+
+    # På en delad tavla är spårbarheten allt: ett stängt ärende utan namn går inte att
+    # visa upp i efterhand, och det är hela poängen med kortet.
+    stängda_utan = [i for i in stängda_vecka
+                    if not (i.get("assigneeName") or i.get("assigneeEmail"))]
+    if stängda_utan:
+        rad("closedUnowned", "info", len(stängda_utan), "stängda utan ansvarig",
+            "{:.1f} stängda senaste veckan".format(len(stängda_vecka)), stängda_utan)
+
+    folk: dict = {}
+    for i in öppna:
+        # Den som ingen äger hör inte i en personlista -- "utan ansvarig" har sin egen
+        # rad, och en påhittad person "— ingen" i listan ser ut som en teammedlem.
+        namn = i.get("assigneeName") or ""
+        if not namn:
+            continue
+        rad_ = folk.setdefault(namn, {"name": namn, "open": 0, "points": 0.0})
+        rad_["open"] += 1
+        rad_["points"] = round(rad_["points"] + float(i.get("storyPoints") or 0), 1)
+    personer = sorted(folk.values(), key=lambda p: (-p["open"], p["name"]))
+
+    return {
+        "sprint": {"id": sid, "name": sprint.get("name") or "", "goal": sprint.get("goal") or "",
+                   "start": int(sprint.get("startMs") or 0), "end": slut,
+                   "daysLeft": _kalenderdagar(now, slut) if slut else 0},
+        "facts": {"issues": len(aktiv), "done": len(klara), "open": len(öppna),
+                  "pointsDone": poäng(klara), "pointsOpen": poäng(öppna),
+                  "inProgress": len(arbete), "closedWeek": len(stängda_vecka),
+                  "staleDays": int(RAPPORT_DYGN)},
+        "people": personer,
+        "rows": rader,
+    }
+
+
+def _kalenderdagar(från_ms: float, till_ms: float) -> int:
+    """Hela kalenderdagar mellan två tidsstämplar -- fredag räknas som en dag kvar."""
+    a = datetime.datetime.fromtimestamp(från_ms / 1000.0)
+    b = datetime.datetime.fromtimestamp(till_ms / 1000.0)
+    return max(0, (b.date() - a.date()).days)
+
+
 def insights_read() -> dict:
     """De tre flikarna i ett svar. Räknat, inte ritat."""
     jira = jira_state()
@@ -1659,7 +1770,9 @@ def insights_read() -> dict:
     out = {"ok": True, "project": (boards[0].get("projectKey") or ""),
            "summary": summary(issues),
            "timeline": timeline(issues, sprints),
-           "development": development(jira, github)}
+           "development": development(jira, github),
+           # Fjärde fliken: det scrummästaren skall ta upp i dag. Samma svar, samma anrop.
+           "rapport": rapport(jira)}
     return out
 
 

@@ -145,7 +145,11 @@ EXTRA = ("oassignerat", "standarden", "nytt projekt", "privata", "publika",
          "provläge: exempeldata, inget konto kopplat", "ur filen", "st",
          "körningen väntar på din merge", "ärenden hos dig", "PR öppen",
          "nyckeln svarar inte", "ingen nyckel kopplad",
-         "utan ansvarig", "ärenden öppna på GitHub", "bygget är rött")
+         "utan ansvarig", "ärenden öppna på GitHub", "bygget är rött",
+         # Rapportens rader: de skrivs av servern (rapport() i panel/server.py) och
+         # ritas ordagrant av panelen, alltså finns de ingen annan stans i markupen.
+         "ingen aktiv sprint", "sprinten har inget mål", "ingen har börjat",
+         "orört länge", "utan skattning", "stängda utan ansvarig")
 for word in EXTRA:
     found.setdefault(word, set()).add("extra")
 

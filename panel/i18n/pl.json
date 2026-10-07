@@ -464,5 +464,20 @@
  "antal": "liczba",
  "andel": "udział",
  "PostHog": "PostHog",
- "Sites": "Strony"
+ "Sites": "Strony",
+ "Rapport": "Raport",
+ "Sprintens läge": "Stan sprintu",
+ "ingen aktiv sprint": "brak aktywnego sprintu",
+ "dagar kvar": "pozostałe dni",
+ "kvar": "pozostało",
+ "Att ta upp i dag": "Do omówienia dziś",
+ "inget att ta upp — tavlan är i ordning": "nie ma nic do omówienia — tablica jest w porządku",
+ "Per person": "Na osobę",
+ "öppna i sprinten": "otwarte w sprincie",
+ "ingen har ett öppet ärende i sprinten": "nikt nie ma otwartego zadania w sprincie",
+ "sprinten har inget mål": "sprint nie ma celu",
+ "ingen har börjat": "nikt nie zaczął",
+ "orört länge": "od dawna nietknięte",
+ "utan skattning": "bez szacowania",
+ "stängda utan ansvarig": "zamknięte bez osoby odpowiedzialnej"
 }

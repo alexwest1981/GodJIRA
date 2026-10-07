@@ -464,5 +464,20 @@
  "antal": "antal",
  "andel": "andel",
  "PostHog": "PostHog",
- "Sites": "Sites"
+ "Sites": "Sites",
+ "Rapport": "Rapport",
+ "Sprintens läge": "Sprintens läge",
+ "ingen aktiv sprint": "ingen aktiv sprint",
+ "dagar kvar": "dagar kvar",
+ "kvar": "kvar",
+ "Att ta upp i dag": "Att ta upp i dag",
+ "inget att ta upp — tavlan är i ordning": "inget att ta upp — tavlan är i ordning",
+ "Per person": "Per person",
+ "öppna i sprinten": "öppna i sprinten",
+ "ingen har ett öppet ärende i sprinten": "ingen har ett öppet ärende i sprinten",
+ "sprinten har inget mål": "sprinten har inget mål",
+ "ingen har börjat": "ingen har börjat",
+ "orört länge": "orört länge",
+ "utan skattning": "utan skattning",
+ "stängda utan ansvarig": "stängda utan ansvarig"
 }
