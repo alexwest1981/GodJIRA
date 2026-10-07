@@ -3038,6 +3038,54 @@ function renderInsights() {
 // Scrummästarens flik: sprintens läge i siffror, och raderna som skall tas upp i dag.
 // Allt räknas i servern (rapport() i server.py) -- här ritas det bara, och etiketterna
 // kommer färdiga därifrån, samma väg som kön på Översikt.
+//
+// Utskriften underst är samma sak som text: den man klistrar in i standup-anteckningen
+// eller i gruppchatten. Orden hämtas ur språkfilen med uppslag (STRINGS), så texten
+// följer panelspråket utan att en enda mening behöver översättas för sig.
+function rapportText(d) {
+  const r = ((d || {}).rapport) || {};
+  const f = r.facts || {}, sp = r.sprint || {};
+  const dag = (ms) => ms ? new Date(ms).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : "";
+  const rader = [];
+  rader.push([sp.name || t("ingen aktiv sprint"), [dag(sp.start), dag(sp.end)].filter(Boolean).join(" → "),
+              sp.daysLeft ? sp.daysLeft + " " + t("dagar kvar") : ""].filter(Boolean).join(" · "));
+  if (sp.goal) rader.push(sp.goal);
+  rader.push([(f.issues || 0) + " " + t("ärenden"),
+              t("klara") + " " + (f.done || 0) + " (" + (f.pointsDone || 0) + " p)",
+              t("kvar") + " " + (f.open || 0) + " (" + (f.pointsOpen || 0) + " p)",
+              (f.inProgress || 0) + " " + t("pågår")].join(" · "));
+  if ((r.people || []).length)
+    rader.push(t("Per person") + ": " + r.people.map(p => p.name + " " + p.open + " (" + p.points + " p)").join(" · "));
+  rader.push("");
+  rader.push(t("Att ta upp i dag") + ":");
+  (r.rows || []).forEach((n, i) => rader.push((i + 1) + ". " + (n.count > 1 ? n.count + " " : "") +
+    t(n.label) + (n.detail ? " — " + n.detail : "") +
+    ((n.keys || []).length ? " · " + n.keys.join(" ") : "")));
+  if (!(r.rows || []).length) rader.push("– " + t("inget att ta upp — tavlan är i ordning"));
+  return rader.join("\n");
+}
+
+// Kopiera-knappen: urklippet när webbläsaren tillåter det, annars markeras texten i rutan
+// (panelen kan nås som http://omarchy.local, och det är ingen säker kontext -- där finns
+// inget clipboard-API, och då är Ctrl+C vägen som fungerar).
+function rapportCopy() {
+  const knapp = document.getElementById("rapportCopy");
+  const säg = () => { if (knapp) knapp.textContent = t("kopierat"); };
+  const markera = () => {
+    const ruta = document.getElementById("rapportText");
+    if (!ruta) return säg();
+    const urval = window.getSelection();
+    const område = document.createRange();
+    område.selectNodeContents(ruta);
+    urval.removeAllRanges();
+    urval.addRange(område);
+    säg();
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText)
+    navigator.clipboard.writeText(rapportText(INSIGHT.data || {})).then(säg, markera);
+  else markera();
+}
+
 function insightRapport(d) {
   const r = d.rapport || {};
   const f = r.facts || {};
@@ -3073,7 +3121,11 @@ function insightRapport(d) {
     '<div class="panel"><h3>Att ta upp i dag <span class="meta">' + (r.rows || []).length + '</span></h3>' +
       '<div class="body wl">' + rader + '</div></div>' +
     '<div class="panel"><h3>Per person <span class="meta">öppna i sprinten</span></h3>' +
-      '<div class="body wl">' + folk + '</div></div></div>';
+      '<div class="body wl">' + folk + '</div></div>' +
+    '<div class="panel"><h3>Utskrift <span class="meta">att klistra in</span></h3><div class="body">' +
+      '<details id="rapportUtskrift"><summary>visa texten</summary>' +
+      `<pre class="term" id="rapportText">${esc(rapportText(d))}</pre></details>` +
+      '<button class="chip" id="rapportCopy">Kopiera</button></div></div>' + '</div>';
 }
 
 // ---- Sajterna: trafiken, kassan och livstecknet i en vy --------------------------
@@ -5122,6 +5174,10 @@ document.addEventListener("click", e => {
   // vidare till något annat -- rubriken runtom är en rad och går till sin vy.
   const rubrik = e.target.closest && e.target.closest("[data-fall]");
   if (rubrik) { vik(rubrik.dataset.fall); return; }
+  // Utskriften i Rapport-fliken: knappen kopierar texten. Här bland de GLOBALA
+  // lyssnarna, inte inuti en vys ritare: knappen skapas om vid varje flikbyte, och en
+  // lyssnare som kopplas i en annan vys ritare svarar först när den vyn besökts.
+  if (e.target.closest("#rapportCopy")) return rapportCopy();
   // Raderna i kunskapsgrafen öppnar nästa enhet -- men länken inuti raden (ärendenyckeln)
   // skall öppna Jira. Bara länkar som NAVIGERAR går före: bakåt och stäng är ankare utan
   // href, och en vakt på varje <a> svalde deras klick (mätt: bakåt gjorde ingenting).

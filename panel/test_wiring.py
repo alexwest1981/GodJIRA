@@ -246,6 +246,43 @@ console.log(JSON.stringify(kind) === JSON.stringify(want) && filer.length === 2 
               "en filväg blir inte grön och en borttagen rad inte röd",
               (ändring_run.stdout + ändring_run.stderr).strip()[:140])
 
+    # Utskriften i Rapport-fliken: samma svar som ritas, men som text att klistra in.
+    # Den är ren (bara t() och payloaden), så den extraheras och körs i node: en text som
+    # tappar en rad eller skriver "undefined" i stället för en siffra syns direkt.
+    fn = re.search(r"function rapportText\(d\) \{.*?\n\}", html, re.S)
+    check(bool(fn), "utskriften går att läsa")
+    if fn:
+        with _tf.NamedTemporaryFile("w", suffix=".js", delete=False, encoding="utf-8") as fh:
+            fh.write(fn.group(0) + """
+const STRINGS = {"dagar kvar": "DAYS", "ärenden": "ISSUES"};
+const t = s => STRINGS[s] || s;
+const d = { rapport: {
+  sprint: { name: "Sprint 7", goal: "", start: 0, end: 0, daysLeft: 3 },
+  facts: { issues: 14, done: 4, open: 10, pointsDone: 14.5, pointsOpen: 26, inProgress: 0 },
+  people: [{ name: "Ada", open: 2, points: 7 }],
+  rows: [{ kind: "goal", count: 1, label: "sprinten har inget mål", detail: "Sprint 7", keys: [] },
+         { kind: "noWork", count: 10, label: "ingen har börjat",
+           detail: "40 stängda senaste veckan", keys: ["SCRUM-1", "SCRUM-2"] }] } };
+const L = rapportText(d).split(String.fromCharCode(10));
+const vill = ["Sprint 7 · 3 DAYS", "14 ISSUES · klara 4 (14.5 p) · kvar 10 (26 p) · 0 pågår",
+              "Per person: Ada 2 (7 p)", "", "Att ta upp i dag:",
+              "1. sprinten har inget mål — Sprint 7",
+              "2. 10 ingen har börjat — 40 stängda senaste veckan · SCRUM-1 SCRUM-2"];
+const tomt = rapportText({ rapport: { sprint: {}, facts: {}, rows: [], people: [] } })
+  .split(String.fromCharCode(10));
+console.log(JSON.stringify(L) === JSON.stringify(vill) &&
+            tomt[0] === "ingen aktiv sprint" &&
+            !tomt.join(" ").includes("undefined") &&
+            tomt[tomt.length - 1] === "– inget att ta upp — tavlan är i ordning"
+            ? "OK" : "FEL " + JSON.stringify([L, tomt]));
+""")
+            utskrift_js = fh.name
+        utskrift_run = _sp.run(["node", utskrift_js], capture_output=True, text=True)
+        _os.unlink(utskrift_js)
+        check(utskrift_run.stdout.strip() == "OK",
+              "utskriften bär siffrorna, raderna och orden ur språkfilen",
+              (utskrift_run.stdout + utskrift_run.stderr).strip()[:160])
+
     # Kunskapsgrafen går att GÅ I: en enhets grannar räknas ur relationerna, ett paket får
     # sina egna filer och sina egna ärenden (ingenting läckt från grannpaketet), och filens
     # ärenden är de som nämner just den. Rena funktioner mot en handgjord graf -- de skall
