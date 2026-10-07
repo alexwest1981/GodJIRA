@@ -139,6 +139,24 @@ Variables: `PANEL_PORT=9000` (default 8788), `PANEL_BIND=0.0.0.0` to also answer
 on the local network (the panel shows your Jira token's data, so it listens on
 localhost only unless you say otherwise), `PLUGIN_DIR=...` for the plugin copy.
 
+### OmaStore (the Omarchy app store)
+
+The panel is also in [OmaStore](omastore://alexwest1981/GodJIRA), installable
+from the store's page — without sudo and without a clone:
+
+```
+omastore install alexwest1981/GodJIRA
+```
+
+It lands in `~/.local/share/omastore/apps/` with a `godjira-panel` command in
+`~/.local/bin`, and OmaStore writes the `systemd --user` unit from
+`[services.panel]` in [`omastore.toml`](omastore.toml) — the store keeps it
+updated and removes it on uninstall. **The store installs the panel only:** run
+`install.sh` as well for the bar plugin, the window rule and the flow. A
+`godjira-panel.service` that `install.sh` wrote is *not* overwritten by the store
+(it refuses a unit it did not create) — uninstall the app in the store first if
+you want the store to own the service.
+
 ### Floating window (Hyprland)
 
 The panel is a normal Quickshell window, so Hyprland tiles it like any other

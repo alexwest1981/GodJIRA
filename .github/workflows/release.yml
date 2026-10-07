@@ -1,0 +1,50 @@
+name: release
+
+# One tarball per architecture, from the tag itself: git archive, so the package
+# is exactly the commit the tag points at. There is no build step — the app is
+# Python stdlib plus its own files — and the same bytes are published under both
+# names because nothing inside them is compiled.
+#
+# The attestation is what lets OmaStore show "Built by this repository's GitHub
+# Actions"; checksums.txt is for anyone reading the release by hand (GitHub's own
+# sha256 per asset is the one the store checks first).
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      APP: godjira
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Package the tag
+        run: |
+          set -eu
+          ver="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          # No top-level directory: omastore.toml names bin/godjira-panel as the
+          # executable for every release, so the layout inside must not move.
+          git archive --format=tar.gz --output="dist/$APP-$ver-x86_64-linux.tar.gz" HEAD
+          cp "dist/$APP-$ver-x86_64-linux.tar.gz" "dist/$APP-$ver-aarch64-linux.tar.gz"
+          (cd dist && sha256sum ./*.tar.gz > checksums.txt)
+          cat dist/checksums.txt
+
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/*.tar.gz
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          generate_release_notes: true
+          files: |
+            dist/*.tar.gz
+            dist/checksums.txt

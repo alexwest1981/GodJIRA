@@ -1,4 +1,29 @@
 kind = "app"
-categories = ["Development"]
+categories = ["Development", "ProjectManagement"]
 icon = "assets/godjira.svg"
 screenshots = ["docs/screenshots/overview.png", "docs/screenshots/board.png"]
+terminal = false
+
+# The release archive is the app itself: the launcher in bin/ and the Python
+# stdlib panel beside it. No top-level directory in the tarball, so the paths
+# below stay the same for every version.
+[linux.x86_64]
+asset = "godjira-{version}-x86_64-linux.tar.gz"
+exec = "bin/godjira-panel"
+
+# Nothing in the package is compiled: the same archive is published under the
+# aarch64 name, and the launcher resolves its own directory either way.
+[linux.aarch64]
+asset = "godjira-{version}-aarch64-linux.tar.gz"
+exec = "bin/godjira-panel"
+
+# The panel is a user service. OmaStore writes the unit for the installed
+# version (install.sh writes the same unit name from a clone); the launcher
+# fills in the environment, since the generated unit sets only ExecStart=.
+[services.panel]
+type = "systemd-user"
+unit = "godjira-panel.service"
+exec = "bin/godjira-panel"
+enable = true
+start = true
+restart = "on-failure"

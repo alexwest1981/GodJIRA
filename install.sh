@@ -73,13 +73,23 @@ fill() {
 # 2. The service. Bound to localhost unless asked otherwise: the panel shows your
 #    Jira token's data, and a machine on the office network should not be handed
 #    that by default.
-fill "$root/panel/godjira-panel.service" "$HOME/.config/systemd/user/godjira-panel.service"
-if [ "$have_systemctl" = yes ]; then
-	systemctl --user daemon-reload
-	systemctl --user enable --now godjira-panel.service
-	say "service: godjira-panel (port $port, listening on $bind)"
+#
+#    OmaStore can install the same panel and owns the unit it wrote (it points
+#    into the version it installed, not into this clone). Overwriting it would
+#    make the store see a unit it did not write, and it then refuses to touch the
+#    app rather than guess -- so this leaves it alone and says why.
+unit=$HOME/.config/systemd/user/godjira-panel.service
+if [ -f "$unit" ] && grep -q '^# Managed by OmaStore' "$unit"; then
+	say "service: godjira-panel belongs to OmaStore (uninstall the app in the store first) — left as it is"
 else
-	say "systemctl is missing: the unit is written but not started"
+	fill "$root/panel/godjira-panel.service" "$unit"
+	if [ "$have_systemctl" = yes ]; then
+		systemctl --user daemon-reload
+		systemctl --user enable --now godjira-panel.service
+		say "service: godjira-panel (port $port, listening on $bind)"
+	else
+		say "systemctl is missing: the unit is written but not started"
+	fi
 fi
 
 # 3. The menu icon. omarchy-launch-webapp opens it as its own window; anywhere

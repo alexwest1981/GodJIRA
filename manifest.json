@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "GodJIRA.plugin",
   "name": "Jira",
-  "version": "0.9.0",
+  "version": "1.0.0",
   "author": "Alex Weström",
   "license": "AGPL-3.0-only",
   "description": "The GodJIRA bar widget: the mark, board notifications and the door into the app. The app itself is the web panel (see README).",

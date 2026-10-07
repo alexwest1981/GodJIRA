@@ -1,0 +1,31 @@
+#!/bin/sh
+# GodJIRA's panel as one command: the entry point OmaStore's service runs, and a
+# convenient start from a clone (`./bin/godjira-panel`). It locates its own app
+# next to itself, so an installed copy under
+# ~/.local/share/omastore/apps/... needs nothing on the machine but python3.
+#
+# The unit install.sh writes (panel/godjira-panel.service) sets the variables
+# below. The unit OmaStore generates from omastore.toml says only ExecStart=, so
+# they are set here instead: gh lives in ~/.local/bin, mise keeps n8nac in its
+# shims, and the Jira token lives in the session keyring, which needs the user
+# manager's runtime dir and bus. Measured on this machine, not assumed.
+set -eu
+here=$(CDPATH= cd -- "$(dirname -- "$(readlink -f -- "$0")")/.." && pwd)
+
+export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
+export PYTHONDONTWRITEBYTECODE=1
+if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
+	XDG_RUNTIME_DIR="/run/user/$(id -u)"
+	export XDG_RUNTIME_DIR
+fi
+if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+	DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+	export DBUS_SESSION_BUS_ADDRESS
+fi
+
+if ! command -v python3 >/dev/null 2>&1; then
+	echo "godjira-panel: python3 is not on PATH. The panel is Python stdlib only, but it needs the interpreter (python3 --version must work)." >&2
+	exit 1
+fi
+
+exec python3 "$here/panel/server.py" "$@"
