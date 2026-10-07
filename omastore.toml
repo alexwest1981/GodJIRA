@@ -1,0 +1,4 @@
+kind = "app"
+categories = ["Development"]
+icon = "assets/godjira.svg"
+screenshots = ["docs/screenshots/overview.png", "docs/screenshots/board.png"]
