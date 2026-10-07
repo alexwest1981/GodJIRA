@@ -27,7 +27,7 @@ for img in $images; do
 	printf '\n===== %s\n' "$img"
 	# Utdata fångas i en variabel i stället för att röras genom tail, så att
 	# containerns utgångskod bär hela vägen hit.
-	report=$(docker run --rm -v "$root":/app -w /app -e HOME=/tmp/h -e LC_ALL=POSIX "$img" sh -c '
+	report=$(docker run --rm -v "$root":/app -w /app -e HOME=/tmp/h -e LC_ALL=POSIX -e PYTHONDONTWRITEBYTECODE=1 "$img" sh -c '
 		# Base images differ: Debian ships no python at all, Fedora no git. Install
 		# both through whatever the image itself uses -- the point is to test the
 		# app on that distro, not that its base image is bare.
@@ -44,8 +44,19 @@ for img in $images; do
 		# svarar varje repo-fråga "not a git repository" och sviten mäter fel sak.
 		mkdir -p /tmp/h && git config --global --add safe.directory /app 2>/dev/null
 		printf "  %s\n" "$(python3 --version 2>&1)"
-		# 1. Does every file even parse on this interpreter?
-		bad=$(python3 -m py_compile $(find bin panel tools web -name "*.py") 2>&1 | head -3)
+		# 1. Does every file even parse on this interpreter? ast.parse i en egen
+		# fil (som panelproben): py_compile skriver .pyc i den monterade kopian
+		# -- som root, även med -B och PYTHONDONTWRITEBYTECODE (mätt) -- och en
+		# kontroll skall inte lämna spår. Citattecken rätt i skalet går sönder.
+		cat >/tmp/syntax.py <<'PY'
+import ast, sys
+for f in sys.argv[1:]:
+    try:
+        ast.parse(open(f, encoding="utf-8").read(), f)
+    except SyntaxError as e:
+        print("%s: %s" % (f, e))
+PY
+		bad=$(python3 /tmp/syntax.py $(find bin panel tools web -name "*.py") 2>&1 | head -3)
 		if [ -n "$bad" ]; then
 			echo "  SYNTAXFEL:"; echo "$bad" | sed "s/^/    /"; fail=1
 		fi
