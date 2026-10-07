@@ -1715,7 +1715,14 @@ def rapport(jira: dict, now: float = 0.0, limit: int = 8) -> dict:
             "{} d · {}".format(round((now - (äldst.get("updatedMs") or 0)) / DAY_MS, 1),
                                äldst.get("key") or ""), tysta)
 
-    oskattade = [i for i in öppna_allt if not i.get("storyPoints")]
+    # En epic bär inte sin egen skattning: arbetet ligger på barnen, och epikens poäng
+    # vore en påhittad siffra ovanpå deras. En epic vars barn är skattade tjatar vi
+    # därför inte om (mätt: de tre levande epikerna stod i raden medan alla deras barn
+    # hade poäng); en epic vars barn saknar poäng hör fortfarande dit.
+    epics_med_skattade_barn = {str(i.get("parentKey") or "") for i in issues if i.get("storyPoints")}
+    oskattade = [i for i in öppna_allt if not i.get("storyPoints")
+                 and not (str(i.get("typeName") or "").lower() == "epic"
+                          and str(i.get("key") or "") in epics_med_skattade_barn)]
     if oskattade:
         rad("unestimated", "info", len(oskattade), "utan skattning",
             "{} öppna".format(len(öppna_allt)), oskattade)

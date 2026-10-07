@@ -195,6 +195,18 @@ check(stale["count"] == 2 and stale["keys"][0] == "S-6",
 unestimated = [row for row in r["rows"] if row["kind"] == "unestimated"][0]
 check(unestimated["count"] == 2 and "S-5" in unestimated["keys"] and "S-9" in unestimated["keys"],
       "utan skattning gäller allt öppet, inte bara sprinten", unestimated)
+
+# En epic bär inte sin egen skattning: har barnen poäng skall epiken inte tjatas om.
+epic_board = {"sprint": {"id": "7", "name": "Sprint 7", "startMs": NOW, "endMs": NOW + 2 * DAY},
+              "issues": [issue("S-1", typeName="Epic", summary="A. Området"),
+                         issue("S-2", typeName="Story", parentKey="S-1", storyPoints=3),
+                         issue("S-3", typeName="Epic", summary="B. Tomt"),
+                         issue("S-4", typeName="Story", parentKey="S-3")],
+              "backlog": []}
+u = server.rapport({"boards": [epic_board]}, now=NOW)
+osk = [row for row in u["rows"] if row["kind"] == "unestimated"]
+check(len(osk) == 1 and "S-1" not in osk[0]["keys"] and "S-3" in osk[0]["keys"],
+      "epiken med skattade barn tjatar inte, epiken utan skattning gör det", osk)
 closed = [row for row in r["rows"] if row["kind"] == "closedUnowned"][0]
 check(closed["count"] == 2, "stängda utan ansvarig senaste veckan", closed)
 check([p["name"] for p in r["people"]] == ["Ada"] and r["people"][0]["open"] == 2,
