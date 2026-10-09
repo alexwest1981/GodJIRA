@@ -215,6 +215,40 @@ check([p["name"] for p in r["people"]] == ["Ada"] and r["people"][0]["open"] == 
 check(r["people"][0]["points"] == 5.0, "personens poäng är de öppnas", r["people"][0])
 check(all(p["name"] for p in r["people"]), "ingen rad utan namn i personlistan", r["people"])
 
+# Bedömningen: läget i tid och poäng, styrkan, svagheterna och prognosen. Talen skall
+# komma ur sprintens egna datum och ärendenas egna poäng -- inte ur en gissning.
+p = r["position"]
+check(p["runDays"] == 2 and p["timeShare"] == 40.0,
+      "tiden räknas på sprintens egna datum", p)
+check(p["points"] == 11.0 and p["pointsShare"] == 36.4,
+      "poängandelen är sprintens klara mot sprintens hela", p)
+check(p["pace"] == 2.0 and p["needed"] == 2.3,
+      "takten hittills och takten som krävs", p)
+check(p["expected"] == 6.0 and p["expectedLeft"] == 5.0,
+      "vid dagens slut: en dag till i samma takt, aldrig mer än scenariot", p)
+check([s["label"] for s in r["strengths"]] == ["ärenden stängs"],
+      "styrkan som bär ett tal (och ingen påhittad)", r["strengths"])
+check([w["label"] for w in r["weaknesses"]] == ["efter plan", "takten räcker inte"],
+      "svagheterna: andelen av poängen och takten", r["weaknesses"])
+check([n["label"] for n in r["forecast"]] == ["Vid dagens slut"] and
+      r["forecast"][0]["detail"] == "6.0 p klara, 5.0 p kvar om takten håller",
+      "prognosen namnges och bär sina tal", r["forecast"])
+
+# En frisk tavla skall ge styrkor, inte en tom rapport: det är hela skälet till att
+# bedömningen finns. Ett ärende i taget kontrolleras via etiketterna.
+rent = {"sprint": {"id": "7", "name": "Sprint 7", "goal": "målet", "startMs": NOW - DAY,
+                   "endMs": NOW + DAY},
+        "issues": [issue("S-1", sprintId="7", assigneeName="Ada", storyPoints=1, updatedMs=NOW),
+                   issue("S-2", sprintId="7", statusCategory="done", resolutionMs=NOW,
+                         assigneeName="Ada", storyPoints=3)],
+        "backlog": []}
+r_frisk = server.rapport({"boards": [rent]}, now=NOW)
+styr = {s["label"]: s["detail"] for s in r_frisk["strengths"]}
+check({"före plan", "takten håller", "ärenden stängs", "tavlan är i ordning"} <= set(styr),
+      "en frisk tavla ger sina styrkor", sorted(styr))
+check(styr["tavlan är i ordning"] == "1 öppna · alla med ägare och skattning · inget orört i 7 dygn",
+      "styrkan väger öppna, ägare, skattning och orördhet", styr.get("tavlan är i ordning"))
+
 # Ett mål som finns skall tysta raden, och ett pågående ärende skall tysta "ingen har börjat".
 lugn = json.loads(json.dumps(board))
 lugn["sprint"]["goal"] = "leverera bokningen"
@@ -225,12 +259,29 @@ check("goal" not in kinds2 and "noWork" not in kinds2,
       "mål och påbörjat arbete tar bort sina rader", sorted(kinds2))
 check(r2["facts"]["inProgress"] == 1, "det pågående ärendet räknas", r2["facts"])
 
+# Sista dagen: tiden själv är en svaghet, och taktkravet är hela återstoden.
+slut = json.loads(json.dumps(lugn))
+slut["sprint"]["endMs"] = NOW + DAY
+r_slut = server.rapport({"boards": [slut]}, now=NOW)
+svag = {w["label"]: w["detail"] for w in r_slut["weaknesses"]}
+check(svag.get("tiden är snart slut") == "1 d kvar · 3 ärenden (7.0 p) kvar",
+      "sista dagen står som en svaghet med sina egna tal", svag)
+check(r_slut["position"]["needed"] == 7.0
+      and "arbete pågår" in {s["label"] for s in r_slut["strengths"]},
+      "en dag kvar ger hela återstoden som taktkrav, och det pågående arbetet syns",
+      r_slut["position"])
+
 # Utan aktiv sprint: en rad som säger det, i stället för en krasch eller en tom ruta.
 utan = server.rapport({"boards": [{"sprint": {}, "issues": [issue("S-1")], "backlog": []}]}, now=NOW)
 check(utan["rows"] and utan["rows"][0]["kind"] == "noSprint" and utan["facts"]["issues"] == 0,
       "utan aktiv sprint sägs det rakt ut", utan["rows"])
+check(utan["strengths"] == [] and utan["weaknesses"] == [] and utan["forecast"] == []
+      and utan["position"]["points"] == 0,
+      "utan sprint blir bedömningen tom, inte påhittad", utan["position"])
 check(server.rapport({}, now=NOW)["rows"][0]["kind"] == "noSprint",
       "ett tomt svar ger en rad, inte en krasch")
+check(server.rapport({}, now=NOW)["strengths"] == [],
+      "ett tomt svar ger ingen påhittad styrka")
 
 # --- eller utan klocka --------------------------------------------------------
 fresh = server.summary([issue("S-1", statusCategory="done", resolutionMs=time.time() * 1000)], now=0)

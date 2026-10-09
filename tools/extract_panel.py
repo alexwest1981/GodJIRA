@@ -149,7 +149,19 @@ EXTRA = ("oassignerat", "standarden", "nytt projekt", "privata", "publika",
          # Rapportens rader: de skrivs av servern (rapport() i panel/server.py) och
          # ritas ordagrant av panelen, alltså finns de ingen annan stans i markupen.
          "ingen aktiv sprint", "sprinten har inget mål", "ingen har börjat",
-         "orört länge", "utan skattning", "stängda utan ansvarig")
+         "orört länge", "utan skattning", "stängda utan ansvarig",
+         # Rapportens bedömning (samma funktion): rubrikerna och etiketterna för
+         # styrkorna, svagheterna och prognosen. Detaljerna under dem bär talen och
+         # översätts inte -- de är siffror med enheter.
+         "Styrkor", "Svagheter", "Vid dagens slut",
+         "före plan", "efter plan", "takten håller", "takten räcker inte",
+         "arbete pågår", "ärenden stängs", "tavlan är i ordning", "tiden är snart slut",
+         # Ord som bygger detaljerna ("13.2 p/dag klart, 3.0 p/dag krävs"). Servern skriver
+         # hela meningen med dessa fraser, och panelen översätter den ord för ord -- därför
+         # är det FRASERNA som är nycklar, inte meningarna ("dygn" fanns redan).
+         "av poängen klara", "av tiden gången", "p/dag klart", "p/dag krävs", "i arbete",
+         "stängda senaste veckan", "alla med ägare och skattning", "inget orört i",
+         "om takten håller")
 for word in EXTRA:
     found.setdefault(word, set()).add("extra")
 

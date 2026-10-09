@@ -717,6 +717,8 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
   .wl .r.need .dot { background: var(--muted); }
   .wl .r.need.wait .dot { background: var(--amber); }
   .wl .r.need.block .dot { background: var(--red); }
+  .wl .r.need.good { border-left: 2px solid var(--green); }
+  .wl .r.need.good .dot { background: var(--green); }
   .runNote { padding: 0 13px 12px; color: var(--text-2); font-size: 12px; }
   .runNote .okdot { color: var(--green); }
   .cockpit .facts { margin-top: 14px; }
@@ -3056,10 +3058,23 @@ function rapportText(d) {
               (f.inProgress || 0) + " " + t("pågår")].join(" · "));
   if ((r.people || []).length)
     rader.push(t("Per person") + ": " + r.people.map(p => p.name + " " + p.open + " (" + p.points + " p)").join(" · "));
+  // Bedömningen: styrkorna, svagheterna och var vi står vid dagens slut. Det är den
+  // delen en standup går igenom -- åtgärdslistan under är bara det som skall göras.
+  // Prognosen står som en egen rad (den är ett svar, inte en punkt), resten som avsnitt.
+  // Detaljerna byggs av servern med svenska fraser ("av tiden gången"); de översätts ord
+  // för ord här, samma väg som panelen gör i DOM:en. Saknas translateText (provet kör
+  // bara den här funktionen) står texten kvar som den är.
+  const ord = (s) => typeof translateText === "function" ? (translateText(s) || s) : (s || "");
+  (r.forecast || []).forEach(n => rader.push(t(n.label) + ": " + ord(n.detail)));
+  const avsnitt = (titel, lista) => { if (!(lista || []).length) return;
+    rader.push(""); rader.push(t(titel) + ":");
+    lista.forEach(n => rader.push("• " + t(n.label) + (n.detail ? " — " + ord(n.detail) : ""))); };
+  avsnitt("Styrkor", r.strengths);
+  avsnitt("Svagheter", r.weaknesses);
   rader.push("");
   rader.push(t("Att ta upp i dag") + ":");
   (r.rows || []).forEach((n, i) => rader.push((i + 1) + ". " + (n.count > 1 ? n.count + " " : "") +
-    t(n.label) + (n.detail ? " — " + n.detail : "") +
+    t(n.label) + (n.detail ? " — " + ord(n.detail) : "") +
     ((n.keys || []).length ? " · " + n.keys.join(" ") : "")));
   if (!(r.rows || []).length) rader.push("– " + t("inget att ta upp — tavlan är i ordning"));
   return rader.join("\n");
@@ -3108,6 +3123,15 @@ function insightRapport(d) {
   const mål = sp.goal
     ? `<div class="note">${esc(sp.goal)}</div>`
     : '<div class="note meta">sprinten har inget mål</div>';
+  const prognos = (r.forecast || []).map(n =>
+    `<div class="note">${esc(n.label)} · ${esc(n.detail)}</div>`).join("");
+  // Bedömningen ritas bara när den har något att säga: en rubrik med tomt under ser ut
+  // som ett fel, och "inget att ta upp" står redan i åtgärdsrutan.
+  const bedömning = (titel, lista, level) => !(lista || []).length ? "" :
+    '<div class="panel"><h3>' + esc(titel) + '</h3><div class="body wl">' +
+    lista.map(n => '<div class="r need ' + level + '"><span class="dot"></span><span class="t">' +
+      esc(n.label) + (n.detail ? ' <span class="meta">' + esc(n.detail) + "</span>" : "") +
+      "</span></div>").join("") + '</div></div>';
   return '<div class="stack">' +
     `<div class="panel"><h3>Sprintens läge <span class="meta">${esc(sp.name || "ingen aktiv sprint")}</span></h3>` +
       '<div class="body">' +
@@ -3117,7 +3141,9 @@ function insightRapport(d) {
            ["klara", f.done || 0, (f.pointsDone || 0) + " p"],
            ["kvar", f.open || 0, (f.pointsOpen || 0) + " p"],
            ["pågår", f.inProgress || 0, ""]]) +
-      mål + '</div></div>' +
+      mål + prognos + '</div></div>' +
+    bedömning("Styrkor", r.strengths, "good") +
+    bedömning("Svagheter", r.weaknesses, "wait") +
     '<div class="panel"><h3>Att ta upp i dag <span class="meta">' + (r.rows || []).length + '</span></h3>' +
       '<div class="body wl">' + rader + '</div></div>' +
     '<div class="panel"><h3>Per person <span class="meta">öppna i sprinten</span></h3>' +

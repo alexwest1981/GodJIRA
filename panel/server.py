@@ -1480,7 +1480,7 @@ def _now(now: float) -> float:
     return now or time.time() * 1000.0
 
 
-def _share(count: int, total: int) -> float:
+def _share(count: float, total: float) -> float:
     return round(100.0 * count / total, 1) if total else 0.0
 
 
@@ -1664,6 +1664,10 @@ def rapport(jira: dict, now: float = 0.0, limit: int = 8) -> dict:
     Raderna är med flit få. Varje rad måste vara något att GÖRA i dag, annars är den
     brus: "utan ansvarig" i backloggen står redan i kön på Översikt och upprepas inte
     här, och epics som saknar ägare fångas av skattningsraden.
+
+    Rader är åtgärder; `strengths`, `weaknesses` och `forecast` är BEDÖMNINGEN -- läget
+    i tid och poäng, och var vi står vid dagens slut om takten håller. Utan den blir
+    rapporten tom just när tavlan är frisk, alltså precis när den är värd att läsa upp.
     """
     now = _now(now)
     board = (jira.get("boards") or [{}])[0]
@@ -1699,10 +1703,12 @@ def rapport(jira: dict, now: float = 0.0, limit: int = 8) -> dict:
         if öppna and not arbete and stängda_vecka:
             rad("noWork", "wait", len(öppna), "ingen har börjat",
                 "{} stängda senaste veckan".format(len(stängda_vecka)), öppna)
-        utan_ägare = [i for i in öppna if not (i.get("assigneeName") or i.get("assigneeEmail"))]
-        if utan_ägare:
-            rad("unowned", "wait", len(utan_ägare), "utan ansvarig",
-                str(sprint.get("name") or ""), utan_ägare)
+    # Den som ingen äger hör i åtgärdsraden nedan, och i bedömningen längre ner: räknas
+    # därför en gång, utanför grenen -- en tom lista utan sprint är samma svar.
+    utan_ägare = [i for i in öppna if not (i.get("assigneeName") or i.get("assigneeEmail"))]
+    if sid and utan_ägare:
+        rad("unowned", "wait", len(utan_ägare), "utan ansvarig",
+            str(sprint.get("name") or ""), utan_ägare)
 
     # Orört: en rad som ingen rört på en vecka är den som glöms bort, och den bär ofta
     # en deadline i sin egen titel. Veckan är en ratt (RAPPORT_DYGN), inte en sanning.
@@ -1735,6 +1741,69 @@ def rapport(jira: dict, now: float = 0.0, limit: int = 8) -> dict:
         rad("closedUnowned", "info", len(stängda_utan), "stängda utan ansvarig",
             "{:.1f} stängda senaste veckan".format(len(stängda_vecka)), stängda_utan)
 
+    # --- bedömningen: läget i tid och poäng, styrkorna och svagheterna -------------
+    # Raderna ovan är något att GÖRA i dag. Det här är vad de siffrorna BETYDER: takten
+    # hittills mot takten som krävs, och var vi står vid dagens slut om inget ändras.
+    # Allt mäts ur sprintens egna datum och ärendenas egna poäng -- inget antas, och
+    # utan poäng på sprinten faller de poängbundna raderna bort i stället för att gissa.
+    # Etiketterna är svenska nycklar (panelen översätter dem); detaljen bär talen.
+    start_ms = int(sprint.get("startMs") or 0)
+    # Utan båda datumen finns ingen tid att mäta emot: andelen blir noll, inte negativ
+    # (ett slut före start är fel i Jira, inte ett minustecken i rapporten).
+    span = (slut - start_ms) if (start_ms and slut > start_ms) else 0
+    run = min(span, max(0, now - start_ms)) if span else 0
+    time_share = _share(run, span)
+    scope = poäng(aktiv)
+    done_points, open_points = poäng(klara), poäng(öppna)
+    points_share = _share(done_points, scope)
+    dagar_gångna = _kalenderdagar(start_ms, now) if start_ms else 0
+    dagar_kvar = _kalenderdagar(now, slut) if slut else 0
+    pace = round(done_points / dagar_gångna, 1) if dagar_gångna else 0.0
+    needed = round(open_points / dagar_kvar, 1) if dagar_kvar else 0.0
+    # Vid dagens slut: en dag till i samma takt, aldrig mer än sprintens eget scope.
+    expected = round(min(scope, done_points + pace), 1) if scope else 0.0
+    expected_left = round(max(0.0, scope - expected), 1)
+
+    strengths: list = []
+    weaknesses: list = []
+    forecast: list = []
+
+    def note(into: list, label: str, detail: str) -> None:
+        into.append({"label": label, "detail": detail})
+
+    if scope:
+        # Samma mått på båda sidor: andelen av poängen mot andelen av tiden.
+        if points_share >= time_share:
+            note(strengths, "före plan",
+                 "{} % av poängen klara, {} % av tiden gången".format(points_share, time_share))
+        else:
+            note(weaknesses, "efter plan",
+                 "{} % av poängen klara, {} % av tiden gången".format(points_share, time_share))
+        if needed and pace >= needed:
+            note(strengths, "takten håller",
+                 "{} p/dag klart, {} p/dag krävs".format(pace, needed))
+        elif needed:
+            note(weaknesses, "takten räcker inte",
+                 "{} p/dag klart, {} p/dag krävs".format(pace, needed))
+        if slut > now:
+            note(forecast, "Vid dagens slut",
+                 "{} p klara, {} p kvar om takten håller".format(expected, expected_left))
+    if arbete:
+        # Talet, inte meningen: etiketten säger redan vad det är ("arbete pågår").
+        note(strengths, "arbete pågår", "{} i arbete".format(len(arbete)))
+    if stängda_vecka:
+        note(strengths, "ärenden stängs",
+             "{} stängda senaste veckan".format(len(stängda_vecka)))
+    # Tavlan är i ordning när ingen av åtgärdsraderna tänds. Då står det som en styrka i
+    # stället för att rapporten bara skall se tom ut.
+    if sid and öppna and not utan_ägare and not oskattade and not tysta:
+        note(strengths, "tavlan är i ordning",
+             "{} öppna · alla med ägare och skattning · inget orört i {} dygn".format(
+                 len(öppna), int(RAPPORT_DYGN)))
+    if sid and öppna and dagar_kvar <= 1:
+        note(weaknesses, "tiden är snart slut",
+             "{} d kvar · {} ärenden ({:.1f} p) kvar".format(dagar_kvar, len(öppna), open_points))
+
     folk: dict = {}
     for i in öppna:
         # Den som ingen äger hör inte i en personlista -- "utan ansvarig" har sin egen
@@ -1750,11 +1819,18 @@ def rapport(jira: dict, now: float = 0.0, limit: int = 8) -> dict:
     return {
         "sprint": {"id": sid, "name": sprint.get("name") or "", "goal": sprint.get("goal") or "",
                    "start": int(sprint.get("startMs") or 0), "end": slut,
-                   "daysLeft": _kalenderdagar(now, slut) if slut else 0},
+                   "daysLeft": dagar_kvar},
         "facts": {"issues": len(aktiv), "done": len(klara), "open": len(öppna),
-                  "pointsDone": poäng(klara), "pointsOpen": poäng(öppna),
+                  "pointsDone": done_points, "pointsOpen": open_points,
                   "inProgress": len(arbete), "closedWeek": len(stängda_vecka),
                   "staleDays": int(RAPPORT_DYGN)},
+        # Läget i tid och poäng -- talen bedömningen och prognosen vilar på, så att
+        # panelen kan visa dem utan att räkna en andra gång.
+        "position": {"runDays": dagar_gångna, "timeShare": time_share,
+                     "pointsShare": points_share, "points": scope,
+                     "pace": pace, "needed": needed,
+                     "expected": expected, "expectedLeft": expected_left},
+        "strengths": strengths, "weaknesses": weaknesses, "forecast": forecast,
         "people": personer,
         "rows": rader,
     }

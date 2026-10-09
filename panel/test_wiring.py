@@ -260,12 +260,19 @@ const d = { rapport: {
   sprint: { name: "Sprint 7", goal: "", start: 0, end: 0, daysLeft: 3 },
   facts: { issues: 14, done: 4, open: 10, pointsDone: 14.5, pointsOpen: 26, inProgress: 0 },
   people: [{ name: "Ada", open: 2, points: 7 }],
+  forecast: [{ label: "Vid dagens slut", detail: "20 p klara, 6 p kvar om takten håller" }],
+  strengths: [{ label: "takten håller", detail: "14.5 p/dag klart, 4 p/dag krävs" }],
+  weaknesses: [{ label: "tiden är snart slut", detail: "1 d kvar · 10 ärenden (26.0 p) kvar" }],
   rows: [{ kind: "goal", count: 1, label: "sprinten har inget mål", detail: "Sprint 7", keys: [] },
          { kind: "noWork", count: 10, label: "ingen har börjat",
            detail: "40 stängda senaste veckan", keys: ["SCRUM-1", "SCRUM-2"] }] } };
 const L = rapportText(d).split(String.fromCharCode(10));
 const vill = ["Sprint 7 · 3 DAYS", "14 ISSUES · klara 4 (14.5 p) · kvar 10 (26 p) · 0 pågår",
-              "Per person: Ada 2 (7 p)", "", "Att ta upp i dag:",
+              "Per person: Ada 2 (7 p)",
+              "Vid dagens slut: 20 p klara, 6 p kvar om takten håller",
+              "", "Styrkor:", "• takten håller — 14.5 p/dag klart, 4 p/dag krävs",
+              "", "Svagheter:", "• tiden är snart slut — 1 d kvar · 10 ärenden (26.0 p) kvar",
+              "", "Att ta upp i dag:",
               "1. sprinten har inget mål — Sprint 7",
               "2. 10 ingen har börjat — 40 stängda senaste veckan · SCRUM-1 SCRUM-2"];
 const tomt = rapportText({ rapport: { sprint: {}, facts: {}, rows: [], people: [] } })
@@ -282,6 +289,46 @@ console.log(JSON.stringify(L) === JSON.stringify(vill) &&
         check(utskrift_run.stdout.strip() == "OK",
               "utskriften bär siffrorna, raderna och orden ur språkfilen",
               (utskrift_run.stdout + utskrift_run.stderr).strip()[:160])
+
+    # Rapportens flik ritar bedömningen -- styrkorna, svagheterna och prognosen -- och
+    # ritar den bara när det finns något att säga. En rubrik med tomt under ser ut som
+    # ett fel, och då är en tom ruta bättre. Funktionen körs mot ett handgjort svar.
+    fn = re.search(r"function insightRapport\(d\) \{.*?\n\}", html, re.S)
+    check(bool(fn), "rapportens ritning går att läsa")
+    if fn:
+        delar = [re.search(r"const esc = [^\n]*;", html, re.S),
+                 re.search(r"const kpi = rows =>.*?;\s*\n", html, re.S),
+                 re.search(r"function rapportText\(d\) \{.*?\n\}", html, re.S)]
+        check(all(delar), "hjälparna runt ritningen går att läsa",
+              str([bool(d) for d in delar]))
+        with _tf.NamedTemporaryFile("w", suffix=".js", delete=False, encoding="utf-8") as fh:
+            fh.write("\n".join(d.group(0) for d in delar if d) + "\n" + fn.group(0) + """
+const t = s => s;
+const data = { rapport: {
+  sprint: { id: "7", name: "Sprint 7", goal: "", start: 0, end: 0, daysLeft: 1 },
+  facts: { issues: 14, done: 4, open: 10, pointsDone: 14.5, pointsOpen: 26, inProgress: 1 },
+  people: [], forecast: [{ label: "Vid dagens slut", detail: "20 p klara, 6 p kvar om takten håller" }],
+  strengths: [{ label: "takten håller", detail: "14.5 p/dag klart, 4 p/dag krävs" }],
+  weaknesses: [{ label: "tiden är snart slut", detail: "1 d kvar · 10 ärenden (26.0 p) kvar" }],
+  rows: [] } };
+const ut = insightRapport(data);
+const tomt = insightRapport({ rapport: { sprint: {}, facts: {}, rows: [], people: [],
+                                         strengths: [], weaknesses: [], forecast: [] } });
+const utan = insightRapport({ rapport: {} });
+console.log(ut.includes("Styrkor") && ut.includes("Svagheter") &&
+            ut.includes("Vid dagens slut") && ut.includes("takten håller") &&
+            ut.includes("need good") && ut.includes("need wait") &&
+            !tomt.includes("Styrkor") && !tomt.includes("Svagheter") &&
+            !tomt.includes("Vid dagens slut") &&
+            utan.includes("inget att ta upp")
+            ? "OK" : "FEL " + JSON.stringify([ut.slice(0, 60), tomt.slice(0, 60)]));
+""")
+            ritning_js = fh.name
+        ritning_run = _sp.run(["node", ritning_js], capture_output=True, text=True)
+        _os.unlink(ritning_js)
+        check(ritning_run.stdout.strip() == "OK",
+              "bedömningen ritas, och tom blir den ingen rubrik",
+              (ritning_run.stdout + ritning_run.stderr).strip()[:160])
 
     # Kunskapsgrafen går att GÅ I: en enhets grannar räknas ur relationerna, ett paket får
     # sina egna filer och sina egna ärenden (ingenting läckt från grannpaketet), och filens
