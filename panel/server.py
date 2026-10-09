@@ -28,6 +28,7 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 import tempfile
+import xml.etree.ElementTree as ET
 import queue
 import threading
 import time
@@ -1970,6 +1971,61 @@ def runs_read() -> dict:
     return dict(payload, ok=True)
 
 
+TESTS_DIR = os.environ.get(
+    "GODJIRA_TESTS",
+    os.path.join(os.path.expanduser("~"), "Documents", "Skolgrejer", "Systemarkitektur",
+                 "target", "surefire-reports"))
+
+
+def tests_read() -> dict:
+    """Senaste provkörningen, en rad per testklass.
+
+    Surefire skriver en XML-fil per klass i target/surefire-reports. En klass är grön när den
+    varken har fel eller felstopp, annars röd. Katalogen pekas om med GODJIRA_TESTS, så
+    panelen kan visa ett annat projekt utan att något byggs om.
+    """
+    folder = Path(TESTS_DIR).expanduser()
+    tom = {"ok": True, "dir": str(folder), "when": "", "classes": [],
+           "total": {"tests": 0, "failures": 0, "errors": 0, "skipped": 0, "time": 0.0},
+           "error": "ingen körning hittad"}
+    if not folder.is_dir():
+        return tom
+
+    def tal(rot, namn):
+        try:
+            return int(rot.get(namn) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    klasser, total, sekunder, nyast = [], {"tests": 0, "failures": 0, "errors": 0, "skipped": 0}, 0.0, 0.0
+    for fil in sorted(folder.glob("TEST-*.xml")):
+        try:
+            rot = ET.parse(str(fil)).getroot()
+        except ET.ParseError:
+            continue          # en halvskriven fil från en körning som avbröts
+        prov, fel = tal(rot, "tests"), tal(rot, "failures")
+        stopp, hoppade = tal(rot, "errors"), tal(rot, "skipped")
+        try:
+            tid = float(rot.get("time") or 0.0)
+        except ValueError:
+            tid = 0.0
+        namn = rot.get("name") or fil.stem.replace("TEST-", "")
+        klasser.append({"name": namn.split(".")[-1], "full": namn, "tests": prov,
+                        "failures": fel, "errors": stopp, "skipped": hoppade,
+                        "time": round(tid, 2), "ok": fel == 0 and stopp == 0})
+        total["tests"] += prov
+        total["failures"] += fel
+        total["errors"] += stopp
+        total["skipped"] += hoppade
+        sekunder += tid
+        nyast = max(nyast, fil.stat().st_mtime)
+    total["time"] = round(sekunder, 2)
+    klasser.sort(key=lambda k: (k["ok"], k["name"]))       # de röda först
+    return {"ok": True, "dir": str(folder),
+            "when": datetime.datetime.fromtimestamp(nyast).strftime("%Y-%m-%d %H:%M") if nyast else "",
+            "classes": klasser, "total": total, "error": "" if klasser else "ingen körning hittad"}
+
+
 def posthog_read() -> dict:
     """Vad PostHog-inställningen är: satt, vilket projekt, och om den svarar.
 
@@ -2736,6 +2792,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/api/insights":
             self._json(200, cached("insights", insights_read, ttl=180))
+            return
+        if path == "/api/tests":
+            # Kort cache: en körning tar en minut, och filerna skrivs bara av mvn test.
+            self._json(200, cached("tests", tests_read, ttl=30))
             return
         if path == "/api/sites":
             # Perioden är en del av cachenyckeln: 7 och 30 dygn är olika svar, inte samma.

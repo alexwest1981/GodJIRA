@@ -885,6 +885,13 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
       <div class="cols" id="cols"></div>
     </section>
 
+    <section class="view" id="v-tester">
+      <div class="panel">
+        <h3>Tester <span class="meta" id="testerMeta"></span></h3>
+        <div class="body"><div class="tablewrap"><table class="tal" id="testerTable"></table></div></div>
+      </div>
+    </section>
+
     <section class="view" id="v-items">
       <div class="tablewrap"><table id="itemsTable"></table></div>
     </section>
@@ -1158,7 +1165,7 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
 <script>
 const TEXT = {
   views: { overview: ["Översikt", "◫"], insights: ["Projekt", "◎"], board: ["Tavlan", "▤"], items: ["Uppgifter", "☰"], repos: ["Repon", "⌥"],
-           sites: ["Sites", "◔"],
+           sites: ["Sites", "◔"], tester: ["Tester", "✓"],
            import: ["Importera", "⇪"], setup: ["Kom igång", "★"], chat: ["Agenten", "◈"],
            admin: ["Admin", "⚑"], settings: ["Inställningar", "⚙"],
            mine: ["Mina uppgifter", "☑"] },
@@ -1479,6 +1486,8 @@ const ICONS = {
   chat: '<svg class="ico" viewBox="0 0 16 16"><path d="M13.5 9.5a1.5 1.5 0 0 1-1.5 1.5H7l-3 2.5V11H4a1.5 1.5 0 0 1-1.5-1.5v-6A1.5 1.5 0 0 1 4 2h8a1.5 1.5 0 0 1 1.5 1.5z"/><path d="M8 4.6v3M6.5 6.1h3"/></svg>',
   overview: '<svg class="ico" viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="5" rx="1.2"/><rect x="9" y="2" width="5" height="5" rx="1.2"/><rect x="2" y="9" width="5" height="5" rx="1.2"/><rect x="9" y="9" width="5" height="5" rx="1.2"/></svg>',
   insights: '<svg class="ico" viewBox="0 0 16 16"><path d="M3 13V9M8 13V4M13 13v-6"/></svg>',
+  // Tester: en bock. Samma pennbredd som grannarna, så raden förblir monokrom.
+  tester: '<svg class="ico" viewBox="0 0 16 16"><path d="M3.4 8.6l3 3 6.2-7"/></svg>',
   board: '<svg class="ico" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M6 3v10M10 3v10"/></svg>',
   items: '<svg class="ico" viewBox="0 0 16 16"><path d="M5.5 4.5h8M5.5 8h8M5.5 11.5h8"/><circle cx="3" cy="4.5" r=".9"/><circle cx="3" cy="8" r=".9"/><circle cx="3" cy="11.5" r=".9"/></svg>',
   repos: '<svg class="ico" viewBox="0 0 16 16"><path d="M2 5.5A1.5 1.5 0 0 1 3.5 4h2.3l1.2 1.6h5.5A1.5 1.5 0 0 1 14 7.1v4.4A1.5 1.5 0 0 1 12.5 13h-9A1.5 1.5 0 0 1 2 11.5z"/></svg>',
@@ -1499,7 +1508,7 @@ const navViews = () => Object.entries(TEXT.views).filter(([v]) => v !== "admin" 
 // och strecket hamnar före avdelningen så att grupperna syns som grupper.
 const RAIL = [
   ["flodet", ["overview", "mine", "board", "items", "import"]],
-  ["github", ["repos", "insights"]],
+  ["github", ["repos", "insights", "tester"]],
   ["agenterna", ["chat"]],
   ["sajterna", ["sites"]],
   ["systemet", ["settings", "admin", "setup"]],
@@ -2916,6 +2925,54 @@ async function insightLoad() {
     INSIGHT.error = "kunde inte läsa projektets siffror: " + e.message;
   }
   renderInsights();
+}
+
+// Proven: Surefires rapporter i target/surefire-reports, samma filer som `mvn test` skriver.
+// En klass är grön när den varken har fel eller felstopp. Katalogen kan pekas om med
+// GODJIRA_TESTS, så panelen kan visa ett annat projekt utan att något byggs om här.
+const TESTER = { data: null, error: "" };
+
+async function testLoad() {
+  try {
+    const svar = await (await fetch("/api/tests", { cache: "no-store" })).json();
+    TESTER.data = svar.ok ? svar : null;
+    TESTER.error = svar.ok ? "" : (svar.error || "inget svar");
+  } catch (e) {
+    TESTER.data = null;
+    TESTER.error = "kunde inte läsa proven: " + e.message;
+  }
+  renderTester();
+}
+
+function renderTester() {
+  const meta = document.getElementById("testerMeta");
+  const tabell = document.getElementById("testerTable");
+  if (!meta || !tabell) return;
+  if (TESTER.error) {
+    meta.textContent = "";
+    tabell.innerHTML = `<tbody><tr><td class="empty">${esc(TESTER.error)}</td></tr></tbody>`;
+    return;
+  }
+  const d = TESTER.data || {}, t = d.total || {};
+  const klasser = d.classes || [];
+  if (!klasser.length) {
+    // Ingen rapport alls: ingen grön bock, för det finns inget som är grönt.
+    meta.textContent = "";
+    tabell.innerHTML = `<tbody><tr><td class="empty">${esc(d.error || "ingen körning hittad")}</td></tr></tbody>`;
+    return;
+  }
+  const fel = (t.failures || 0) + (t.errors || 0);
+  meta.innerHTML = `<span style="color:var(--${fel ? "red" : "accent"})">${fel ? "✗" : "✓"} ` +
+    `${(t.tests || 0) - fel}/${t.tests || 0}</span> · ${fel} fel · ${esc(d.when || "")}`;
+  const rader = klasser.map(c => {
+    const kvar = c.tests - (c.failures + c.errors);
+    const mark = c.ok ? "✓" : "✗";
+    return `<tr><td style="width:22px;color:var(--${c.ok ? "accent" : "red"})">${mark}</td>` +
+      `<td>${esc(c.name)}</td>` +
+      `<td class="meta">${kvar}/${c.tests}</td>` +
+      `<td class="meta">${c.time} s</td></tr>`;
+  }).join("");
+  tabell.innerHTML = `<tbody>${rader}</tbody>`;
 }
 
 const kpi = rows => '<div class="facts kpi">' + rows.map(([label, value, note]) =>
@@ -5005,6 +5062,7 @@ function render() {
   renderSide(); renderCrumbs(); renderFilters(); renderItemProject();
   renderTokenAlert(); renderSettings(); renderTheme();
   if (view === "insights") renderInsights();
+  if (view === "tester") renderTester();
   if (view === "sites") renderSites();
   // Kartan ritar sin aktiva källa även när staten kommer in efter en omladdning --
   // annars står en djup länk (#karta?kalla=flow) med tom yta tills man byter vy (mätt).
@@ -5156,6 +5214,7 @@ function show(v) {
   if (view === "settings") { renderRights(); renderLanguage(); renderPosthog(); posthogLoad(); }
   if (view === "admin") adminLoad();
   if (view === "insights") insightLoad();
+  if (view === "tester") testLoad();
   if (view === "sites") siteLoad();
 }
 // Dra raderna i ändra-läget. Under draget flyttas noden förbi den rad man är över --

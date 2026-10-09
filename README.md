@@ -376,6 +376,7 @@ state pill and teammate avatar.
 | Tavlan | the board: `issues` + `backlog` merged, because the live work sits in the backlog whenever no sprint is active |
 | Uppgifter | Plane's table: every work item from **both** sources in one place, with source, id, status, priority, assignee, sprint |
 | Repon | all repositories, their visibility, language, and any open PRs/issues on them |
+| Tester | the last Surefire run, one row per test class: a green tick when the class ran through, a red cross when it did not, with the run's own timestamp in the heading |
 | Importera | a document in, a proposal out, and nothing written until a human has ticked off what should be there |
 
 The table is where the two sources actually meet, so GitHub's PRs and issues are shaped
