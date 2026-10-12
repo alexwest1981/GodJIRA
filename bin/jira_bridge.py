@@ -208,9 +208,16 @@ def store_secret(token, account):
 
 
 def clear_secret(account):
-    subprocess.run(
-        ["secret-tool", "clear", "service", SERVICE, "account", account],
-        check=True, capture_output=True)
+    """Tar bort nyckeln under båda namnen.
+
+    Den gamla posten (custom.jira) står kvar efter namnbytet, och `move_from_old_name`
+    flyttar tillbaka den in i den nya posten -- en borttagen nyckel kunde alltså komma
+    tillbaka av sig själv. Saknad post är inget fel.
+    """
+    for name in (SERVICE, SERVICE_OLD):
+        subprocess.run(
+            ["secret-tool", "clear", "service", name, "account", account],
+            capture_output=True)
 
 
 FLOW_CONFIG_PATH = os.path.join(HOME, ".config", "jira-flow", "config.json")
