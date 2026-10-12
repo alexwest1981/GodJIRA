@@ -68,13 +68,24 @@ check("tokenPage" in status and status["tokenPage"].startswith("https://id.atlas
       "länken till Atlassian följer med", str(status.get("tokenPage")))
 # Läckan: svaret får beskriva nyckeln, aldrig bära den. En Atlassian-nyckel är lång
 # och alfanumerisk -- finns en sådan sträng i svaret är den på fel plats.
-leak = [k for k, v in status.items() if isinstance(v, str) and re.fullmatch(r"[A-Za-z0-9_-]{20,}", v)]
+leak = [k for k, v in status.items() if isinstance(v, str) and server.TOKEN_SHAPE.fullmatch(v)]
 check(leak == [], "svaret bär inte nyckeln", "fält som ser ut som en nyckel: " + ", ".join(leak))
 
 code, answer = post("/api/token", {})
 check(code == 400 and answer.get("ok") is False, "en tom förfrågan nekas", str(answer))
 code, answer = post("/api/token", {"token": "inte-en-nyckel"})
 check(code == 400 and answer.get("ok") is False, "skräp nekas innan bryggan rörs", str(answer))
+# Formen: en riktig nyckel har en kontrollsumma efter "=" ("...EAKM=5AE7CA2F"). Provet
+# håller fast vid hela formen, inte vid ett prefix -- den här gången gick varje nyckel
+# med "=" i genom nålsögat och blev "det såg inte ut som en Atlassian-nyckel".
+check(server.TOKEN_SHAPE.fullmatch("ATATT3xFfGF0" + "Ab1_-" * 40 + "=5AE7CA2F"),
+      "en riktig nyckel med = i svansen har rätt form")
+check(server.TOKEN_SHAPE.fullmatch("ATCTT" + "Zx9_" * 12 + "=4DC9ABA3"),
+      "en scopad nyckel har rätt form")
+check(not server.TOKEN_SHAPE.fullmatch("inkedalex@gmail.com"), "en e-postadress är inte en nyckel")
+check(not server.TOKEN_SHAPE.fullmatch("https://danieleriksson026.atlassian.net/"),
+      "en sajt-adress är inte en nyckel")
+check(not server.TOKEN_SHAPE.fullmatch("ATATT3xFfGF0 hej"), "mellanslag i nyckeln gör den inte till en nyckel")
 
 # Kartan i n8n:s rapport: den kom utifrån, alltså skall den genom samma kontroll som
 # allt annat utifrån -- men den skall inte tystas. Den föll utanför vitlistan förut.

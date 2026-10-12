@@ -912,6 +912,10 @@ SCAN_DIR = Path.home() / ".config/jira-flow"
 TOKEN_META = SCAN_DIR / "token.json"        # nyckelns utgångsdatum, aldrig nyckeln
 TOKEN_PAGE = "https://id.atlassian.com/manage-profile/security/api-tokens"
 WARN_DAYS = 14                              # så nära utgången larmar panelen
+# Formen på en Atlassian-nyckel: "ATATT3xFfGF0" + base64 + "=<8 hex som kontrollsumma>"
+# (ATCTT... för scopade nycklar). `=` hör alltså till nyckeln -- utan den i teckenklassen
+# nekades varje riktig nyckel som "det såg inte ut som en Atlassian-nyckel".
+TOKEN_SHAPE = re.compile(r"[A-Za-z0-9_\-=]{20,}")
 
 
 def days_left(expires: str, today: str = "") -> int | None:
@@ -1114,7 +1118,7 @@ def token_save(payload: dict) -> tuple[int, dict]:
     token = str(payload.get("token") or "").strip()
     if not token:
         return 400, {"ok": False, "error": "ingen nyckel i förfrågan"}
-    if not re.fullmatch(r"[A-Za-z0-9_\-]{20,}", token):
+    if not TOKEN_SHAPE.fullmatch(token):
         return 400, {"ok": False, "error": "det såg inte ut som en Atlassian-nyckel"}
     handle, name = tempfile.mkstemp(prefix="godjira-token-")
     path = Path(name)
