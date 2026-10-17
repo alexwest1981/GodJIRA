@@ -1141,6 +1141,10 @@ try { const t = localStorage.getItem("godjira-theme"); if (t) document.documentE
           </div>
         </div>
         <div class="panel">
+          <h3>Källa <span class="meta">vilken tracker panelen läser — Jira eller lokal Paperclip</span></h3>
+          <div class="body"><div id="backendBox" class="meta">läser …</div></div>
+        </div>
+        <div class="panel">
           <h3>Koppla på PostHog <span class="meta">trafiken hämtas ur ditt eget projekt</span></h3>
           <div class="body"><div id="phBox">läser …</div></div>
         </div>
@@ -2855,6 +2859,57 @@ async function posthogLoad() {
     POSTHOG.error = "kunde inte läsa PostHog-inställningen: " + e.message;
   }
   renderPosthog();
+}
+
+// Källan: panelen frågar bryggan, och bryggan svarar ur den tracker som är vald.
+// Valet sparas i panel.json (server: backend_save) — samma fil som PostHog-nyckeln.
+const BACKEND = { data: null, error: "" };
+
+async function backendLoad() {
+  try {
+    const r = await fetch("/api/backend");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const a = await r.json();
+    if (!a.ok) throw new Error(a.error || "svaret gick inte att läsa");
+    BACKEND.data = a;
+    BACKEND.error = "";
+  } catch (e) {
+    BACKEND.error = "källan svarar inte: " + e.message;
+  }
+  renderBackend();
+}
+
+function renderBackend() {
+  const box = document.getElementById("backendBox");
+  if (!box) return;
+  const d = BACKEND.data || {};
+  const now = d.backend || "jira";
+  const who = (d.account || {}).displayName || (d.account || {}).email || "";
+  box.classList.remove("meta");
+  box.innerHTML =
+    `<div class="linkbar">` +
+    ["jira", "paperclip"].map(b =>
+      `<button class="chip${b === now ? " on" : ""}" data-backend="${b}">${b === "jira" ? "Jira" : "Paperclip"}</button>`).join("") +
+    `<span class="grow"></span>` +
+    `<span class="meta">${esc(who)}${d.connected === false ? " · " + esc("källan svarar inte") : ""}</span>` +
+    `</div>` +
+    (BACKEND.error ? `<div class="meta err" style="margin-top:10px">${esc(BACKEND.error)}</div>` : "");
+}
+
+async function backendSave(backend) {
+  BACKEND.error = "";
+  try {
+    const r = await fetch("/api/backend", { method: "POST", headers: { "Content-Type": "application/json" },
+                                           body: JSON.stringify({ backend }) });
+    const a = await r.json();
+    if (!r.ok || !a.ok) throw new Error(a.error || "HTTP " + r.status);
+    BACKEND.data = a;
+    await load(true);      // varje vy läser om ur den nya källan
+    renderBackend();
+  } catch (e) {
+    BACKEND.error = e.message;
+    renderBackend();
+  }
 }
 
 function renderSettings() {
@@ -5211,7 +5266,7 @@ function show(v) {
   // Vyerna som frågar efter något eget laddar det när de öppnas -- samma väg för
   // kugghjulet, setupen och första starten.
   if (view === "setup") setupLoad();
-  if (view === "settings") { renderRights(); renderLanguage(); renderPosthog(); posthogLoad(); }
+  if (view === "settings") { renderRights(); renderLanguage(); renderPosthog(); posthogLoad(); renderBackend(); backendLoad(); }
   if (view === "admin") adminLoad();
   if (view === "insights") insightLoad();
   if (view === "tester") testLoad();
@@ -5346,6 +5401,8 @@ document.addEventListener("click", e => {
     return;
   }
   if (e.target.closest('[data-act="token-rm"]')) return tokenSave({ rm: true });
+  const vald = e.target.closest("[data-backend]");
+  if (vald) return backendSave(vald.dataset.backend);
   if (e.target.closest('[data-act="posthog-save"]')) {
     posthogSave({
       nyckel: (document.getElementById("phNyckel") || {}).value || "",

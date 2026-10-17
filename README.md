@@ -320,6 +320,8 @@ GodJIRA.plugin/
 ├── n8n/                     the flow on a canvas: bin/flow-call.sh (the seam),
 │                            workflows/*.workflow.ts, README.md
 └── bin/jira_bridge.py       everything network/credential related (Python stdlib only)
+    bin/bridge_choice.py     the `bridge` door: Jira or Paperclip, chosen in the panel
+    bin/paperclip_bridge.py  the same answers (snapshot/status/journal) from local Paperclip
     bin/jira_mcp.py          the same, over MCP, for an agent in an editor
     bin/jira_flow.py         take the next critical issue; editor shims + commit rule
     bin/i18n_check.py        translation check: same keys, same placeholders
@@ -345,6 +347,21 @@ The hub does not go through n8n: it calls the same CLIs through
 `n8n/bin/flow-call.sh` (the seam both doors share), so it can show something new
 but never believe something new. Its first answer costs ~9 s (four CLI calls) and a browser refresh
 costs nothing for 60 s (`PANEL_TTL`).
+
+## Two sources, one door
+
+`bridge` now goes through `bin/bridge_choice.py`, which reads `backend` from
+`~/.config/godjira/panel.json` (the panel's own file; the switch is in Settings). The
+reads both sources can answer — `snapshot`, `status`, `journal` — come from the chosen
+one, and `panel/test_backend.py` holds the field names to it. Everything else (login,
+keys, language, permissions) stays on `jira_bridge.py`, because that is the Jira
+account's surface and not the issues'.
+
+`bin/paperclip_bridge.py` answers with the same shape from a local Paperclip
+(`http://127.0.0.1:3100`, see `tools/jira-migrate/`). It leaves sprints, story points
+and issue types empty rather than inventing them: the panel shows `--` for a value no
+source has. Writes — status moves, comments, the `work`/`next`/`plan` flow, the import
+door — are still Jira only.
 
 ```sh
 systemctl --user status godjira-panel      # alive, and starts at login

@@ -38,7 +38,8 @@ case "${1:-flow}" in
 		;;
 	bridge)
 		shift
-		out=$(cd "$root" && python3 bin/jira_bridge.py "$@" 2>&1)
+		# Källan väljs i panelen (panel.json: backend): Jira eller lokal Paperclip.
+		out=$(cd "$root" && python3 bin/bridge_choice.py "$@" 2>&1)
 		;;
 	*)
 		shift

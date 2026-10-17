@@ -2354,6 +2354,7 @@ def state() -> dict:
                     # knapp som inte gör något på en sajt där kontot inte får skapa.
                     "projectCan": pool.submit(lambda: cached("projectCan", project_can))}
         answer = {"generatedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                  "backend": backend_read(),
                   "flow": flow, **{name: job.result() for name, job in jobs.items()}}
         # Byggstatus: den behöver länkarna (vilka repon man jobbar i) och GitHub-namnet,
         # så den går efter poolen. Cachad -- ett kallt svar betalar två gh-anrop per repo.
@@ -2408,7 +2409,61 @@ def team_save(payload: dict) -> tuple:
     return 200, {"ok": True, "team": team}
 
 
+BACKENDS = ("jira", "paperclip")
+
+
+def backend_read() -> str:
+    """Källan panelen läser: jira eller paperclip. Filen ägs av panelen (0600)."""
+    try:
+        data = json.loads(PANEL_KONFIG.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "jira"
+    value = str((data or {}).get("backend") or "jira").strip().lower() if isinstance(data, dict) else "jira"
+    return value if value in BACKENDS else "jira"
+
+
+def backend_save(payload: dict) -> tuple:
+    """Byt källa. Skriv, fråga den nya källan, och lägg tillbaka den gamla om den inte svarar.
+
+    Samma ordning som PostHog-nyckeln: ett val som ligger kvar och pekar på en död
+    Paperclip ser ut som en panel utan ärenden, och då letar man i fel ände.
+    """
+    want = str(payload.get("backend") or "").strip().lower()
+    if want not in BACKENDS:
+        return 400, {"ok": False, "error": "källan är jira eller paperclip"}
+    before = backend_read()
+    try:
+        data = json.loads(PANEL_KONFIG.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    data = data if isinstance(data, dict) else {}
+    data["backend"] = want
+    try:
+        PANEL_KONFIG.parent.mkdir(parents=True, exist_ok=True)
+        PANEL_KONFIG.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        PANEL_KONFIG.chmod(0o600)
+    except OSError as exc:
+        return 500, {"ok": False, "error": "kunde inte skriva {}: {}".format(PANEL_KONFIG, exc)}
+
+    env = seam("bridge", "status", timeout=60)
+    chose = env.get("payload") or {}
+    if env.get("exitCode") != 0 or str(chose.get("mode") or "") != ("paperclip" if want == "paperclip" else "real"):
+        data["backend"] = before
+        try:
+            PANEL_KONFIG.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        except OSError:
+            pass          # gammalt val kvar i minnet ändå: svaret säger att det inte tog
+        return 502, {"ok": False, "backend": before,
+                     "error": "källan svarar inte: {}".format(first_line(env))}
+    _cache.clear()        # nästa läsning ska komma från den nya källan
+    return 200, {"ok": True, "backend": want,
+                 "account": chose.get("account") or {},
+                 "connected": bool(chose.get("connected"))}
+
+
 MINE_DIR = Path.home() / ".config" / "jira-flow" / "mine"
+
+
 
 
 def mine_read() -> dict:
@@ -2815,6 +2870,15 @@ class Handler(BaseHTTPRequestHandler):
             # Med flit utan cache: vyn finns for att koppla pa och se svaret direkt.
             self._json(200, posthog_read())
             return
+        if path == "/api/backend":
+            # Vilken källa som svarar just nu, och vad den källan är kopplad till.
+            env = seam("bridge", "status", timeout=60)
+            answer = env.get("payload") or {}
+            self._json(200, {"ok": env.get("exitCode") == 0, "backend": backend_read(),
+                             "account": answer.get("account") or {},
+                             "connected": bool(answer.get("connected")),
+                             "error": "" if env.get("exitCode") == 0 else first_line(env)})
+            return
         if path == "/api/admin":
             self._json(200, cached("admin", admin_read, ttl=180))
             return
@@ -2935,6 +2999,7 @@ class Handler(BaseHTTPRequestHandler):
                    "/api/github": github_save, "/api/language": language_save,
                    "/api/admin/people": admin_people, "/api/chat": chat_ask,
                    "/api/publish": publish_flow, "/api/posthog": posthog_save,
+                   "/api/backend": backend_save,
                    "/api/agent": agent_state}.get(self.path.split("?")[0])
         if not handler:
             self._send(404, b"not found", "text/plain")
