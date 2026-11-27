@@ -1,0 +1,44 @@
+# Maintainer: Alex Weström <inkedalex@gmail.com>
+# Prebuilt package: the release tarball is the app itself (Python stdlib, no
+# build step), the same bytes `omastore install` puts in ~/.local. Here they
+# live in /opt/godjira, with the launcher on PATH and the panel as a user unit.
+# Each release: bump pkgver, run updpkgsums, then makepkg --printsrcinfo > .SRCINFO.
+pkgname=godjira-bin
+pkgver=1.0.0
+pkgrel=1
+pkgdesc='A Jira client inside your Omarchy shell: board, backlog, timeline, reports, development and activity'
+arch=('any')
+url='https://github.com/alexwest1981/GodJIRA'
+license=('AGPL-3.0-only')
+depends=('python3')
+optdepends=('xdg-utils: open the panel in a browser where omarchy-launch-webapp is missing')
+provides=('godjira')
+conflicts=('godjira')
+options=('!strip')
+# Nothing in the app is compiled, so one package serves every architecture:
+# arch=('any') and the x86_64 archive (its aarch64 twin is the same bytes) are
+# the only source needed — which is also what a release asset listing wants.
+source=("godjira-$pkgver-x86_64-linux.tar.gz::https://github.com/alexwest1981/GodJIRA/releases/download/v$pkgver/godjira-$pkgver-x86_64-linux.tar.gz")
+sha256sums=('13b20cba7e99d7f598cfa6e9af783a4e1a366461c1ff4033a47c5cb6de4b0427')
+
+package() {
+  # The whole tree: bin/godjira-panel resolves panel/ next to itself.
+  install -dm755 "$pkgdir/opt/godjira"
+  cp -a "$srcdir"/. "$pkgdir/opt/godjira/"
+
+  install -dm755 "$pkgdir/usr/bin"
+  ln -s /opt/godjira/bin/godjira-panel "$pkgdir/usr/bin/godjira-panel"
+  install -Dm755 "$startdir/godjira-open" "$pkgdir/usr/bin/godjira-open"
+
+  install -Dm644 "$srcdir/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "$srcdir/assets/godjira.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/godjira.svg"
+  install -Dm644 "$startdir/godjira.desktop" "$pkgdir/usr/share/applications/godjira.desktop"
+  install -Dm644 "$startdir/godjira-panel.service" "$pkgdir/usr/lib/systemd/user/godjira-panel.service"
+}
+
+post_install() {
+  echo "Enable the panel for your user:"
+  echo "  systemctl --user daemon-reload"
+  echo "  systemctl --user enable --now godjira-panel.service"
+  echo "Then open GodJIRA from the menu (127.0.0.1:8788)."
+}

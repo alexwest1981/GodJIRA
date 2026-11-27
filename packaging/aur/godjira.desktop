@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=GodJIRA
+GenericName=Hubben
+Comment=Jira, GitHub and the flow in one window
+Exec=godjira-open
+Icon=godjira
+Terminal=false
+Categories=Development;ProjectManagement;
+Keywords=jira;github;issues;board;godjira;
+StartupNotify=true

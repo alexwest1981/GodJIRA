@@ -1,0 +1,15 @@
+[Unit]
+Description=GodJIRA panel (Jira, GitHub and the flow in one window)
+Documentation=https://github.com/alexwest1981/GodJIRA
+After=network-online.target
+
+[Service]
+Type=simple
+# The launcher sets PATH, XDG_RUNTIME_DIR and the session bus itself, which the
+# keyring read needs; PANEL_BIND defaults to 127.0.0.1 in panel/server.py.
+ExecStart=/usr/bin/godjira-panel
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
