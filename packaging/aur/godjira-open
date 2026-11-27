@@ -1,0 +1,9 @@
+#!/bin/sh
+# The menu entry: Omarchy opens the panel as its own window, anywhere else a
+# browser tab. install.sh resolves the same choice at install time; a package
+# cannot, so it is made here instead.
+url=http://127.0.0.1:8788
+if command -v omarchy-launch-webapp >/dev/null 2>&1; then
+	exec omarchy-launch-webapp "$url"
+fi
+exec xdg-open "$url"
