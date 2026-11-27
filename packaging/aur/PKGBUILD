@@ -7,7 +7,7 @@ pkgname=godjira-bin
 pkgver=1.0.0
 pkgrel=1
 pkgdesc='A Jira client inside your Omarchy shell: board, backlog, timeline, reports, development and activity'
-arch=('x86_64' 'aarch64')
+arch=('any')
 url='https://github.com/alexwest1981/GodJIRA'
 license=('AGPL-3.0-only')
 depends=('python3')
@@ -15,12 +15,11 @@ optdepends=('xdg-utils: open the panel in a browser where omarchy-launch-webapp 
 provides=('godjira')
 conflicts=('godjira')
 options=('!strip')
-# One archive per architecture, named as upstream names it: the project
-# publishes the same bytes under both, because nothing inside is compiled.
-source_x86_64=("godjira-$pkgver-x86_64-linux.tar.gz::https://github.com/alexwest1981/GodJIRA/releases/download/v$pkgver/godjira-$pkgver-x86_64-linux.tar.gz")
-source_aarch64=("godjira-$pkgver-aarch64-linux.tar.gz::https://github.com/alexwest1981/GodJIRA/releases/download/v$pkgver/godjira-$pkgver-aarch64-linux.tar.gz")
-sha256sums_x86_64=('13b20cba7e99d7f598cfa6e9af783a4e1a366461c1ff4033a47c5cb6de4b0427')
-sha256sums_aarch64=('13b20cba7e99d7f598cfa6e9af783a4e1a366461c1ff4033a47c5cb6de4b0427')
+# Nothing in the app is compiled, so one package serves every architecture:
+# arch=('any') and the x86_64 archive (its aarch64 twin is the same bytes) are
+# the only source needed — which is also what a release asset listing wants.
+source=("godjira-$pkgver-x86_64-linux.tar.gz::https://github.com/alexwest1981/GodJIRA/releases/download/v$pkgver/godjira-$pkgver-x86_64-linux.tar.gz")
+sha256sums=('13b20cba7e99d7f598cfa6e9af783a4e1a366461c1ff4033a47c5cb6de4b0427')
 
 package() {
   # The whole tree: bin/godjira-panel resolves panel/ next to itself.
